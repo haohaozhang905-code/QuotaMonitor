@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodexQuota · 新版设计</title>
+<style>
+:root{
+  --bg:#F3F4F6; --surface:#FFFFFF; --surface2:#F7F8FA; --surface3:#EEF0F3;
+  --border:#E4E6EB; --border-strong:#D4D7DD;
+  --text:#17191D; --text2:#5B6470; --text3:#9AA1AD;
+  --codex:#4D5DFB; --codex-soft:#E9EBFF;
+  --claude:#D97757; --claude-soft:#FBE9E3;
+  --cclaude:#C2602F;
+  --deepseek:#4D6BFE; --deepseek-soft:#E8EDFF;
+  --workbuddy:#15B687; --workbuddy-soft:#DFF6EE;
+  --ok:#2FA36B; --warn:#D99A2B; --danger:#D9534F;
+  --shadow:0 1px 2px rgba(16,20,30,.05),0 12px 32px rgba(16,20,30,.08);
+  --shadow-sm:0 1px 2px rgba(16,20,30,.06);
+  --radius:12px; --radius-sm:8px;
+  --menubar-bg:rgba(255,255,255,.72); --menubar-text:#1B1D22;
+}
+[data-theme="dark"]{
+  --bg:#0E1013; --surface:#16181D; --surface2:#1C2026; --surface3:#232830;
+  --border:#272C35; --border-strong:#343B46;
+  --text:#F0F1F4; --text2:#A2A9B4; --text3:#6B7380;
+  --codex:#8A97FF; --codex-soft:#242A4A;
+  --claude:#E08A68; --claude-soft:#3A2A22;
+  --cclaude:#D97B4F;
+  --deepseek:#7C93FF; --deepseek-soft:#222A4E;
+  --workbuddy:#3BD6A8; --workbuddy-soft:#17352C;
+  --ok:#43BE82; --warn:#E3AE4C; --danger:#E56767;
+  --shadow:0 1px 2px rgba(0,0,0,.45),0 14px 36px rgba(0,0,0,.55);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --menubar-bg:rgba(18,20,24,.82); --menubar-text:#EDEEF1;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:-apple-system,"SF Pro Text","PingFang SC","Noto Sans SC",system-ui,sans-serif;
+  background:var(--bg); color:var(--text);
+  font-size:13px; line-height:1.6; -webkit-font-smoothing:antialiased;
+  transition:background .25s,color .25s;
+}
+.mono{font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+:focus-visible{outline:2px solid var(--codex);outline-offset:2px;border-radius:4px}
+
+/* ===== 演示控制条 ===== */
+.demo-bar{
+  position:sticky;top:0;z-index:50;
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:10px 18px;border-bottom:1px solid var(--border);
+  background:color-mix(in srgb,var(--surface) 86%,transparent);
+  backdrop-filter:blur(12px);
+}
+.demo-brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px}
+.demo-brand .dot{width:8px;height:8px;border-radius:50%;background:var(--codex)}
+.demo-seg{display:flex;gap:2px;padding:3px;background:var(--surface3);border:1px solid var(--border);border-radius:10px}
+.demo-seg button{padding:5px 12px;border-radius:7px;font-size:12px;font-weight:600;color:var(--text2)}
+.demo-seg button.on{background:var(--surface);color:var(--text);box-shadow:var(--shadow-sm)}
+.demo-spacer{flex:1}
+.demo-label{font-size:11px;color:var(--text3);font-weight:600}
+.demo-toggle{display:flex;align-items:center;gap:8px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:12px;font-weight:600}
+.demo-hint{width:100%;font-size:11.5px;color:var(--text3);display:none}
+body.show-hint .demo-hint{display:block}
+
+/* ===== 舞台 ===== */
+.stage{padding:34px 24px 80px;max-width:1180px;margin:0 auto}
+.screen{display:none}
+.screen.on{display:block;animation:fadein .3s ease}
+@keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.screen-caption{font-size:11.5px;color:var(--text3);margin-top:14px;text-align:center}
+
+/* ===== 菜单栏 ===== */
+.menubar{
+  display:flex;align-items:center;gap:18px;height:28px;padding:0 14px;
+  background:var(--menubar-bg);border:1px solid var(--border);border-radius:8px;
+  color:var(--menubar-text);font-size:12px;box-shadow:var(--shadow-sm);
+  backdrop-filter:blur(10px);max-width:900px;margin:0 auto;
+}
+.mb-left{display:flex;align-items:center;gap:16px;font-weight:500}
+.mb-app{font-weight:700}
+.mb-spacer{flex:1}
+.mb-right{display:flex;align-items:center;gap:14px}
+.mb-slots{display:flex;align-items:center;gap:10px}
+.mb-slot{display:inline-flex;align-items:center;gap:5px;font-weight:650;font-variant-numeric:tabular-nums;font-size:12.5px}
+.mb-ico{position:relative;display:inline-flex;width:14px;height:14px}
+.mb-ico svg{width:14px;height:14px}
+.mb-ico .dsdot{position:absolute;top:-2.5px;right:-2.5px;width:8px;height:8px;border-radius:50%;background:var(--deepseek);border:1.5px solid var(--menubar-bg)}
+.mb-status{display:flex;align-items:center;gap:10px;color:var(--menubar-text);opacity:.75}
+.mb-status svg{width:13px;height:13px}
+.mb-clock{font-variant-numeric:tabular-nums;font-weight:500}
+
+/* ===== 下拉框 ===== */
+.drop-scene{max-width:900px;margin:0 auto;position:relative}
+.dropdown{
+  width:332px;margin-left:auto;margin-top:8px;
+  background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;
+  box-shadow:var(--shadow);padding:8px;color:var(--text);
+}
+.dd-sec{font-size:10.5px;font-weight:700;color:var(--text3);padding:9px 10px 4px;letter-spacing:.3px}
+.dd-row{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px}
+.dd-row:hover{background:var(--surface2)}
+.dd-row .ico{display:inline-flex;width:15px;height:15px}
+.dd-row .ico svg{width:15px;height:15px}
+.dd-row .nm{font-size:12.5px;font-weight:550}
+.dd-row .vl{margin-left:auto;font-size:11.5px;font-weight:600;color:var(--text2);font-variant-numeric:tabular-nums}
+.dd-total{display:flex;align-items:baseline;gap:8px;padding:8px 10px 5px}
+.dd-total .lb{font-size:11.5px;color:var(--text3);font-weight:600}
+.dd-total b{margin-left:auto;font-size:19px;font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+.dd-bar{flex:1;height:4px;border-radius:99px;background:var(--surface3);overflow:hidden;min-width:26px}
+.dd-bar i{display:block;height:100%;border-radius:99px}
+.dd-usage{display:flex;align-items:center;gap:9px;padding:5px 10px;font-size:12px}
+.dd-usage .nm{font-weight:550}
+.dd-usage .vl{margin-left:0;width:64px;text-align:right;font-size:11px;font-weight:600;color:var(--text2);font-variant-numeric:tabular-nums}
+.dd-ds{display:flex;align-items:center;gap:9px;padding:7px 10px;margin-top:3px;border-top:1px dashed var(--border);font-size:11.5px;color:var(--text2)}
+.dd-ds .vl{margin-left:auto;color:var(--text);font-weight:650;font-variant-numeric:tabular-nums}
+.dd-actions{padding-top:5px;margin-top:4px;border-top:1px solid var(--border)}
+.dd-action{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;font-size:12.5px}
+.dd-action:hover{background:var(--surface2)}
+.dd-action.quit{color:var(--danger)}
+
+/* ===== 主面板窗口 ===== */
+.window{
+  max-width:1000px;margin:0 auto;background:var(--surface);border:1px solid var(--border-strong);
+  border-radius:14px;box-shadow:var(--shadow);overflow:hidden;
+}
+.titlebar{
+  display:flex;align-items:center;gap:12px;height:44px;padding:0 16px;
+  border-bottom:1px solid var(--border);background:var(--surface2);
+}
+.traffic{display:flex;gap:8px}
+.traffic i{width:12px;height:12px;border-radius:50%}
+.traffic i:nth-child(1){background:#FF5F57}.traffic i:nth-child(2){background:#FEBC2E}.traffic i:nth-child(3){background:#28C840}
+.win-title{font-size:12.5px;font-weight:650;color:var(--text2)}
+.win-right{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--text3)}
+.win-refresh{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border:1px solid var(--border);border-radius:7px;background:var(--surface);font-size:11.5px;font-weight:600;color:var(--text2)}
+.win-refresh:hover{border-color:var(--border-strong);color:var(--text)}
+
+.win-body{padding:20px;display:flex;flex-direction:column;gap:16px}
+.brand-row{display:flex;align-items:center;gap:12px}
+.brand-name{font-size:20px;font-weight:750;letter-spacing:-.3px}
+.route-pill{font-size:11px;font-weight:700;padding:4px 11px;border-radius:99px;background:var(--deepseek-soft);color:var(--deepseek)}
+.brand-sub{font-size:11.5px;color:var(--text3);font-weight:500}
+.brand-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.sync{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text2);font-weight:500}
+.sync .dot{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+
+/* 余额卡 */
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.tile{
+  position:relative;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;display:flex;flex-direction:column;gap:8px;min-width:0;
+  transition:border-color .2s,box-shadow .2s;
+}
+.tile:hover{border-color:var(--border-strong);box-shadow:var(--shadow-sm)}
+.tile-head{display:flex;align-items:center;gap:8px}
+.tile-ico{display:inline-flex;width:17px;height:17px;position:relative}
+.tile-ico svg{width:17px;height:17px}
+.tile-ico .dsdot{position:absolute;top:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:var(--deepseek);border:1.5px solid var(--surface)}
+.tile-name{font-size:12.5px;font-weight:650}
+.tile-tag{margin-left:auto;font-size:10px;font-weight:700;padding:2.5px 9px;border-radius:99px;background:var(--surface3);color:var(--text2)}
+.tile-tag.ds{background:var(--deepseek-soft);color:var(--deepseek)}
+.tile-tag.off{background:var(--codex-soft);color:var(--codex)}
+.tile-tag.warn{background:var(--workbuddy-soft);color:var(--workbuddy)}
+.tile-value{font-size:30px;font-weight:760;letter-spacing:-.8px;font-variant-numeric:tabular-nums;line-height:1.1}
+.tile-value small{font-size:14px;font-weight:600;color:var(--text3);letter-spacing:0;margin-left:3px}
+.tile-sub{font-size:11px;color:var(--text3);font-weight:500}
+.tile-progress{height:4px;border-radius:99px;background:var(--surface3);overflow:hidden;margin-top:2px}
+.tile-progress i{display:block;height:100%;border-radius:99px;background:var(--codex);transition:width .5s ease}
+.tile.low .tile-value{color:var(--warn)}
+.tile.critical .tile-value{color:var(--danger)}
+
+/* 用量摘要 */
+.summary{
+  display:flex;align-items:center;gap:22px;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:14px 18px;
+}
+.sum-item{display:flex;flex-direction:column;gap:2px;min-width:0}
+.sum-item .lb{font-size:10.5px;font-weight:600;color:var(--text3)}
+.sum-item .vl{font-size:20px;font-weight:740;font-variant-numeric:tabular-nums;letter-spacing:-.4px}
+.sum-item .vl small{font-size:11px;color:var(--text3);font-weight:600;margin-left:2px}
+.sum-diff{font-size:12px;font-weight:650;color:var(--ok)}
+.sum-diff.down{color:var(--danger)}
+.sum-sep{width:1px;height:30px;background:var(--border)}
+.sum-spacer{flex:1}
+
+/* 卡片 */
+.grid2{display:grid;grid-template-columns:1.15fr 1fr;gap:14px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.card-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.card-title{font-size:13.5px;font-weight:700}
+.card-note{margin-left:auto;font-size:10.5px;color:var(--text3);font-weight:500}
+
+/* 图表 */
+.chart{display:flex;flex-direction:column;gap:6px}
+.chart-bars{display:flex;align-items:flex-end;gap:12px;height:148px;padding:0 2px}
+.cbar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:2px;height:100%}
+.cbar .seg{width:100%;border-radius:4px}
+.cbar .seg:first-child{border-radius:4px 4px 2px 2px}
+.cbar .seg:last-child{border-radius:2px 2px 4px 4px}
+.chart-days{display:flex;gap:12px;margin-top:4px}
+.chart-days span{flex:1;text-align:center;font-size:10.5px;color:var(--text3);font-weight:600}
+.chart-days span.today{color:var(--codex);font-weight:750}
+.chart-ds{display:flex;gap:12px;margin-top:3px}
+.chart-ds span{flex:1;text-align:center;font-size:9px;color:var(--deepseek);font-weight:650;font-variant-numeric:tabular-nums}
+.legend{display:flex;gap:14px;margin-top:12px;flex-wrap:wrap}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);font-weight:600}
+.legend-item svg{width:12px;height:12px}
+.legend-item .swatch{width:12px;height:12px;border-radius:4px}
+
+/* 表格 */
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{font-size:10px;font-weight:700;color:var(--text3);text-align:right;padding:4px 6px 8px;border-bottom:1px solid var(--border)}
+.tbl th:first-child{text-align:left}
+.tbl td{font-size:11.5px;padding:6px;text-align:right;color:var(--text2);font-variant-numeric:tabular-nums;border-bottom:1px solid var(--border)}
+.tbl td:first-child{text-align:left;color:var(--text3)}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr.today td{color:var(--text);font-weight:650;background:var(--codex-soft)}
+.tbl td em{display:block;font-style:normal;font-size:9px;color:var(--deepseek);font-weight:600}
+.tbl td .tot{color:var(--text);font-weight:700}
+
+/* 底部设置 */
+.footer{display:flex;align-items:center;gap:18px;border-top:1px solid var(--border);padding-top:14px;font-size:11.5px;color:var(--text2)}
+.footer b{color:var(--text);font-weight:650}
+.footer .privacy{margin-left:auto;color:var(--text3);font-size:10.5px}
+.toggle{display:inline-flex;align-items:center;width:32px;height:19px;border-radius:99px;background:var(--surface3);position:relative;transition:background .2s}
+.toggle::after{content:"";position:absolute;left:2px;top:2px;width:15px;height:15px;border-radius:50%;background:#fff;box-shadow:var(--shadow-sm);transition:left .2s}
+.toggle.on{background:var(--codex)}
+.toggle.on::after{left:15px}
+
+/* 设计说明 */
+.notes{margin-top:28px;border-top:1px solid var(--border);padding-top:14px;font-size:12px;color:var(--text2);line-height:1.8;max-width:1000px;margin-left:auto;margin-right:auto}
+.notes b{color:var(--text)}
+.notes summary{cursor:pointer;font-weight:700;color:var(--text);font-size:12.5px}
+.notes ul{margin:6px 0 0 18px}
+
+@media (max-width:960px){ .grid2{grid-template-columns:1fr}.tiles{grid-template-columns:1fr 1fr}.tiles .tile:last-child{grid-column:span 2} }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-codex" viewBox="0 0 24 24"><path fill="currentColor" d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z"/></symbol>
+    <symbol id="i-claude" viewBox="0 0 24 24"><path fill="currentColor" d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"/></symbol>
+    <symbol id="i-cclaude" viewBox="0 0 24 24"><path fill="currentColor" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z"/></symbol>
+    <symbol id="i-ds" viewBox="0 0 24 24"><path fill="currentColor" d="M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 01-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 00-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 01-.465.137 9.597 9.597 0 00-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 001.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 011.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 01.415-.287.302.302 0 01.2.288.306.306 0 01-.31.307.303.303 0 01-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 01-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 01.016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 01-.254-.078c-.11-.054-.2-.19-.114-.358.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z"/></symbol>
+    <symbol id="i-wb" viewBox="0 0 24 24"><path fill="currentColor" d="M27.6897 3.3426C28.057 3.01322 28.0795 2.99983 28.3485 2.98366C28.7851 2.95177 29.1858 3.16107 29.8664 3.78072C31.4566 5.22574 33.6703 8.19724 35.047 10.7343L35.5796 11.7191L36.3309 12.0927C37.0562 12.4593 38.2459 13.2111 38.7428 13.614C38.9673 13.7997 38.9992 13.8032 39.2326 13.7124C40.2872 13.3017 41.7982 13.846 43.1307 15.1244C44.3302 16.274 45.479 18.2384 45.9191 19.8778C45.9833 20.1417 46.0683 20.709 46.0994 21.1314C46.1997 22.6144 45.7243 23.7986 44.8085 24.3349C44.6213 24.443 44.6085 24.4725 44.6137 24.939C44.6559 27.1604 44.0571 29.3777 42.8543 31.54C41.4965 33.9678 39.0794 36.4798 35.8073 38.846C34.0502 40.1247 29.8918 42.5469 28.0122 43.3973C23.5096 45.4244 19.8999 46.2022 16.7645 45.8181C14.8943 45.5915 12.7771 44.8611 11.5246 44.0137C11.1951 43.786 11.1428 43.7719 10.8909 43.8439C9.55017 44.2289 7.79442 43.4374 6.30272 41.7817C5.70771 41.1197 4.74709 39.4939 4.43575 38.6241C3.71569 36.5887 3.85859 34.752 4.81783 33.6551C5.0657 33.3725 5.07387 33.3607 5.01972 32.8856C4.93033 32.1079 4.88982 30.9566 4.93066 30.2138L4.96343 29.5205L3.92091 27.6777C2.3078 24.8074 1.28326 22.3968 0.887982 20.5554C0.679402 19.546 0.692781 19.0981 0.949061 18.7667C1.10529 18.5666 1.61622 18.3594 2.23252 18.2455C3.78518 17.9729 7.17203 18.2198 10.9394 18.885L11.3303 18.9525L12.1903 18.1921C13.6179 16.9275 14.5665 16.2176 16.315 15.1274C18.1373 13.9872 20.1943 13.0498 22.5103 12.3071L23.2533 12.0687L23.6615 10.9964C25.1239 7.13587 26.6218 4.28969 27.6897 3.3426ZM15.4393 23.1261C13.7864 24.0804 12.9602 24.5582 12.3529 25.093C9.89364 27.2585 8.9738 30.6888 10.0208 33.7938C10.2794 34.5606 10.7568 35.387 11.7111 37.0398C12.6653 38.6926 13.1424 39.5194 13.6771 40.1267C15.8426 42.5859 19.2732 43.5045 22.3783 42.4574C23.145 42.1989 23.972 41.7223 25.6248 40.768L35.1333 35.2783C36.7862 34.324 37.6124 33.8462 38.2196 33.3114C40.6789 31.1459 41.5988 27.7156 40.5518 24.6105C40.2932 23.8438 39.8157 23.0174 38.8615 21.3646C37.9072 19.7117 37.4302 18.885 36.8955 18.2777C34.7299 15.8185 31.2993 14.8999 28.1943 15.947C27.4275 16.2055 26.6006 16.6821 24.9478 17.6364L15.4393 23.1261Z"/></symbol>
+  </defs>
+</svg>
+
+<!-- 演示控制条 -->
+<header class="demo-bar">
+  <div class="demo-brand"><span class="dot"></span>CodexQuota 新版设计</div>
+  <div class="demo-seg" id="surfaceSeg">
+    <button data-surface="main-panel" class="on">主面板</button>
+    <button data-surface="menu-bar">菜单栏</button>
+    <button data-surface="dropdown">下拉框</button>
+  </div>
+  <div class="demo-spacer"></div>
+  <span class="demo-label">主题</span>
+  <div class="demo-seg" id="themeSeg">
+    <button data-theme-value="light" class="on">浅色</button>
+    <button data-theme-value="dark">深色</button>
+  </div>
+  <span class="demo-label">路由组合</span>
+  <div class="demo-seg" id="routeSeg">
+    <button data-combo="bothOfficial">官方+官方</button>
+    <button data-combo="claudeDS">官方+DeepSeek</button>
+    <button data-combo="codexDS">DeepSeek+官方</button>
+    <button data-combo="bothDS" class="on">双 DeepSeek</button>
+  </div>
+  <button class="demo-toggle" id="hintToggle" title="显示/隐藏设计说明">设计说明</button>
+  <p class="demo-hint" id="demoHint">余额优先：三张余额卡是大主角，图表与明细降为第二层级；所有状态随“路由组合”联动，可切换浅色/深色对比。</p>
+</header>
+
+<main class="stage">
+
+  <!-- ============ 菜单栏 ============ -->
+  <section class="screen" data-screen-label="menu-bar" id="screen-menu-bar">
+    <div class="menubar">
+      <div class="mb-left">
+        <span style="font-size:15px;line-height:1">&#63743;</span>
+        <span class="mb-app">CodexQuota</span>
+        <span>文件</span><span>编辑</span><span>显示</span>
+      </div>
+      <div class="mb-spacer"></div>
+      <div class="mb-right">
+        <div class="mb-slots" id="mbSlots"></div>
+        <div class="mb-status">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 5.5c4-3 8-3 12 0M4 8.5c2.7-2 5.3-2 8 0M6.2 11.4c1.2-.9 2.6-.9 3.8 0"/></svg>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="7" width="12" height="6" rx="1.5"/><path d="M5 7V5.5a3 3 0 016 0V7"/></svg>
+        </div>
+        <span class="mb-clock" id="mbClock">10:58</span>
+      </div>
+    </div>
+    <p class="screen-caption">菜单栏：双槽位展示 Codex / Claude 状态；DeepSeek 路由时图标带蓝点角标并显示共享余额，双 DeepSeek 合并为一个鲸鱼槽位</p>
+  </section>
+
+  <!-- ============ 下拉框 ============ -->
+  <section class="screen" data-screen-label="dropdown" id="screen-dropdown">
+    <div class="drop-scene">
+      <div class="menubar" style="max-width:none">
+        <div class="mb-left"><span style="font-size:15px;line-height:1">&#63743;</span><span class="mb-app">CodexQuota</span><span>文件</span><span>编辑</span><span>显示</span></div>
+        <div class="mb-spacer"></div>
+        <div class="mb-right"><span class="mb-clock" id="mbClock2">10:58</span></div>
+      </div>
+      <div class="dropdown">
+        <div class="dd-sec">额度</div>
+        <div id="ddQuota"></div>
+        <div class="dd-sec">用量</div>
+        <div class="dd-total"><span class="lb">今日总量</span><b id="ddTotal">7368万</b></div>
+        <div id="ddUsage"></div>
+        <div class="dd-ds" id="ddDS"></div>
+        <div class="dd-actions">
+          <div class="dd-action">打开主面板</div>
+          <div class="dd-action">立即刷新</div>
+          <div class="dd-action quit">退出 CodexQuota</div>
+        </div>
+      </div>
+    </div>
+    <p class="screen-caption">下拉框：额度区不带装饰点，用量区用进度条表达占比，DeepSeek 用虚线分隔单独成行</p>
+  </section>
+
+  <!-- ============ 主面板 ============ -->
+  <section class="screen on" data-screen-label="main-panel" id="screen-main-panel">
+    <div class="window">
+      <div class="titlebar">
+        <div class="traffic"><i></i><i></i><i></i></div>
+        <span class="win-title">CodexQuota</span>
+        <div class="win-right">
+          <span class="sync"><span class="dot"></span><span id="panelSync">10:58 更新</span></span>
+          <button class="win-refresh">刷新</button>
+        </div>
+      </div>
+      <div class="win-body">
+        <div class="brand-row">
+          <div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="brand-name">额度总览</span>
+              <span class="route-pill" id="routePill">双 DeepSeek</span>
+            </div>
+            <div class="brand-sub" id="routeSub">Codex 与 Claude 均通过 DeepSeek 路由，共享 ¥15.42 余额</div>
+          </div>
+          <div class="brand-right">
+            <span class="sync"><span class="dot"></span>60 秒自动刷新</span>
+          </div>
+        </div>
+
+        <div class="tiles" id="tiles"></div>
+
+        <div class="summary">
+          <div class="sum-item"><span class="lb">今日总用量</span><span class="vl">7368<small>万 tokens</small></span></div>
+          <div class="sum-sep"></div>
+          <div class="sum-item"><span class="lb">较昨日</span><span class="vl sum-diff down" id="sumDiff">↓63%</span></div>
+          <div class="sum-sep"></div>
+          <div class="sum-item"><span class="lb">DeepSeek 占比</span><span class="vl" style="color:var(--deepseek)">100%</span></div>
+          <div class="sum-spacer"></div>
+        </div>
+
+        <div class="grid2">
+          <div class="card">
+            <div class="card-head"><span class="card-title">近 7 天用量</span><span class="card-note">悬停柱子查看明细</span></div>
+            <div class="chart">
+              <div class="chart-bars" id="chartBars"></div>
+              <div class="chart-days" id="chartDays"></div>
+              <div class="chart-ds" id="chartDS"></div>
+            </div>
+            <div class="legend" id="legend"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><span class="card-title">工具用量</span><span class="card-note">近 7 天 · tokens</span></div>
+            <table class="tbl" id="tbl"></table>
+          </div>
+        </div>
+
+        <div class="footer">
+          <span>显示语言 <b>简体中文</b></span>
+          <span class="toggle" id="langToggle"></span>
+          <span>登录后自动启动</span>
+          <span class="toggle on" id="loginToggle"></span>
+          <span>刷新频率 <b>60 秒</b></span>
+          <span class="privacy">凭据仅本机使用，token 仅本地估算，不上传</span>
+        </div>
+      </div>
+    </div>
+    <p class="screen-caption">主面板：余额卡置顶为视觉主角，路由状态、用量趋势与明细降为次级；浅色/深色跟随主题切换</p>
+  </section>
+
+</main>
+
+<details class="notes">
+  <summary>设计说明与取舍</summary>
+  <ul>
+    <li><b>余额优先</b>：打开面板第一眼是“还剩多少”——三张余额卡放大数值、弱化装饰；路由状态用右上角小标签表达，不抢占主视觉。</li>
+    <li><b>双 DeepSeek 去冗余</b>：Codex/Claude 都走 DeepSeek 时，两卡不再重复显示相同余额，而是各自标注“共享余额 · 约 4 天”，共用同一个池子，一眼看懂。</li>
+    <li><b>视觉克制</b>：去掉暖色奶油底与重边框，改为中性浅灰底 + 细边框；品牌色只用于图标、数值与状态，不做大面积渐变。</li>
+    <li><b>深色自适应</b>：全部用 CSS 变量，切换主题即整体换肤；数值、图表、表格全部适配。</li>
+    <li><b>信息层级</b>：菜单栏只留两个槽位；下拉框额度/用量分区；面板余额→摘要→图表→明细逐级递减。</li>
+    <li><b>待确认</b>：底部设置区是否保留在面板内、今日消耗估算是否展示、Claude 未接入时的占位文案。</li>
+  </ul>
+</details>
+
+<script>
+// ===== 数据 =====
+const DAYS = [
+  {d:"8/2", total:1.55, ds:0.77, codex:1.35, cc:0, cld:0, wb:0.21},
+  {d:"8/3", total:2.09, ds:0.84, codex:2.08, cc:0, cld:0, wb:0.01},
+  {d:"8/4", total:0, ds:0, codex:0, cc:0, cld:0, wb:0},
+  {d:"8/5", total:0.66, ds:0.41, codex:0.66, cc:0, cld:0, wb:0},
+  {d:"8/6", total:0.44, ds:0.44, codex:0.40, cc:0, cld:0, wb:0.04},
+  {d:"8/7", total:1.99, ds:0.89, codex:1.77, cc:0, cld:0.02, wb:0.04},
+  {d:"今天", total:0.74, ds:1.0, codex:0.73, cc:0, cld:0.003, wb:0, today:true},
+];
+const COMBOS = {
+  bothOfficial:{label:"官方 + 官方", sub:"Codex 与 Claude 均使用官方额度",
+    codex:{tag:"PLUS",tagCls:"off",value:"62%",sub:"本周剩余 · 周 19:00 重置",progress:62,routed:false},
+    claude:{tag:"Pro",tagCls:"off",value:"72%",sub:"5 小时额度 · 72% 剩余",progress:72,routed:false}},
+  claudeDS:{label:"官方 + DeepSeek", sub:"Claude 通过 DeepSeek 路由，共享 ¥15.42",
+    codex:{tag:"PLUS",tagCls:"off",value:"62%",sub:"本周剩余 · 周 19:00 重置",progress:62,routed:false},
+    claude:{tag:"DeepSeek 路由",tagCls:"ds",value:"¥15.42",sub:"共享余额 · 约 4 天",progress:null,routed:true}},
+  codexDS:{label:"DeepSeek + 官方", sub:"Codex 通过 DeepSeek 路由，共享 ¥15.42",
+    codex:{tag:"DeepSeek 路由",tagCls:"ds",value:"¥15.42",sub:"共享余额 · 约 4 天",progress:null,routed:true},
+    claude:{tag:"Pro",tagCls:"off",value:"72%",sub:"5 小时额度 · 72% 剩余",progress:72,routed:false}},
+  bothDS:{label:"双 DeepSeek", sub:"Codex 与 Claude 均通过 DeepSeek 路由，共享 ¥15.42",
+    codex:{tag:"DeepSeek 路由",tagCls:"ds",value:"¥15.42",sub:"共享余额 · 约 4 天",progress:null,routed:true},
+    claude:{tag:"DeepSeek 路由",tagCls:"ds",value:"¥15.42",sub:"共享余额 · 约 4 天",progress:null,routed:true}},
+};
+let state = {surface:"main-panel", theme:"light", combo:"bothDS"};
+
+// ===== 图标渲染 =====
+function ico(kind, cls, badge){
+  return `<span class="${cls||'mb-ico'}"><svg><use href="#i-${kind}"/></svg>${badge?'<span class="dsdot"></span>':''}</span>`;
+}
+
+// ===== 菜单栏槽位 =====
+function renderSlots(){
+  const c = COMBOS[state.combo];
+  const el = document.getElementById("mbSlots");
+  if(state.combo === "bothDS"){
+    el.innerHTML = `<span class="mb-slot">${ico("ds")}<span>¥15.42</span></span>`;
+  } else {
+    el.innerHTML = `
+      <span class="mb-slot">${ico("codex","",c.codex.routed)}<span>${c.codex.value}</span></span>
+      <span class="mb-slot">${ico("claude","",c.claude.routed)}<span>${c.claude.value}</span></span>`;
+  }
+}
+
+// ===== 下拉框 =====
+function renderDropdown(){
+  const c = COMBOS[state.combo];
+  document.getElementById("ddQuota").innerHTML = `
+    <div class="dd-row">${ico("codex","ico")}<span class="nm">Codex ${state.combo==="bothOfficial"||state.combo==="claudeDS"?"PLUS":"· DeepSeek"}</span><span class="vl">${c.codex.value}${c.codex.progress?" · 周 19:00 重置":""}</span></div>
+    <div class="dd-row">${ico("claude","ico")}<span class="nm">Claude ${c.claude.routed?"· DeepSeek":"Pro"}</span><span class="vl">${c.claude.value}</span></div>
+    <div class="dd-row">${ico("ds","ico")}<span class="nm">DeepSeek</span><span class="vl">¥15.42 · 约 4 天</span></div>`;
+  document.getElementById("ddUsage").innerHTML = `
+    <div class="dd-usage">${ico("codex","ico")}<span class="nm">Codex</span><span class="dd-bar"><i style="width:99.5%;background:var(--codex)"></i></span><span class="vl">7337万</span></div>
+    <div class="dd-usage">${ico("claude","ico")}<span class="nm">Claude</span><span class="dd-bar"><i style="width:0.5%;background:var(--claude)"></i></span><span class="vl">3.3万</span></div>`;
+  document.getElementById("ddDS").innerHTML = `${ico("ds","ico")}<span>其中 DeepSeek 路由</span><span class="vl">7368万 · 100%</span>`;
+}
+
+// ===== 余额卡 =====
+function renderTiles(){
+  const c = COMBOS[state.combo];
+  const mk = (key, name, icon) => {
+    const t = c[key];
+    const prog = t.progress!=null ? `<div class="tile-progress"><i style="width:${t.progress}%"></i></div>` : "";
+    return `
+      <div class="tile">
+        <div class="tile-head">
+          ${ico(icon,"tile-ico",t.routed)}
+          <span class="tile-name">${name}</span>
+          <span class="tile-tag ${t.tagCls}">${t.tag}</span>
+        </div>
+        <div class="tile-value">${t.value}</div>
+        <div class="tile-sub">${t.sub}</div>
+        ${prog}
+      </div>`;
+  };
+  const dsTile = `
+    <div class="tile">
+      <div class="tile-head">${ico("ds","tile-ico")}<span class="tile-name">DeepSeek</span><span class="tile-tag warn">余额</span></div>
+      <div class="tile-value">¥15.42</div>
+      <div class="tile-sub">共享余额 · 约 4 天</div>
+    </div>`;
+  document.getElementById("tiles").innerHTML = mk("codex","Codex","codex") + mk("claude","Claude","claude") + dsTile;
+  document.getElementById("routePill").textContent = c.label;
+  document.getElementById("routeSub").textContent = c.sub;
+}
+
+// ===== 图表 =====
+const BAR_COLORS = {codex:"var(--codex)", cld:"var(--claude)", cc:"var(--cclaude)", wb:"var(--workbuddy)"};
+function renderChart(){
+  const peak = Math.max(...DAYS.map(x=>x.total), 0.01);
+  const bars = DAYS.map(x=>{
+    const segs = [["codex",x.codex],["cld",x.cld],["cc",x.cc],["wb",x.wb]].filter(s=>s[1]>0);
+    const h = x.total>0 ? Math.max(4, x.total/peak*100) : 2;
+    return `<div class="cbar" style="height:${h}%">${segs.map(([k,v])=>`<i class="seg" style="flex:${v};background:${BAR_COLORS[k]}"></i>`).join("")||`<i class="seg" style="height:2px;background:var(--surface3)"></i>`}</div>`;
+  }).join("");
+  document.getElementById("chartBars").innerHTML = bars;
+  document.getElementById("chartDays").innerHTML = DAYS.map(x=>`<span class="${x.today?"today":""}">${x.d}</span>`).join("");
+  document.getElementById("chartDS").innerHTML = DAYS.map(x=>`<span>DS ${Math.round(x.ds*100)}%</span>`).join("");
+  const legend = [
+    ["codex","Codex"],["claude","Claude"],["cclaude","Claude Code"],
+    ["wb","WorkBuddy"],["ds","DeepSeek"]
+  ].map(([k,n])=>`<span class="legend-item">${ico(k,"")}${n}</span>`).join("");
+  document.getElementById("legend").innerHTML = legend;
+}
+
+// ===== 明细表 =====
+function renderTable(){
+  const head = `<tr><th>日期</th><th>Codex</th><th>Claude</th><th>Claude Code</th><th>WorkBuddy</th><th>合计</th></tr>`;
+  const body = DAYS.map(x=>{
+    const fmt = v => v===0 ? "—" : (v>=1 ? v.toFixed(2).replace(/0$/,"")+"亿" : Math.round(v*100)+"万");
+    return `<tr class="${x.today?"today":""}">
+      <td>${x.d}</td><td>${fmt(x.codex)}</td><td>${fmt(x.cld)}</td><td>${fmt(x.cc)}</td><td>${fmt(x.wb)}</td>
+      <td class="tot">${fmt(x.total)}</td></tr>`;
+  }).join("");
+  document.getElementById("tbl").innerHTML = head + body;
+}
+
+// ===== 主题/表面/路由控制 =====
+function applyTheme(){
+  document.documentElement.setAttribute("data-theme", state.theme);
+  document.querySelectorAll("#themeSeg button").forEach(b=>b.classList.toggle("on", b.dataset.themeValue===state.theme));
+}
+function applySurface(){
+  document.querySelectorAll(".screen").forEach(s=>s.classList.remove("on"));
+  document.getElementById("screen-"+state.surface).classList.add("on");
+  document.querySelectorAll("#surfaceSeg button").forEach(b=>b.classList.toggle("on", b.dataset.surface===state.surface));
+}
+function applyCombo(){
+  document.querySelectorAll("#routeSeg button").forEach(b=>b.classList.toggle("on", b.dataset.combo===state.combo));
+  renderSlots(); renderDropdown(); renderTiles();
+}
+function renderAll(){ applyTheme(); applySurface(); applyCombo(); renderChart(); renderTable(); }
+
+document.getElementById("surfaceSeg").addEventListener("click", e=>{
+  const b = e.target.closest("button"); if(!b) return;
+  state.surface = b.dataset.surface; applySurface();
+});
+document.getElementById("themeSeg").addEventListener("click", e=>{
+  const b = e.target.closest("button"); if(!b) return;
+  state.theme = b.dataset.themeValue; applyTheme();
+});
+document.getElementById("routeSeg").addEventListener("click", e=>{
+  const b = e.target.closest("button"); if(!b) return;
+  state.combo = b.dataset.combo; applyCombo();
+});
+document.getElementById("hintToggle").addEventListener("click", ()=>{
+  document.body.classList.toggle("show-hint");
+});
+document.getElementById("langToggle").addEventListener("click", e=>e.target.classList.toggle("on"));
+document.getElementById("loginToggle").addEventListener("click", e=>e.target.classList.toggle("on"));
+
+// URL 参数支持：http(s)://...#surface=menu-bar&theme=dark&combo=bothDS
+function readHash(){
+  try{
+    const p = new URLSearchParams(location.hash.slice(1));
+    if(p.get("surface")) state.surface = p.get("surface");
+    if(p.get("theme")) state.theme = p.get("theme");
+    if(p.get("combo") && COMBOS[p.get("combo")]) state.combo = p.get("combo");
+  }catch(e){}
+}
+
+// 时钟
+const now = new Date();
+const hh = String(now.getHours()).padStart(2,"0"), mm = String(now.getMinutes()).padStart(2,"0");
+const t = `${hh}:${mm}`;
+document.getElementById("mbClock").textContent = t;
+document.getElementById("mbClock2").textContent = t;
+document.getElementById("panelSync").textContent = `${t} 更新`;
+
+readHash();
+renderAll();
+</script>
+</body>
+</html>

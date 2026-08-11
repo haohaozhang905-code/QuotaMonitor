@@ -1,0 +1,383 @@
+import Foundation
+import Observation
+import OSLog
+
+@MainActor @Observable
+final class QuotaStore {
+    private(set) var providers: [ProviderUsage] = []
+    private(set) var lastUpdated: Date?
+    private(set) var errorMessageKey: String?
+    private(set) var isRefreshing = false
+    private(set) var codexResetCredits: CodexResetCredits?
+    private(set) var tokenHistory: [DailyTokenUsage] = []
+    /// 按日期、平台、客户端和模型拆分的原始聚合桶，供 Token 看板的模型维度查询。
+    private(set) var tokenBuckets: [TokenUsageBucket] = []
+    private(set) var codexRoute: CodexRoute = .unknown
+    /// Claude 走官方还是 DeepSeek 路由（由本地 settings 推断）。
+    private(set) var claudeRoute: ClaudeRoute = .unknown
+    private var lastDeepSeekBalance: DeepSeekBalanceSnapshot?
+    /// 各工具按天用量（Codex / Claude 命令行 / Claude 桌面版 / WorkBuddy）。
+    private(set) var claudeHistory: [DailyTokenUsage] = []
+    private(set) var claudeDesktopHistory: [DailyTokenUsage] = []
+    private(set) var workBuddyHistory: [DailyTokenUsage] = []
+    /// Claude 桌面版依赖 cc-switch 本地代理；cc-switch 未运行时数据可能缺失。
+    private(set) var claudeDesktopStale = false
+    /// 各工具内部仅含 DeepSeek 模型的用量（稀疏，不做补零）。
+    private(set) var codexDeepSeekHistory: [DailyTokenUsage] = []
+    private(set) var claudeDeepSeekHistory: [DailyTokenUsage] = []
+    private(set) var desktopDeepSeekHistory: [DailyTokenUsage] = []
+    private(set) var workbuddyDeepSeekHistory: [DailyTokenUsage] = []
+    /// 跨工具汇总的 DeepSeek 用量（稀疏），用于余额消耗估算与官方/DeepSeek 拆分。
+    private(set) var deepSeekHistory: [DailyTokenUsage] = []
+
+    private let codexDirectClient = CodexDirectClient()
+    private let deepSeekBalanceClient = DeepSeekBalanceClient()
+    private let codexSessionTokenClient = CodexSessionTokenClient()
+    private let claudeSessionTokenClient = ClaudeSessionTokenClient()
+    private let workBuddyTraceClient = WorkBuddyTraceClient()
+    private let ccSwitchUsageClient = CCSwitchUsageClient()
+    private let logger = Logger(subsystem: "com.cmsjcm.QuotaMonitor", category: "quota")
+    private var tokenTask: Task<Void, Never>?
+
+    var lowestRemaining: Double? {
+        providers.flatMap { [$0.session?.remainingPercent, $0.weekly?.remainingPercent] }.compactMap { $0 }.min()
+    }
+
+    /// 菜单栏文字：额度（DeepSeek 余额或官方剩余百分比）+ 今日跨工具总用量。
+    var menuBarText: String {
+        let quota: String
+        if codexRoute == .deepseek, let provider = deepSeekProvider {
+            quota = QuotaFormatters.money(provider.balanceAmount ?? 0, currency: provider.balanceCurrency)
+        } else {
+            quota = QuotaFormatters.percent(lowestRemaining)
+        }
+        let today = todayTokenUsage?.total ?? 0
+        guard today > 0 else { return quota }
+        return "\(quota) · \(QuotaFormatters.tokens(today))"
+    }
+
+    /// DeepSeek 余额行。Codex 走 DeepSeek 时它挂在 Codex provider；
+    /// Claude 单独走 DeepSeek 时则使用独立的 deepseek provider。
+    private var deepSeekProvider: ProviderUsage? {
+        providers.first { $0.providerId.lowercased() == "deepseek" && $0.balanceLine != nil }
+            ?? providers.first { $0.providerId.lowercased() == "codex" && $0.balanceLine != nil }
+    }
+
+    var health: QuotaHealth { QuotaHealth(remaining: lowestRemaining) }
+
+    /// DeepSeek 共享余额（跨 Codex / Claude 通道），未获取时为 nil。
+    var deepSeekBalance: Double? { deepSeekProvider?.balanceAmount }
+    var deepSeekCurrency: String? { deepSeekProvider?.balanceCurrency }
+    var deepSeekDays: Int? { deepSeekProvider?.balanceDays }
+
+    /// 是否双通道都走 DeepSeek（菜单栏合并为单槽位）。
+    var bothRoutesDeepSeek: Bool {
+        codexRoute == .deepseek && claudeRoute == .deepseek
+    }
+
+    /// 全部工具的按天合计。来源保留完整可用历史，视图层再按今日/7 日/30 日取窗口。
+    var totalTokenHistory: [DailyTokenUsage] {
+        Self.combineByDay([tokenHistory, claudeHistory, claudeDesktopHistory, workBuddyHistory])
+    }
+
+    private func tokenUsage(for day: Date) -> DailyTokenUsage? {
+        totalTokenHistory.first { $0.id == DailyTokenUsage.dayKey(for: day) }
+    }
+
+    var todayTokenUsage: DailyTokenUsage? { tokenUsage(for: .now) }
+
+    var yesterdayTokenUsage: DailyTokenUsage? {
+        Calendar.current.date(byAdding: .day, value: -1, to: .now).flatMap { tokenUsage(for: $0) }
+    }
+
+    /// 主面板和下拉框共享的展示快照。任何百分比、Top N 与可用性判断都在模型层统一完成。
+    var presentationSnapshot: QuotaPresentationSnapshot {
+        QuotaPresentationSnapshot.make(
+            providers: providers,
+            updatedAt: lastUpdated,
+            errorMessageKey: errorMessageKey,
+            isRefreshing: isRefreshing,
+            codexRoute: codexRoute,
+            claudeRoute: claudeRoute,
+            totalHistory: totalTokenHistory,
+            buckets: tokenBuckets
+        )
+    }
+
+    /// 下拉框只读取这份快照，避免在菜单组装处重新判断路由、额度字段和统计窗口。
+    var dropdownPresentation: DropdownPresentation {
+        QuotaPresentationSnapshot.makeDropdown(
+            presentation: presentationSnapshot,
+            providers: providers,
+            codexRoute: codexRoute,
+            claudeRoute: claudeRoute,
+            deepSeekBalance: deepSeekBalance,
+            deepSeekCurrency: deepSeekCurrency,
+            deepSeekDays: deepSeekDays
+        )
+    }
+
+    func tokenDashboardSnapshot(for period: TokenDashboardPeriod) -> TokenDashboardPresentation {
+        QuotaPresentationSnapshot.makeTokenDashboard(
+            period: period,
+            totalHistory: totalTokenHistory,
+            buckets: tokenBuckets
+        )
+    }
+
+    func start() async {
+        // 启动阶段先完成官方/DeepSeek 历史扫描，使余额可用天数的估算从首屏就正确。
+        await refreshTokenSources()
+        tokenTask = Task { await monitorTokenSources() }
+        defer {
+            tokenTask?.cancel()
+        }
+        await refresh()
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(60))
+            await refresh()
+        }
+    }
+
+    func refresh() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        let previousClaudeRoute = claudeRoute
+        claudeRoute = ClaudeRouteDetector.detect()
+        let detectedRoute = CodexRouteDetector.detect()
+        if detectedRoute != codexRoute || claudeRoute != previousClaudeRoute {
+            resetRouteDependentState(for: detectedRoute)
+        }
+        switch codexRoute {
+        case .official:
+            applyDirectCodex(try? await codexDirectClient.fetch())
+            if claudeRoute == .deepseek {
+                applyDeepSeekBalance(try? await deepSeekBalanceClient.fetch())
+            }
+        case .deepseek:
+            applyDeepSeekBalance(try? await deepSeekBalanceClient.fetch())
+        case .unknown:
+            if claudeRoute == .deepseek {
+                applyDeepSeekBalance(try? await deepSeekBalanceClient.fetch())
+            } else {
+                errorMessageKey = "error.quotaUnavailable"
+            }
+        }
+    }
+
+    /// 路由切换时立即撤下上一条路由的数据，避免官方额度和 DeepSeek 余额短暂混显。
+    private func resetRouteDependentState(for route: CodexRoute) {
+        codexRoute = route
+        providers.removeAll {
+            ["codex", "deepseek"].contains($0.providerId.lowercased())
+        }
+        codexResetCredits = nil
+        lastDeepSeekBalance = nil
+        lastUpdated = nil
+        errorMessageKey = nil
+    }
+
+    private func applyDeepSeekBalance(_ result: DeepSeekBalanceSnapshot?) {
+        guard let result else {
+            logger.info("DeepSeek balance refresh failed")
+            setFailureMessageIfNeeded()
+            return
+        }
+
+        lastDeepSeekBalance = result
+        refreshDeepSeekProvider()
+        logger.info("DeepSeek balance refresh succeeded")
+    }
+
+    /// 用最新余额 + token 历史重建 DeepSeek provider（余额金额、可用天数）。
+    /// Codex 自身走 DeepSeek 时沿用 Codex 卡；否则保留官方 Codex 卡并新增独立余额卡。
+    private func refreshDeepSeekProvider() {
+        guard let balance = lastDeepSeekBalance else { return }
+        let model = CodexRouteDetector.currentModel()
+        let days = TokenCostEstimator.daysSupported(
+            balance: balance.balance,
+            history: deepSeekHistory,
+            model: model
+        )
+        let line = UsageLine(
+            type: "balance",
+            label: "balance",
+            used: balance.balance,
+            limit: days.map(Double.init),
+            resetsAt: nil,
+            periodDurationMs: nil,
+            value: QuotaFormatters.money(balance.balance, currency: balance.currency),
+            subtitle: days.map { "\($0)" }
+        )
+        let provider = ProviderUsage(
+            providerId: codexRoute == .deepseek ? "codex" : "deepseek",
+            displayName: "DeepSeek",
+            plan: "余额制",
+            lines: [line],
+            fetchedAt: balance.fetchedAt,
+            balanceCurrency: balance.currency,
+            model: model
+        )
+        var fresh = providers
+        fresh.removeAll { $0.providerId.lowercased() == provider.providerId.lowercased() }
+        fresh.append(provider)
+        commit(fresh)
+    }
+
+    private func refreshTokenDerivedState() {
+        if (codexRoute == .deepseek || claudeRoute == .deepseek), lastDeepSeekBalance != nil {
+            refreshDeepSeekProvider()
+        }
+    }
+
+    private func applyDirectCodex(_ result: CodexDirectSnapshot?) {
+        guard let result else {
+            logger.info("Codex direct refresh failed")
+            setFailureMessageIfNeeded()
+            return
+        }
+
+        var fresh = providers
+        replace(result.provider, in: &fresh)
+        if let resetCredits = result.resetCredits { codexResetCredits = resetCredits }
+        commit(fresh)
+        logger.info("Codex direct refresh succeeded")
+    }
+
+    private func replace(_ provider: ProviderUsage, in providers: inout [ProviderUsage]) {
+        providers.removeAll { $0.providerId.caseInsensitiveCompare(provider.providerId) == .orderedSame }
+        providers.append(provider)
+    }
+
+    private func commit(_ fresh: [ProviderUsage]) {
+        let sorted = fresh.sorted {
+            if $0.providerId.lowercased() == "codex" { return true }
+            if $1.providerId.lowercased() == "codex" { return false }
+            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+        providers = sorted
+        lastUpdated = .now
+        errorMessageKey = nil
+    }
+
+    private func setFailureMessageIfNeeded() {
+        guard providers.isEmpty else { return }
+        errorMessageKey = "error.quotaUnavailable"
+    }
+
+    private func monitorTokenSources() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(60))
+            await refreshTokenSources()
+        }
+    }
+
+    /// 拉取全部本地 token 来源并落盘快照；按设计稿约定每 60 秒刷新。
+    ///
+    /// 数据来源分工：Codex / Claude 命令行 / WorkBuddy 直接解析本地文件，
+    /// 不依赖 cc-switch；Claude 桌面版唯一来源是 cc-switch 请求日志，
+    /// 它退出时该列显示「未采集」，其余工具不受影响。
+    private func refreshTokenSources() async {
+        tokenHistory = await codexSessionTokenClient.fetch()
+        var freshBuckets = await codexSessionTokenClient.fetchBuckets()
+        codexDeepSeekHistory = await codexSessionTokenClient.fetch(modelFilter: "deepseek")
+
+        claudeHistory = await claudeSessionTokenClient.fetch()
+        freshBuckets.append(contentsOf: await claudeSessionTokenClient.fetchBuckets())
+        claudeDeepSeekHistory = await claudeSessionTokenClient.fetch(modelFilter: "deepseek")
+
+        workBuddyHistory = await workBuddyTraceClient.fetch()
+        freshBuckets.append(contentsOf: await workBuddyTraceClient.fetchBuckets())
+        workbuddyDeepSeekHistory = await workBuddyTraceClient.fetch(modelFilter: "deepseek")
+
+        if let desktop = await ccSwitchUsageClient.fetch(appType: "claude-desktop") {
+            claudeDesktopHistory = desktop.all
+            freshBuckets.append(contentsOf: await ccSwitchUsageClient.fetchBuckets(appType: "claude-desktop") ?? [])
+            desktopDeepSeekHistory = desktop.deepSeek
+            claudeDesktopStale = !CCSwitchUsageClient.isCCSwitchRunning()
+        } else {
+            claudeDesktopHistory = []
+            desktopDeepSeekHistory = []
+            claudeDesktopStale = true
+        }
+
+        tokenBuckets = TokenUsageBucket.combining(freshBuckets)
+
+        if let ccClaude = await ccSwitchUsageClient.fetch(appType: "claude") {
+            crossCheckClaudeSource(cc: ccClaude.all)
+        }
+
+        // DeepSeek 独立行 = 跨工具按模型名归集的汇总（稀疏，保持旧口径）。
+        deepSeekHistory = Self.mergeSparse([
+            codexDeepSeekHistory,
+            claudeDeepSeekHistory,
+            desktopDeepSeekHistory,
+            workbuddyDeepSeekHistory
+        ])
+        logger.info(
+            "sources codex=\(Self.todayTotal(self.tokenHistory)) claude=\(Self.todayTotal(self.claudeHistory)) desktop=\(Self.todayTotal(self.claudeDesktopHistory)) workbuddy=\(Self.todayTotal(self.workBuddyHistory)) deepseek=\(Self.todayTotal(self.deepSeekHistory)) desktopStale=\(self.claudeDesktopStale)"
+        )
+        refreshTokenDerivedState()
+    }
+
+    private static func todayTotal(_ history: [DailyTokenUsage]) -> Int {
+        let key = DailyTokenUsage.dayKey(for: .now)
+        return history.first { $0.id == key }?.total ?? 0
+    }
+
+    /// 用 Claude 命令行转录数字对账 cc-switch 的同源记录；差异超 5% 记日志，
+    /// 展示仍以转录为准。
+    private func crossCheckClaudeSource(cc: [DailyTokenUsage]) {
+        let todayKey = DailyTokenUsage.dayKey(for: .now)
+        guard let ccTotal = cc.first(where: { $0.id == todayKey })?.total,
+              let transcriptTotal = claudeHistory.first(where: { $0.id == todayKey })?.total,
+              transcriptTotal > 0, ccTotal > 0 else { return }
+        let diff = abs(Double(ccTotal - transcriptTotal)) / Double(max(transcriptTotal, 1))
+        if diff > 0.05 {
+            logger.warning(
+                "Claude transcript vs cc-switch mismatch \(String(format: "%.1f", diff * 100), privacy: .public)%"
+            )
+        }
+    }
+
+    /// 把多个稀疏的按天列表按日相加（DeepSeek 跨工具汇总用，不做补零）。
+    private static func mergeSparse(_ histories: [[DailyTokenUsage]]) -> [DailyTokenUsage] {
+        var byDay: [String: DailyTokenUsage] = [:]
+        for history in histories {
+            for usage in history {
+                if let existing = byDay[usage.id] {
+                    byDay[usage.id] = existing.adding(usage)
+                } else {
+                    byDay[usage.id] = usage
+                }
+            }
+        }
+        return byDay.values.sorted { $0.day < $1.day }
+    }
+
+    /// 把多个按天列表按日相加。历史来源现在保留完整日期范围，不能再依赖第一个数组的长度。
+    private static func combineByDay(_ histories: [[DailyTokenUsage]]) -> [DailyTokenUsage] {
+        var byDay: [String: (day: Date, totals: TokenTotals)] = [:]
+        for history in histories {
+            for usage in history {
+                let current = byDay[usage.id]?.totals ?? TokenTotals()
+                byDay[usage.id] = (
+                    day: usage.day,
+                    totals: current.adding(TokenTotals(
+                        input: usage.input,
+                        cachedInput: usage.cachedInput,
+                        cacheWriteInput: usage.cacheWriteInput,
+                        output: usage.output,
+                        reasoning: usage.reasoning
+                    ))
+                )
+            }
+        }
+        return byDay.values
+            .map { DailyTokenUsage(day: $0.day, totals: $0.totals) }
+            .sorted { $0.day < $1.day }
+    }
+
+}

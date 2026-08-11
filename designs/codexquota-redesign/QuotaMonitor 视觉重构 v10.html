@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuotaMonitor · 视觉重构 v10</title>
+  <style>
+    :root {
+      --canvas:#dfe4ea; --desktop-a:#c5d3e2; --desktop-b:#e9eef4;
+      --window:#f6f6f7; --sidebar:#ececef; --panel:#fff; --panel-soft:#f3f3f5;
+      --line:rgba(0,0,0,.085); --line-strong:rgba(0,0,0,.14);
+      --text:#19191c; --secondary:#696971; --tertiary:#9a9aa2;
+      --blue:#4278e7; --blue-soft:#e9effd; --orange:#d9784e; --green:#299a70;
+      --purple:#7567d9; --yellow:#d5a12d; --menu:#0a84ff;
+      --shadow-window:0 28px 80px rgba(24,32,45,.26),0 2px 12px rgba(24,32,45,.15);
+      --shadow-pop:0 18px 48px rgba(18,25,35,.28),0 2px 10px rgba(18,25,35,.15);
+      --font:-apple-system,"SF Pro Text","PingFang SC","Noto Sans SC",sans-serif;
+    }
+    *{box-sizing:border-box} html,body{margin:0;min-height:100%}
+    body{font-family:var(--font);font-size:13px;color:var(--text);background:var(--canvas);-webkit-font-smoothing:antialiased}
+    button{font:inherit;color:inherit} button:focus-visible{outline:2px solid var(--menu);outline-offset:2px}
+    .tabular{font-variant-numeric:tabular-nums}.svg-sprite{position:absolute;width:0;height:0;overflow:hidden}
+    .brand-svg{width:100%;height:100%;display:block;fill:currentColor}
+
+    .prototype-toolbar{min-height:52px;display:flex;align-items:center;gap:14px;padding:8px 18px;position:sticky;top:0;z-index:100;border-bottom:1px solid rgba(0,0,0,.1);background:rgba(248,249,251,.9);backdrop-filter:blur(20px)}
+    .prototype-name{font-weight:650}.prototype-note{margin-top:2px;font-size:11px;color:var(--secondary)}.toolbar-spacer{flex:1}
+    .demo-segment{display:flex;gap:2px;padding:3px;border-radius:8px;background:color-mix(in srgb,var(--panel-soft) 92%,var(--text) 8%)}
+    .demo-segment button{border:0;border-radius:6px;padding:5px 12px;background:transparent;color:var(--secondary);font-size:12px;cursor:pointer}
+    .demo-segment button.active{color:var(--text);background:var(--panel);box-shadow:0 1px 2px rgba(0,0,0,.1)}
+    .plain-control{border:1px solid var(--line-strong);border-radius:7px;padding:5px 10px;background:var(--panel);cursor:pointer;font-size:12px}
+    .stage{padding:24px}.screen{display:none}.screen.active{display:block;animation:reveal 180ms ease-out}
+    @keyframes reveal{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+
+    /* macOS menubar and dropdown */
+    .desktop{max-width:1360px;height:820px;margin:0 auto;border-radius:18px;overflow:hidden;position:relative;box-shadow:var(--shadow-window);background:radial-gradient(circle at 80% 20%,rgba(255,255,255,.72),transparent 25%),radial-gradient(circle at 15% 85%,rgba(158,181,207,.46),transparent 33%),linear-gradient(145deg,var(--desktop-a),var(--desktop-b))}
+    .system-menubar{height:30px;display:flex;align-items:center;gap:18px;padding:0 13px;position:relative;z-index:5;color:#17171a;background:rgba(248,249,251,.84);backdrop-filter:blur(24px) saturate(140%);border-bottom:1px solid rgba(255,255,255,.48);font-size:12px}
+    .apple{font-size:15px;line-height:1}.menu-app{font-weight:650}.menu-spacer{flex:1}.system-items{display:flex;align-items:center;gap:12px}.system-symbol{opacity:.86}
+    .status-item{height:24px;display:flex;align-items:center;gap:5px;padding:0 6px;border-radius:5px;user-select:none}.status-item.active{background:rgba(0,0,0,.11)}
+    .menubar-brand{width:16px;height:18px;display:grid;place-items:center;color:#5f6067}
+    .menubar-brand svg{width:14px;height:14px}.status-divider{width:1px;height:13px;margin:0 2px;background:rgba(0,0,0,.16)}
+    .status-number{font-size:12px;font-weight:400}
+    .popover{position:absolute;z-index:10;top:36px;right:38px;width:410px;overflow:hidden;border:1px solid var(--line-strong);border-radius:13px;color:var(--text);background:color-mix(in srgb,var(--panel) 94%,transparent);backdrop-filter:blur(32px) saturate(145%);box-shadow:var(--shadow-pop)}
+    .pop-header{padding:15px 17px 13px;border-bottom:1px solid var(--line)}.pop-top{display:flex;align-items:center;gap:10px}.pop-brand{font-size:14px;font-weight:650}.sync-label{margin-left:auto;color:var(--tertiary);font-size:10.5px}
+    .hero-line{margin-top:12px;display:flex;align-items:flex-end;gap:8px}.hero-line strong{font-size:34px;line-height:1;letter-spacing:-1px;font-weight:620}.hero-line span{padding-bottom:2px;color:var(--tertiary);font-size:10.5px}.pop-tabs{margin:0 0 1px auto;width:max-content}
+    .pop-section{padding:13px 17px 14px;border-bottom:1px solid var(--line)}.section-label{display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--secondary);font-size:10px;font-weight:700;letter-spacing:.04em}
+    .quota-line{display:grid;grid-template-columns:128px 1fr 1fr;gap:12px;padding:8px 0}.tool-name{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;font-weight:600}.tool-copy{padding-top:1px}.tool-copy small{display:block;margin-top:3px;color:var(--tertiary);font-size:9.5px;font-weight:450}
+    .brand-tile{width:22px;height:22px;display:grid;place-items:center;flex:0 0 auto;color:#66676e}.brand-tile svg{width:18px;height:18px}
+    .quota-metric{min-width:0}.quota-value{display:flex;justify-content:space-between;align-items:baseline;gap:5px;color:var(--secondary);font-size:10.5px}.quota-value b{color:var(--text);font-size:12px;font-weight:580}.reset{margin-top:5px;color:var(--tertiary);font-size:9.5px;line-height:1.3}
+    .compact-list{display:grid;gap:4px}.compact-row{display:grid;grid-template-columns:minmax(0,1fr) 70px 42px;gap:8px;align-items:center;min-height:25px}.compact-row .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--secondary);font-size:11.5px}.compact-row .amount{text-align:right;font-size:10.5px}.compact-row .share{text-align:right;color:var(--tertiary);font-size:9.5px}
+    .popover-actions{padding:6px}.menu-action{width:100%;border:0;border-radius:6px;background:transparent;display:flex;align-items:center;gap:9px;padding:6px 10px;cursor:pointer;text-align:left;font-size:12.5px}.menu-action span:last-child{margin-left:auto;color:var(--tertiary);font-size:11px}.menu-action:hover{color:#fff;background:var(--menu)}.menu-action:hover span:last-child{color:rgba(255,255,255,.76)}
+
+    /* Main window with persistent sidebar */
+    .app-window{max-width:1260px;height:790px;margin:0 auto;overflow:hidden;display:grid;grid-template-columns:196px minmax(0,1fr);border:1px solid var(--line-strong);border-radius:14px;background:var(--window);box-shadow:var(--shadow-window)}
+    .sidebar{min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--line);background:color-mix(in srgb,var(--sidebar) 93%,transparent)}
+    .sidebar-top{height:46px;display:flex;align-items:center;padding:0 14px}.traffic{display:flex;gap:8px}.traffic i{width:12px;height:12px;border-radius:50%}.traffic i:nth-child(1){background:#ff5f57}.traffic i:nth-child(2){background:#febc2e}.traffic i:nth-child(3){background:#28c840}
+    .sidebar-brand{display:flex;align-items:center;gap:9px;padding:17px 16px 14px;font-size:14px;font-weight:660}.app-mark{width:28px;height:28px;display:grid;place-items:center;border-radius:8px;background:var(--blue-soft)}.app-mark img{width:19px;height:19px;object-fit:contain}
+    .side-nav{padding:4px 9px;display:grid;gap:3px}.side-button{height:34px;display:flex;align-items:center;gap:10px;width:100%;border:0;border-radius:7px;padding:0 10px;background:transparent;color:var(--secondary);text-align:left;cursor:pointer;font-size:12px}.side-button svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.side-button.active{color:#3d4de4;background:var(--blue-soft);box-shadow:inset 0 0 0 1px rgba(77,93,251,.08)}
+    .sidebar-foot{margin-top:auto;padding:13px 16px 16px;border-top:1px solid var(--line);color:var(--tertiary);font-size:9.5px;line-height:1.5}.sidebar-foot b{display:block;color:var(--secondary);font-size:10.5px;font-weight:560}
+    .app-main{min-width:0;display:flex;flex-direction:column}.content-toolbar{height:46px;flex:0 0 auto;display:flex;align-items:center;padding:0 17px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--window) 94%,var(--panel))}.content-toolbar strong{font-size:12px;font-weight:590}.content-toolbar span{margin-left:auto;color:var(--tertiary);font-size:10.5px}.icon-button{width:28px;height:28px;margin-left:5px;border:0;border-radius:7px;background:transparent;cursor:pointer;color:var(--secondary)}.icon-button:hover{background:var(--panel-soft)}
+    .window-content{min-height:0;flex:1;overflow:auto;padding:20px 22px 24px}.page{display:none}.page.active{display:block;animation:reveal 160ms ease-out}.page-heading{display:flex;align-items:flex-end;gap:12px;margin-bottom:16px}.page-heading h1{margin:0;font-size:22px;line-height:1.15;letter-spacing:-.4px;font-weight:680}.page-heading p{margin:4px 0 0;color:var(--secondary);font-size:11.5px}.page-heading p .today-token{color:var(--blue);font-size:15px;font-weight:700;letter-spacing:-.15px}.today-delta{display:inline-flex;align-items:center;gap:3px;margin-left:6px;font-size:10.5px;font-weight:620}.today-delta.up{color:#c86a43}.today-delta.down{color:var(--green)}.today-delta b{font-size:11px;line-height:1}.heading-spacer{flex:1}
+    .filter-segment{padding:2px;background:color-mix(in srgb,var(--panel-soft) 90%,var(--text) 10%);border-radius:7px;display:flex;gap:1px}.filter-segment button{border:0;border-radius:5px;padding:5px 10px;background:transparent;color:var(--secondary);cursor:pointer;font-size:11px}.filter-segment button.active{color:var(--text);background:var(--panel);box-shadow:0 1px 2px rgba(0,0,0,.09)}
+    .panel-card{border:1px solid var(--line);border-radius:11px;background:var(--panel)}.card-head{display:flex;align-items:center;gap:9px}.card-head h2{margin:0;font-size:13px;font-weight:630}.card-head span{color:var(--tertiary);font-size:10px}.card-head .right{margin-left:auto}
+    .metric-strip{display:grid;grid-template-columns:1.25fr repeat(4,1fr);overflow:hidden;margin-bottom:14px;border:1px solid var(--line);border-radius:11px;background:var(--panel)}.metric{min-width:0;padding:14px 15px;border-right:1px solid var(--line)}.metric:last-child{border-right:0}.metric-label{color:var(--tertiary);font-size:9.5px;font-weight:570}.metric-value{margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:21px;line-height:1.12;letter-spacing:-.35px;font-weight:620}.metric-value.textual{font-size:16px}.metric-sub{margin-top:4px;color:var(--secondary);font-size:9.5px}
+
+    /* Overview */
+    .overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.overview-quota{padding:12px 14px}.overview-tool{display:flex;align-items:center;gap:8px}.overview-tool h2{margin:0;font-size:13px}.route-inline{display:block;margin-top:2px;color:var(--tertiary);font-size:9px}.health{margin-left:auto;padding:3px 7px;border-radius:6px;color:var(--green);background:color-mix(in srgb,var(--green) 10%,var(--panel));font-size:9px}
+    .quota-facts{display:grid;grid-template-columns:1fr 1fr;margin-top:10px;border-top:1px solid var(--line)}.quota-fact{padding-top:10px}.quota-fact+ .quota-fact{padding-left:13px;border-left:1px solid var(--line)}.quota-fact span{display:block;color:var(--tertiary);font-size:9px}.quota-fact b{display:block;margin-top:2px;font-size:20px;font-weight:620}.quota-fact small{display:block;margin-top:3px;color:var(--secondary);font-size:9px}
+    .overview-bottom{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.summary-card{padding:14px 15px}.summary-number{margin-top:12px;font-size:28px;letter-spacing:-.7px;font-weight:620}.summary-number small{font-size:10px;color:var(--tertiary);font-weight:500}.mini-columns{height:132px;margin-top:10px;position:relative;border-bottom:1px solid var(--line)}.mini-columns:before{content:"";position:absolute;inset:18px 0 28px;background:repeating-linear-gradient(to bottom,transparent 0 36px,var(--line) 37px 38px)}.mini-columns svg{position:relative;width:100%;height:100%;display:block;overflow:visible}.mini-columns .trend-area{fill:url(#miniTrendFill)}.mini-columns .trend-line{fill:none;stroke:var(--blue);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.mini-columns circle{fill:var(--panel);stroke:var(--blue);stroke-width:2}
+    .overview-breakdown{grid-column:2;grid-row:1;display:grid;grid-template-columns:1fr;gap:14px}.simple-list{display:grid;gap:10px;margin-top:14px}.simple-row{display:grid;grid-template-columns:minmax(0,1fr) 64px 40px;gap:8px;align-items:center}.simple-row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px}.simple-row .value{text-align:right;color:var(--secondary);font-size:10px}.simple-row .share{text-align:right;color:var(--tertiary);font-size:9.5px}
+
+    /* Quota */
+    .quota-summary{display:grid;grid-template-columns:1fr 1fr;gap:14px}.quota-card{padding:18px}.quota-card-head{display:flex;align-items:center;gap:9px}.quota-card-head h2{margin:0;font-size:15px;font-weight:640}.quota-card-head .tool-route{display:block;margin-top:3px;color:var(--tertiary);font-size:9.5px}.route-tag{margin-left:auto;padding:3px 8px;border-radius:6px;color:var(--secondary);background:var(--panel-soft);font-size:9.5px}
+    .quota-detail{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:end;padding:18px 0;border-bottom:1px solid var(--line)}.quota-detail:last-child{border-bottom:0}.quota-detail-copy b{display:block;font-size:12px;font-weight:590}.quota-detail-copy span{display:block;margin-top:4px;color:var(--secondary);font-size:10px}.quota-detail-value{text-align:right}.quota-detail-value b{display:block;font-size:25px;font-weight:620}.quota-detail-value span{display:block;margin-top:4px;color:var(--tertiary);font-size:9.5px}.source-card{margin-top:14px;padding:16px 18px;display:flex;align-items:center;gap:12px}.source-card strong{font-size:12px}.source-card span{color:var(--secondary);font-size:10.5px}.source-value{margin-left:auto;text-align:right}.source-value b{display:block;font-size:17px;font-weight:610}
+
+    /* Token */
+    .chart-card{width:100%;min-height:320px;padding:15px 16px 16px}.chart-wrap{position:relative;height:220px;margin-top:15px;padding:0 4px 46px 39px}.y-label{position:absolute;left:0;color:var(--tertiary);font-size:9px;transform:translateY(-50%)}.grid-line{position:absolute;left:38px;right:4px;height:1px;background:var(--line)}.bars{position:absolute;left:41px;right:4px;top:0;bottom:46px;display:flex;align-items:flex-end;gap:4px}.bar-column{flex:1;min-width:3px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;position:relative}.bar-stack{width:min(76%,22px);margin:0 auto;display:flex;flex-direction:column-reverse;gap:1px}.bar-segment{display:block;min-height:1px;border-radius:2px 2px 0 0}.bar-label{position:absolute;top:calc(100% + 9px);left:50%;transform:translateX(-50%);color:var(--tertiary);font-size:8.5px;white-space:nowrap}.legend{display:flex;align-items:center;justify-content:center;gap:13px;flex-wrap:wrap;margin-top:14px}.legend-item{display:flex;align-items:center;gap:5px;color:var(--secondary);font-size:10px}.legend-swatch{width:8px;height:8px;border-radius:2px}
+    .breakdown-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.rank-card{padding:15px 16px}.ranking{display:grid;gap:12px;margin-top:16px}.rank-row{display:grid;grid-template-columns:minmax(112px,1fr) minmax(64px,.9fr) 58px 38px;gap:8px;align-items:center}.rank-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px}.rank-track{height:4px;overflow:hidden;border-radius:99px;background:var(--panel-soft)}.rank-track i{display:block;height:100%;border-radius:inherit}.rank-value{text-align:right;color:var(--secondary);font-size:9.5px}.rank-share{text-align:right;color:var(--tertiary);font-size:9px}
+    .activity-card{margin-top:14px;padding:15px 16px}.activity-head{display:flex;align-items:flex-end}.activity-head strong{font-size:13px}.activity-head span{margin-left:8px;color:var(--tertiary);font-size:10px}.heat-legend{margin-left:auto;display:flex;align-items:center;gap:4px;color:var(--tertiary);font-size:9px}.heat-legend i{width:9px;height:9px;border-radius:2px;border:1px solid var(--line);background:var(--panel)}.calendar-months{display:grid;grid-template-columns:repeat(12,1fr);margin:15px 0 5px 30px;color:var(--tertiary);font-size:8.5px}.calendar-body{display:grid;grid-template-columns:23px 1fr;gap:7px}.weekdays{height:82px;display:grid;grid-template-rows:repeat(7,1fr);color:var(--tertiary);font-size:8px}.weekdays span{display:flex;align-items:center}.year-heatmap{height:82px;display:grid;grid-template-columns:repeat(53,minmax(5px,1fr));grid-template-rows:repeat(7,1fr);grid-auto-flow:column;gap:3px}.heat{min-width:4px;border:1px solid var(--line);border-radius:2px;background:var(--panel)}.heat.l1{border-color:transparent;background:color-mix(in srgb,var(--blue) 20%,var(--panel))}.heat.l2{border-color:transparent;background:color-mix(in srgb,var(--blue) 42%,var(--panel))}.heat.l3{border-color:transparent;background:color-mix(in srgb,var(--blue) 68%,var(--panel))}.heat.l4{border-color:transparent;background:var(--blue)}
+
+    /* Settings */
+    .settings-stack{max-width:720px;display:grid;gap:14px}.settings-card{overflow:hidden}.settings-head{padding:13px 15px;border-bottom:1px solid var(--line);font-size:11px;font-weight:620}.setting-row{min-height:48px;display:flex;align-items:center;gap:16px;padding:8px 15px;border-bottom:1px solid var(--line)}.setting-row:last-child{border-bottom:0}.setting-copy b{display:block;font-size:11.5px;font-weight:570}.setting-copy span{display:block;margin-top:3px;color:var(--tertiary);font-size:9.5px}.setting-control{margin-left:auto;color:var(--secondary);font-size:10.5px}.toggle{width:31px;height:18px;padding:2px;border:0;border-radius:99px;background:var(--green)}.toggle:after{content:"";display:block;width:14px;height:14px;margin-left:auto;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+    @media(max-width:980px){.prototype-note{display:none}.stage{padding:12px}.app-window,.desktop{min-width:900px}}
+  </style>
+</head>
+<body>
+  <svg class="svg-sprite" aria-hidden="true"><defs>
+    <symbol id="i-quota" viewBox="0 0 24 24"><path d="M12 2.5a9.5 9.5 0 1 0 7.2 15.7l-2-1.6A6.9 6.9 0 1 1 18.9 12h-3.3l4.3 4.3 4.3-4.3h-2.5A9.5 9.5 0 0 0 12 2.5Z"/><path d="M12 7.2a4.8 4.8 0 1 0 4.8 4.8H12V7.2Z"/></symbol>
+    <symbol id="i-codex" viewBox="0 0 24 24"><path d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z"/></symbol>
+    <symbol id="i-claude" viewBox="0 0 24 24"><path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"/></symbol>
+  </defs></svg>
+
+  <header class="prototype-toolbar">
+      <div><div class="prototype-name">QuotaMonitor</div><div class="prototype-note">额度、账户余额与 Token 用量</div></div>
+    <div class="demo-segment" id="sceneSwitch"><button type="button" data-scene="dropdown" class="active">状态栏与下拉框</button><button type="button" data-scene="main">主面板</button></div>
+    <div class="toolbar-spacer"></div>
+  </header>
+
+  <main class="stage">
+    <section class="screen active" id="screen-dropdown" data-screen-label="状态栏与下拉框">
+      <div class="desktop">
+        <div class="system-menubar">
+          <span class="apple">●</span><span class="menu-app">Finder</span><span>文件</span><span>编辑</span><span>显示</span><span>前往</span><span>窗口</span><span>帮助</span><span class="menu-spacer"></span>
+          <div class="system-items"><span class="system-symbol">◒</span><span class="system-symbol">⌁</span><span class="system-symbol">▰</span>
+            <div class="status-item active" title="QuotaMonitor">
+              <span class="menubar-brand"><svg class="brand-svg"><use href="#i-codex"/></svg></span><span class="status-number tabular">92%</span><i class="status-divider"></i>
+              <span class="menubar-brand"><svg class="brand-svg"><use href="#i-claude"/></svg></span><span class="status-number tabular">¥13.62</span>
+            </div>
+            <span class="system-symbol">⌕</span><span class="system-symbol tabular">8月10日 周一 18:50</span>
+          </div>
+        </div>
+
+        <aside class="popover" aria-label="QuotaMonitor 下拉面板">
+          <div class="pop-header">
+            <div class="pop-top"><div class="pop-brand">QuotaMonitor</div><span class="sync-label">刚刚更新</span></div>
+            <div class="hero-line"><strong class="tabular" id="popTotal">70.2M</strong><span>今日 Token 消耗</span></div>
+          </div>
+          <div class="pop-section">
+            <div class="section-label">额度</div>
+            <div class="quota-line">
+              <div class="tool-name"><span class="brand-tile"><svg class="brand-svg"><use href="#i-codex"/></svg></span><span class="tool-copy">Codex</span></div>
+              <div class="quota-metric"><div class="quota-value"><span>会话额度</span><b class="tabular">92%</b></div><div class="reset">4 小时 12 分后重置</div></div>
+              <div class="quota-metric"><div class="quota-value"><span>周额度</span><b class="tabular">63%</b></div><div class="reset">5 天 16 小时后重置</div></div>
+            </div>
+            <div class="quota-line">
+              <div class="tool-name"><span class="brand-tile"><svg class="brand-svg"><use href="#i-claude"/></svg></span><span class="tool-copy">Claude<small>DeepSeek 路由</small></span></div>
+              <div class="quota-metric"><div class="quota-value"><span>余额</span><b class="tabular">¥13.62</b></div><div class="reset">余额制，无重置时间</div></div>
+              <div class="quota-metric"><div class="quota-value"><span>预计可用</span><b class="tabular">约 3 天</b></div><div class="reset">按近 7 日均耗估算</div></div>
+            </div>
+          </div>
+          <div class="pop-section"><div class="section-label">平台</div><div class="compact-list">
+            <div class="compact-row"><span class="name">Codex</span><span class="amount tabular">65.6M</span><span class="share tabular">93.5%</span></div>
+            <div class="compact-row"><span class="name">Claude</span><span class="amount tabular">4.6M</span><span class="share tabular">6.1%</span></div>
+            <div class="compact-row"><span class="name">WorkBuddy</span><span class="amount tabular">0.3M</span><span class="share tabular">0.4%</span></div>
+          </div></div>
+          <div class="pop-section"><div class="section-label">模型</div><div class="compact-list">
+            <div class="compact-row"><span class="name">deepseek-v4-flash</span><span class="amount tabular">28.2M</span><span class="share tabular">40.2%</span></div>
+            <div class="compact-row"><span class="name">gpt-5.6-sol</span><span class="amount tabular">24.7M</span><span class="share tabular">35.2%</span></div>
+            <div class="compact-row"><span class="name">gpt-5.6-terra</span><span class="amount tabular">12.4M</span><span class="share tabular">17.7%</span></div>
+          </div></div>
+          <div class="popover-actions"><button type="button" class="menu-action" id="openMain"><span>打开主面板</span><span>⌘ O</span></button><button type="button" class="menu-action" id="refreshData"><span>立即刷新</span><span>⌘ R</span></button><button type="button" class="menu-action" id="openSettings"><span>设置…</span><span>⌘ ,</span></button></div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="screen" id="screen-main" data-screen-label="主面板">
+      <div class="app-window">
+        <aside class="sidebar">
+          <div class="sidebar-top"><span class="traffic"><i></i><i></i><i></i></span></div>
+          <div class="sidebar-brand"><span class="app-mark"><img src="assets/quota-monitor-menubar.png" alt=""></span>QuotaMonitor</div>
+          <nav class="side-nav" id="sideNav">
+            <button type="button" class="side-button active" data-page="overview"><svg viewBox="0 0 20 20"><path d="M3 9.2 10 3l7 6.2v7.3H3z"/><path d="M7.5 16.5v-5h5v5"/></svg>总览</button>
+            <button type="button" class="side-button" data-page="tokens"><svg viewBox="0 0 20 20"><path d="M3 16V9M8 16V5M13 16v-7M18 16V3"/></svg>Token 消耗</button>
+            <button type="button" class="side-button" data-page="settings"><svg viewBox="0 0 20 20"><path d="M3 5h14M3 10h14M3 15h14"/><circle cx="8" cy="5" r="1.7"/><circle cx="13" cy="10" r="1.7"/><circle cx="6" cy="15" r="1.7"/></svg>设置</button>
+          </nav>
+          <div class="sidebar-foot"><b>数据连接正常</b>4 个来源 · 60 秒自动刷新</div>
+        </aside>
+
+        <div class="app-main">
+          <div class="window-content">
+            <section class="page active" id="page-overview">
+              <div class="page-heading"><div><h1>额度与用量</h1><p>当前额度、账户余额和今日 Token 消耗 <strong class="today-token tabular">70.2M</strong><span class="today-delta up"><b>↑</b>较昨日 12.8%</span></p></div></div>
+              <div class="overview-grid">
+                <article class="panel-card overview-quota"><div class="overview-tool"><span class="brand-tile"><svg class="brand-svg"><use href="#i-codex"/></svg></span><div><h2>Codex</h2><span class="route-inline">Plus · 官方</span></div><span class="health">正常</span></div><div class="quota-facts"><div class="quota-fact"><span>会话额度</span><b class="tabular">92%</b><small>4 小时 12 分后重置</small></div><div class="quota-fact"><span>周额度</span><b class="tabular">63%</b><small>5 天 16 小时后重置</small></div></div></article>
+                <article class="panel-card overview-quota"><div class="overview-tool"><span class="brand-tile"><svg class="brand-svg"><use href="#i-claude"/></svg></span><div><h2>Claude</h2><span class="route-inline">DeepSeek 路由</span></div><span class="health">正常</span></div><div class="quota-facts"><div class="quota-fact"><span>共享余额</span><b class="tabular">¥13.62</b><small>余额制，无重置时间</small></div><div class="quota-fact"><span>预计可用</span><b class="tabular">约 3 天</b><small>按近 7 日均耗估算</small></div></div></article>
+              </div>
+              <div class="overview-bottom">
+                <article class="panel-card summary-card"><div class="card-head"><h2>近 7 日 Token</h2><span class="right">较上周 +12.8%</span></div><div class="summary-number tabular">475.0M <small>TOKENS</small></div><div class="mini-columns" id="overviewBars"></div></article>
+                <div class="overview-breakdown">
+                  <article class="panel-card summary-card"><div class="card-head"><h2>平台</h2><span class="right">近 7 日</span></div><div class="simple-list"><div class="simple-row"><span class="name">Codex</span><span class="value tabular">436.2M</span><span class="share">91.8%</span></div><div class="simple-row"><span class="name">Claude</span><span class="value tabular">30.1M</span><span class="share">6.3%</span></div><div class="simple-row"><span class="name">WorkBuddy</span><span class="value tabular">8.1M</span><span class="share">1.7%</span></div></div></article>
+                  <article class="panel-card summary-card"><div class="card-head"><h2>模型</h2><span class="right">近 7 日</span></div><div class="simple-list"><div class="simple-row"><span class="name">deepseek-v4-flash</span><span class="value tabular">348.0M</span><span class="share">73.3%</span></div><div class="simple-row"><span class="name">gpt-5.6-sol</span><span class="value tabular">64.9M</span><span class="share">13.7%</span></div><div class="simple-row"><span class="name">gpt-5.6-terra</span><span class="value tabular">45.0M</span><span class="share">9.5%</span></div></div></article>
+                </div>
+              </div>
+            </section>
+
+            <section class="page" id="page-tokens">
+              <div class="page-heading"><div><h1>Token 消耗</h1><p>平台归属和实际模型同时统计</p></div><span class="heading-spacer"></span><div class="filter-segment" id="timeFilter"><button type="button" data-time="week" class="active">近 7 日</button><button type="button" data-time="month">近 30 日</button><button type="button" data-time="quarter">近 90 日</button><button type="button" data-time="all">累计</button></div></div>
+              <div class="metric-strip"><div class="metric"><div class="metric-label">总 TOKEN</div><div class="metric-value tabular" id="metricTotal">475.0M</div></div><div class="metric"><div class="metric-label">日均 TOKEN</div><div class="metric-value tabular" id="metricAverage">67.9M</div></div><div class="metric"><div class="metric-label">峰值日</div><div class="metric-value tabular" id="metricPeak">193.0M</div></div><div class="metric"><div class="metric-label">主要平台</div><div class="metric-value textual">Codex</div></div><div class="metric"><div class="metric-label">主要模型</div><div class="metric-value textual">deepseek-v4-flash</div></div></div>
+              <article class="panel-card chart-card"><div class="card-head"><h2>Token 趋势</h2><span>按平台堆叠</span><span class="right tabular" id="chartPeak">峰值 212.2M</span></div><div class="chart-wrap"><span class="y-label" style="top:0">220M</span><span class="y-label" style="top:calc(33.333% - 15.333px)">147M</span><span class="y-label" style="top:calc(66.667% - 30.667px)">73M</span><span class="y-label" style="top:calc(100% - 46px)">0</span><i class="grid-line" style="top:0"></i><i class="grid-line" style="top:calc(33.333% - 15.333px)"></i><i class="grid-line" style="top:calc(66.667% - 30.667px)"></i><i class="grid-line" style="top:calc(100% - 46px)"></i><div class="bars" id="bars"></div></div><div class="legend"><span class="legend-item"><i class="legend-swatch" style="background:var(--blue)"></i>Codex</span><span class="legend-item"><i class="legend-swatch" style="background:var(--orange)"></i>Claude</span><span class="legend-item"><i class="legend-swatch" style="background:var(--green)"></i>WorkBuddy</span><span class="legend-item"><i class="legend-swatch" style="background:var(--purple)"></i>Kimi</span></div></article>
+              <div class="breakdown-grid"><article class="panel-card rank-card"><div class="card-head"><h2>平台用量</h2></div><div class="ranking" id="platformRanking"></div></article><article class="panel-card rank-card"><div class="card-head"><h2>模型用量</h2></div><div class="ranking" id="modelRanking"></div></article></div>
+              <article class="panel-card activity-card"><div class="activity-head"><strong>365 天 Token 用量</strong><span>每天一个方格，颜色越深表示用量越高</span><div class="heat-legend">少 <i></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i> 多</div></div><div class="calendar-months"><span>9月</span><span>10月</span><span>11月</span><span>12月</span><span>1月</span><span>2月</span><span>3月</span><span>4月</span><span>5月</span><span>6月</span><span>7月</span><span>8月</span></div><div class="calendar-body"><div class="weekdays"><span>一</span><span></span><span>三</span><span></span><span>五</span><span></span><span>日</span></div><div class="year-heatmap" id="tokenHeatmap" aria-label="过去 365 天 Token 用量日历"></div></div></article>
+            </section>
+
+            <section class="page" id="page-settings">
+              <div class="page-heading"><div><h1>设置</h1><p>数据来源、刷新频率与应用行为</p></div></div>
+              <div class="settings-stack"><article class="panel-card settings-card"><div class="settings-head">通用</div><div class="setting-row"><div class="setting-copy"><b>登录时启动</b><span>开机后自动显示额度状态</span></div><button class="setting-control toggle" aria-label="登录时启动"></button></div><div class="setting-row"><div class="setting-copy"><b>自动刷新</b><span>更新额度和 Token 数据</span></div><span class="setting-control">每 60 秒　›</span></div><div class="setting-row"><div class="setting-copy"><b>菜单栏显示</b><span>同时显示 Codex 剩余与 Claude 余额</span></div><span class="setting-control">Codex + Claude　›</span></div></article><article class="panel-card settings-card"><div class="settings-head">数据来源</div><div class="setting-row"><div class="setting-copy"><b>Codex</b><span>官方 OAuth · 已连接</span></div><span class="setting-control">管理连接　›</span></div><div class="setting-row"><div class="setting-copy"><b>Claude</b><span>DeepSeek 路由 · 已连接</span></div><span class="setting-control">管理连接　›</span></div><div class="setting-row"><div class="setting-copy"><b>Token 日志</b><span>Codex、Claude、WorkBuddy、Kimi</span></div><span class="setting-control">4 个来源　›</span></div></article></div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $$=(selector)=>[...document.querySelectorAll(selector)];
+    const activate=(buttons,current)=>buttons.forEach(button=>button.classList.toggle('active',button===current));
+    const sceneButtons=$$('#sceneSwitch button');
+    sceneButtons.forEach(button=>button.addEventListener('click',()=>{activate(sceneButtons,button);$$('.screen').forEach(screen=>screen.classList.toggle('active',screen.id===`screen-${button.dataset.scene}`));}));
+
+    const pageTitles={overview:'总览',tokens:'Token 消耗',settings:'设置'};
+    const navButtons=$$('#sideNav button');
+    function openPage(name){activate(navButtons,navButtons.find(button=>button.dataset.page===name));$$('.page').forEach(page=>page.classList.toggle('active',page.id===`page-${name}`));}
+    navButtons.forEach(button=>button.addEventListener('click',()=>openPage(button.dataset.page)));
+    document.getElementById('openMain').addEventListener('click',()=>{sceneButtons[1].click();openPage('overview');});
+    document.getElementById('openSettings').addEventListener('click',()=>{sceneButtons[1].click();openPage('settings');});
+    document.getElementById('refreshData').addEventListener('click',()=>{const label=document.querySelector('.sync-label');label.textContent='更新于刚刚';});
+    document.addEventListener('keydown',event=>{if(!(event.metaKey||event.ctrlKey))return;const key=event.key.toLowerCase();if(key==='o'){event.preventDefault();document.getElementById('openMain').click();}if(key==='r'){event.preventDefault();document.getElementById('refreshData').click();}if(key===','){event.preventDefault();document.getElementById('openSettings').click();}});
+
+    const platformData=[{name:'Codex',value:'986.3M',share:'53.0%',width:53,color:'var(--blue)'},{name:'Claude',value:'818.4M',share:'44.0%',width:44,color:'var(--orange)'},{name:'WorkBuddy',value:'48.3M',share:'2.6%',width:2.6,color:'var(--green)'},{name:'Kimi',value:'7.0M',share:'0.4%',width:.4,color:'var(--purple)'}];
+    const modelData=[{name:'deepseek-v4-flash',value:'747.7M',share:'40.2%',width:40.2,color:'var(--blue)'},{name:'gpt-5.6-sol',value:'651.0M',share:'35.0%',width:35,color:'var(--orange)'},{name:'gpt-5.6-terra',value:'272.5M',share:'14.7%',width:14.7,color:'var(--green)'},{name:'ops-4.7',value:'132.0M',share:'7.1%',width:7.1,color:'var(--purple)'},{name:'其他模型',value:'56.8M',share:'3.0%',width:3,color:'var(--yellow)'}];
+    function renderRank(id,data){document.getElementById(id).innerHTML=data.map(item=>`<div class="rank-row"><span class="rank-name" title="${item.name}">${item.name}</span><span class="rank-track"><i style="width:${Math.max(item.width,1)}%;background:${item.color}"></i></span><span class="rank-value tabular">${item.value}</span><span class="rank-share tabular">${item.share}</span></div>`).join('');}
+    renderRank('platformRanking',platformData);renderRank('modelRanking',modelData);
+
+    const palette=['var(--blue)','var(--orange)','var(--green)','var(--purple)'];
+    const series={
+      today:[{label:'今天',values:[65,4.6,.3,.3]}],
+      week:Array.from({length:7},(_,i)=>({label:i===6?'今天':`8/${4+i}`,values:i===3?[120,50,15,8]:[18+((i*37)%70),4+((i*11)%24),1+((i*3)%8),((i*5)%5)]})),
+      month:Array.from({length:30},(_,i)=>({label:i%5===0?`7/${12+i}`:'',values:[22+((i*31)%108),8+((i*17)%52),2+((i*7)%11),((i*5)%7)]})),
+      quarter:Array.from({length:30},(_,i)=>({label:i%5===0?`6/${1+i*3}`:'',values:[28+((i*29)%130),10+((i*13)%60),2+((i*5)%13),((i*7)%9)]})),
+      all:Array.from({length:12},(_,i)=>({label:`${i+1}月`,values:[75+((i*47)%210),58+((i*29)%180),8+((i*9)%34),((i*13)%22)]}))
+    };
+    function renderBars(range){const data=series[range];const peak=Math.max(...data.map(day=>day.values.reduce((a,b)=>a+b,0)));const scale=range==='all'?500:220;document.getElementById('bars').innerHTML=data.map(day=>`<div class="bar-column"><div class="bar-stack">${day.values.map((value,index)=>`<i class="bar-segment" style="height:${Math.max(1,value/scale*230)}px;background:${palette[index]}"></i>`).join('')}</div><span class="bar-label">${day.label}</span></div>`).join('');document.getElementById('chartPeak').textContent=`峰值 ${range==='all'?(peak/1000).toFixed(2)+'B':peak.toFixed(1)+'M'}`;}
+    const metrics={week:['475.0M','67.9M','193.0M'],month:['1.86B','62.0M','212.2M'],quarter:['5.31B','59.0M','318.6M'],all:['4.26B','51.3M','318.6M']};
+    const timeButtons=$$('#timeFilter button');timeButtons.forEach(button=>button.addEventListener('click',()=>{activate(timeButtons,button);const m=metrics[button.dataset.time];document.getElementById('metricTotal').textContent=m[0];document.getElementById('metricAverage').textContent=m[1];document.getElementById('metricPeak').textContent=m[2];renderBars(button.dataset.time);}));
+    renderBars('week');
+
+    document.getElementById('overviewBars').innerHTML=`<svg viewBox="0 0 360 124" preserveAspectRatio="none" aria-label="近 7 日 Token 趋势"><defs><linearGradient id="miniTrendFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#4278e7" stop-opacity=".26"/><stop offset="1" stop-color="#4278e7" stop-opacity=".02"/></linearGradient></defs><path class="trend-area" d="M0 94 C18 89 30 62 52 58 S88 86 103 78 S139 24 154 21 S190 54 206 47 S239 86 257 96 S294 65 309 70 S341 48 360 40 L360 124 L0 124 Z"/><path class="trend-line" d="M0 94 C18 89 30 62 52 58 S88 86 103 78 S139 24 154 21 S190 54 206 47 S239 86 257 96 S294 65 309 70 S341 48 360 40"/><circle cx="0" cy="94" r="3"/><circle cx="52" cy="58" r="3"/><circle cx="103" cy="78" r="3"/><circle cx="154" cy="21" r="3"/><circle cx="206" cy="47" r="3"/><circle cx="257" cy="96" r="3"/><circle cx="360" cy="40" r="3"/></svg>`;
+    const heatLevels=Array.from({length:365},(_,i)=>{if(i<70)return 0;const wave=(Math.sin(i*.31)+Math.cos(i*.13)+2)/4;if((i*17)%19<5)return 0;return wave>.77?4:wave>.58?3:wave>.38?2:1;});
+    const heatMarkup=heatLevels.map(level=>`<i class="heat ${level?`l${level}`:''}" title="${level?'有 Token 消耗':'无使用'}"></i>`).join('');
+    document.getElementById('tokenHeatmap').innerHTML=heatMarkup;
+    if(location.hash.includes('main'))sceneButtons[1].click();if(location.hash.includes('token'))openPage('tokens');else if(location.hash.includes('settings'))openPage('settings');
+  </script>
+</body>
+</html>
