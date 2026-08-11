@@ -4,7 +4,7 @@
 
 状态：已确认，作为后续 UI 与展示逻辑改造的唯一设计依据
 
-参考视觉稿：`designs/codexquota-runtime/QuotaMonitor 改造版.html`
+本规范记录 QuotaMonitor 当前实现采用的视觉与交互规则。
 
 ## 0. 文档目的
 

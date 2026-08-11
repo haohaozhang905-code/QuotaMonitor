@@ -7,6 +7,8 @@ dist/
 .workbuddy/
 .product-design/
 design-qa.md
+designs/
+icons_gen/
 *.dmg
 *.zip
 
