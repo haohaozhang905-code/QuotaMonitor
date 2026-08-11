@@ -34,7 +34,7 @@
 
 ## Installation
 
-When a notarized build is published, download `QuotaMonitor-x.y.z.dmg` from [GitHub Releases](https://github.com/MeowkingCP/QuotaDot/releases), drag QuotaMonitor to Applications, then launch it after signing in to Codex. If you use DeepSeek through Claude, keep the active provider configured in Claude or cc-switch so its balance credential can be read locally.
+When a notarized build is published, download `QuotaMonitor-x.y.z.dmg` from [GitHub Releases](https://github.com/haohaozhang905-code/QuotaMonitor/releases), drag QuotaMonitor to Applications, then launch it after signing in to Codex. If you use DeepSeek through Claude, keep the active provider configured in Claude or cc-switch so its balance credential can be read locally.
 
 ## Privacy
 
