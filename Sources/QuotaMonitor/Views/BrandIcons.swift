@@ -97,7 +97,7 @@ private struct CodexBrandIcon: View {
     }
 }
 
-/// Claude：官方星芒标，官方橙 #D97757。
+/// Claude：官方星芒标，暖橙色。
 private struct ClaudeBrandIcon: View {
     let size: CGFloat
     var body: some View {
@@ -106,12 +106,12 @@ private struct ClaudeBrandIcon: View {
     }
 }
 
-/// Claude Code：官方终端括号标。
+/// Claude Code：官方终端括号标，用独立紫色与 Claude 的暖橙色区分。
 private struct ClaudeCodeBrandIcon: View {
     let size: CGFloat
     var body: some View {
         BrandShape(path: BrandPaths.claudeCode, viewBox: 24)
-            .fill(PanelTheme.dynamic("#D97757", "#D97B4F"))
+            .fill(PanelTheme.claudeCode)
     }
 }
 
@@ -188,7 +188,7 @@ extension BrandIconKind {
         switch self {
         case .codex: PanelTheme.codex
         case .claude: PanelTheme.claude
-        case .claudeCode: PanelTheme.cclaude
+        case .claudeCode: PanelTheme.claudeCode
         case .deepSeek: PanelTheme.deepseek
         case .workBuddy: PanelTheme.workbuddy
         }

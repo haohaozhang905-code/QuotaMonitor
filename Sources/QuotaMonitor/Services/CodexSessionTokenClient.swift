@@ -31,7 +31,6 @@ actor CodexSessionTokenClient {
 
     private var cache: [URL: CachedUsage] = [:]
     private var didLoadPersistentCache = false
-    private let maximumFileSize = 50 * 1024 * 1024
     private let root: URL
     private let persistentCacheURL: URL?
 
@@ -199,9 +198,6 @@ actor CodexSessionTokenClient {
         _ url: URL,
         fallbackDay: Date?
     ) -> (totalsByDay: [String: TokenTotals], deepSeekByDay: [String: TokenTotals], modelByDay: [String: TokenTotals])? {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let size = (attributes[.size] as? NSNumber)?.intValue,
-              size <= maximumFileSize else { return nil }
         var lastTotals: TokenTotals?
         var lastDayKey: String?
         // 模型出现在 payload.state.model（状态行），需跨行跟踪当前生效模型。

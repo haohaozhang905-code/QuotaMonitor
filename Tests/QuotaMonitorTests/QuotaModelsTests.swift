@@ -86,8 +86,8 @@ struct QuotaModelsTests {
             deepSeekDays: nil
         )
         #expect(noQuota.availability == .connectedOnly)
-        #expect(noQuota.codexQuota == .connectedWithoutQuota)
-        #expect(noQuota.claudeQuota == .unavailable)
+        #expect(noQuota.quotaItems.map(\.platform) == [.codex])
+        #expect(noQuota.quotaItems.first?.state == .connectedWithoutQuota)
 
         let sharedBalance = QuotaPresentationSnapshot.makeDropdown(
             presentation: connected,
@@ -98,8 +98,10 @@ struct QuotaModelsTests {
             deepSeekCurrency: "CNY",
             deepSeekDays: 7
         )
-        #expect(sharedBalance.codexQuota == .sharedBalance(amount: 12.26, currency: "CNY", estimatedDays: 7))
-        #expect(sharedBalance.claudeQuota == .sharedBalance(amount: 12.26, currency: "CNY", estimatedDays: 7))
+        #expect(sharedBalance.quotaItems.map(\.platform) == [.codex, .claude])
+        #expect(sharedBalance.quotaItems.allSatisfy {
+            $0.state == .sharedBalance(amount: 12.26, currency: "CNY", estimatedDays: 7)
+        })
     }
 
     @Test func tokenDashboardUsesNaturalDaysForTotalsAndAverages() {

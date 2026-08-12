@@ -160,6 +160,7 @@
 "overview.low" = "Low";
 "overview.critical" = "Critical";
 "overview.quotaUnavailable" = "Quota data unavailable";
+"overview.noQuotaSources" = "No quota sources detected. Token usage history remains available.";
 "overview.last7Title" = "Last 7 days tokens";
 "overview.last7Note" = "Last 7 days";
 "overview.platform" = "Platform";

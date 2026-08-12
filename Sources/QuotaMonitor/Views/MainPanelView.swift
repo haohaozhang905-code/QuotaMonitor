@@ -357,22 +357,64 @@ struct MainPanelView: View {
     }
 
     private var overviewQuotaGrid: some View {
-        HStack(spacing: 10) {
-            overviewQuotaCard(
+        Group {
+            if overviewQuotaItems.isEmpty {
+                panelCard(height: 76) {
+                    Text(language.text("overview.noQuotaSources"))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(PanelTheme.text2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                HStack(spacing: 10) {
+                    ForEach(overviewQuotaItems) { item in
+                        overviewQuotaCard(
+                            icon: item.icon,
+                            name: item.name,
+                            route: item.route,
+                            facts: item.facts,
+                            state: item.state
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private var overviewQuotaItems: [OverviewQuotaItem] {
+        var items: [OverviewQuotaItem] = []
+        if store.codexRoute != .unknown {
+            items.append(.init(
+                platform: .codex,
                 icon: .codex,
-                name: "Codex",
+                name: TokenPlatform.codex.displayName,
                 route: codexOverviewRoute,
                 facts: codexOverviewFacts,
                 state: codexOverviewState
-            )
-            overviewQuotaCard(
+            ))
+        }
+        if store.claudeRoute != .unknown {
+            items.append(.init(
+                platform: .claude,
                 icon: .claude,
-                name: "Claude",
+                name: TokenPlatform.claude.displayName,
                 route: claudeOverviewRoute,
                 facts: claudeOverviewFacts,
                 state: claudeOverviewState
-            )
+            ))
         }
+        return items
+    }
+
+    private struct OverviewQuotaItem: Identifiable {
+        let platform: TokenPlatform
+        let icon: BrandIconKind
+        let name: String
+        let route: String
+        let facts: [(String, String, String)]
+        let state: BalanceState?
+
+        var id: String { platform.rawValue }
     }
 
     private var codexOverviewRoute: String {
@@ -583,7 +625,7 @@ struct MainPanelView: View {
         case let .platformClient(platform, client):
             switch (platform, client) {
             case (.codex, _): PanelTheme.codex
-            case (.claude, .cli): PanelTheme.cclaude
+            case (.claude, .cli): PanelTheme.claudeCode
             case (.claude, _): PanelTheme.claude
             case (.workbuddy, _): PanelTheme.workbuddy
             case (.kimi, _): PanelTheme.text2
@@ -736,7 +778,7 @@ struct MainPanelView: View {
                 Spacer(minLength: 0)
                 legendItem(PanelTheme.codex, "Codex")
                 legendItem(PanelTheme.claude, "Claude")
-                legendItem(PanelTheme.cclaude, language.text("panel.claudeCode"))
+                legendItem(PanelTheme.claudeCode, language.text("panel.claudeCode"))
                 legendItem(PanelTheme.workbuddy, "WorkBuddy")
                 Spacer(minLength: 0)
             }
@@ -1650,7 +1692,7 @@ private struct StackedBarChart: View {
                         var bottom = plot.maxY
                         let segments: [(Int, Color)] = [
                             (row.workbuddy, PanelTheme.workbuddy),
-                            (row.claudeCode, PanelTheme.cclaude),
+                            (row.claudeCode, PanelTheme.claudeCode),
                             (row.claude, PanelTheme.claude),
                             (row.codex, PanelTheme.codex),
                         ]
@@ -1691,7 +1733,7 @@ private struct StackedBarChart: View {
                         items: [
                             ChartTooltipItem(label: "Codex", value: QuotaFormatters.tokensCN(row.codex), color: PanelTheme.codex),
                             ChartTooltipItem(label: "Claude", value: QuotaFormatters.tokensCN(row.claude), color: PanelTheme.claude),
-                            ChartTooltipItem(label: claudeCodeLabel, value: QuotaFormatters.tokensCN(row.claudeCode), color: PanelTheme.cclaude),
+                            ChartTooltipItem(label: claudeCodeLabel, value: QuotaFormatters.tokensCN(row.claudeCode), color: PanelTheme.claudeCode),
                             ChartTooltipItem(label: "WorkBuddy", value: QuotaFormatters.tokensCN(row.workbuddy), color: PanelTheme.workbuddy)
                         ]
                     )

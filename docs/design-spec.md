@@ -99,7 +99,8 @@ error         没有可用旧数据，显示错误和重试入口
 | `text2` | `#A3AAB5` | 次级文字 |
 | `text3` | `#7B8593` | 辅助文字、占位、轴标签 |
 | `codex` | `#7CC5A3` | Codex、主数据、选中态 |
-| `claude` | `#E0896B` | Claude |
+| `claude` | `#F0A06F` | Claude |
+| `claudeCode` | `#B39BFF` | Claude Code |
 | `deepseek` | `#8BA4D8` | DeepSeek 路由/模型 |
 | `gpt` | `#D4B27E` | GPT 模型 |
 | `workbuddy` | `#B29BD6` | WorkBuddy |

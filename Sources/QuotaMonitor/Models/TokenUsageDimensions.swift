@@ -11,6 +11,17 @@ enum TokenPlatform: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
 }
 
+extension TokenPlatform {
+    var displayName: String {
+        switch self {
+        case .codex: "Codex"
+        case .claude: "Claude"
+        case .workbuddy: "WorkBuddy"
+        case .kimi: "Kimi"
+        }
+    }
+}
+
 enum TokenClient: String, CaseIterable, Identifiable, Sendable {
     case cli
     case desktop

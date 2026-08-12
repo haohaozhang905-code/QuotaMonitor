@@ -20,9 +20,14 @@ struct MenuBarSlotsView: View {
             if codexRoute == .deepseek, claudeRoute == .deepseek {
                 slot(icon: .deepSeek, value: balanceText, routed: false)
             } else {
-                slot(icon: .codex, value: codexValue, routed: codexRoute == .deepseek)
+                if codexRoute != .unknown {
+                    slot(icon: .codex, value: codexValue, routed: codexRoute == .deepseek)
+                }
                 if claudeRoute != .unknown || claudeRemaining != nil {
                     slot(icon: .claude, value: claudeValue, routed: claudeRoute == .deepseek)
+                }
+                if codexRoute == .unknown, claudeRoute == .unknown, claudeRemaining == nil {
+                    MenuBarQuotaGlyph()
                 }
             }
         }

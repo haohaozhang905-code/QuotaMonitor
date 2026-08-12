@@ -3,10 +3,9 @@ import Foundation
 /// 从 WorkBuddy 本地 trace 文件解析按天 token 用量。
 ///
 /// 数据来源：`~/.workbuddy/traces/<pid>/trace_*.json`，每个工作流一个文件。
-/// 文件很大（含完整对话），但头部第一个 `trace` 对象就带汇总：
-/// startedAt/endedAt、totalTokens、modelInfo(models/totalInputTokens/
-/// totalOutputTokens/totalCachedTokens)。本客户端只读取文件前 8KB 并截取
-/// 该汇总对象，不读取对话内容。
+/// 文件很大（含完整对话）。旧版本的头部 `trace` 对象带汇总；新版本把
+/// 每次模型调用的 usage 放在 generation span 的 toolOutput 中。本客户端
+/// 只提取这些汇总字段，不保存或展示对话正文。
 ///
 /// 统一口径：total = totalInputTokens + totalOutputTokens（input 已含缓存），
 /// cached 单独列示，与 Codex 会话口径一致。
@@ -40,7 +39,7 @@ actor WorkBuddyTraceClient {
     }
 
     private var cache: [URL: FileCache] = [:]
-    private let headerReadLimit = 8 * 1024
+    private let headerReadLimit = 64 * 1024
     private let root: URL
 
     init(root: URL? = nil) {
@@ -151,27 +150,183 @@ actor WorkBuddyTraceClient {
               !data.isEmpty,
               let traceJSON = Self.extractTraceObject(from: String(decoding: data, as: UTF8.self)),
               let traceData = traceJSON.data(using: .utf8),
-              let summary = try? Self.traceDecoder().decode(TraceSummary.self, from: traceData),
-              summary.totalTokens > 0 else { return nil }
+              let summary = try? Self.traceDecoder().decode(TraceSummary.self, from: traceData) else { return nil }
 
         let dayKey = Self.dayKey(for: summary.startedAt)
-        let modelInfo = summary.modelInfo
-        var totals = TokenTotals()
-        // modelInfo 缺失时把 totalTokens 全部记入 input，总量口径仍为 input + output。
-        totals.input = modelInfo?.totalInputTokens
-            ?? max(summary.totalTokens - (modelInfo?.totalOutputTokens ?? 0), 0)
-        totals.output = modelInfo?.totalOutputTokens ?? 0
-        totals.cachedInput = modelInfo?.totalCachedTokens ?? 0
-
-        let isDeepSeek = (modelInfo?.models ?? []).contains {
-            $0.lowercased().contains("deepseek")
+        if summary.totalTokens > 0 {
+            var totals = TokenTotals()
+            totals.input = summary.modelInfo?.totalInputTokens
+                ?? max(summary.totalTokens - (summary.modelInfo?.totalOutputTokens ?? 0), 0)
+            totals.output = summary.modelInfo?.totalOutputTokens ?? 0
+            totals.cachedInput = summary.modelInfo?.totalCachedTokens ?? 0
+            let model = summary.modelInfo?.models?.joined(separator: " + ") ?? "unknown"
+            let isDeepSeek = model.lowercased().contains("deepseek")
+            return (
+                [dayKey: totals],
+                isDeepSeek ? [dayKey: totals] : [:],
+                ["\(dayKey)\u{1F}\(model)": totals]
+            )
         }
-        let model = modelInfo?.models?.joined(separator: " + ") ?? "unknown"
-        return (
-            [dayKey: totals],
-            isDeepSeek ? [dayKey: totals] : [:],
-            ["\(dayKey)\u{1F}\(model)": totals]
+
+        // 新版 WorkBuddy 的 trace.totalTokens 可能为 0，实际 usage 在 generation span 的
+        // toolOutput 字符串里；用定向分块扫描，避免把完整对话 JSON 一次性读入内存。
+        return Self.parseGenerationUsages(
+            at: url,
+            fallbackDay: dayKey
         )
+    }
+
+    private struct GenerationUsage {
+        let date: Date?
+        let model: String
+        let totals: TokenTotals
+    }
+
+    private struct GenerationUsageScanner {
+        private var buffer = Data()
+        private var bufferStart = 0
+        private var lastMarkerOffset = -1
+        private let contextLimit = 8 * 1024
+
+        mutating func consume(_ chunk: Data, final: Bool = false) -> [GenerationUsage] {
+            buffer.append(chunk)
+            let bytes = Array(buffer)
+            var found: [GenerationUsage] = []
+            var cursor = max(0, lastMarkerOffset - bufferStart - 16)
+
+            while let marker = Self.findUsageMarker(in: bytes, from: cursor) {
+                let absoluteOffset = bufferStart + marker
+                cursor = marker + 1
+                if absoluteOffset <= lastMarkerOffset { continue }
+
+                let start = max(0, marker - contextLimit)
+                let end = min(bytes.count, marker + contextLimit)
+                let context = Data(bytes[start..<end])
+                guard let usage = WorkBuddyTraceClient.parseGenerationUsage(
+                    context: context,
+                    usageMarkerOffset: marker - start,
+                    isFinal: final || end < bytes.count
+                ) else {
+                    // The usage object may be split at the current chunk boundary. Keep it
+                    // for the next pass; non-usage matches are skipped by the marker shape.
+                    if !final { break }
+                    continue
+                }
+                found.append(usage)
+                lastMarkerOffset = absoluteOffset
+            }
+
+            // Keep enough overlap for a marker and its surrounding model/created fields.
+            let keep = contextLimit * 2
+            if buffer.count > keep {
+                let remove = buffer.count - keep
+                buffer.removeSubrange(buffer.startIndex..<buffer.index(buffer.startIndex, offsetBy: remove))
+                bufferStart += remove
+            }
+            return found
+        }
+
+        private static func findUsageMarker(in bytes: [UInt8], from start: Int) -> Int? {
+            let markers: [[UInt8]] = [
+                Array("\"usage\":{".utf8),
+                Array("\\\"usage\\\":{".utf8)
+            ]
+            var best: Int?
+            for marker in markers {
+                let lowerBound = max(0, start)
+                let upperBound = bytes.count - marker.count
+                guard marker.count <= bytes.count, lowerBound <= upperBound else { continue }
+                for index in lowerBound...upperBound {
+                    if Array(bytes[index..<(index + marker.count)]) == marker,
+                       best == nil || index < best! {
+                        best = index
+                        break
+                    }
+                }
+            }
+            return best
+        }
+    }
+
+    private static func parseGenerationUsages(
+        at url: URL,
+        fallbackDay: String
+    ) -> (totalsByDay: [String: TokenTotals], deepSeekByDay: [String: TokenTotals], modelByDay: [String: TokenTotals])? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+
+        var scanner = GenerationUsageScanner()
+        var usages: [GenerationUsage] = []
+        while true {
+            guard let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty else { break }
+            usages.append(contentsOf: scanner.consume(chunk))
+        }
+        usages.append(contentsOf: scanner.consume(Data(), final: true))
+        guard !usages.isEmpty else { return nil }
+
+        var totalsByDay: [String: TokenTotals] = [:]
+        var deepSeekByDay: [String: TokenTotals] = [:]
+        var modelByDay: [String: TokenTotals] = [:]
+        for usage in usages {
+            let dayKey = usage.date.map(Self.dayKey(for:)) ?? fallbackDay
+            let model = usage.model.isEmpty ? "unknown" : usage.model
+            totalsByDay[dayKey, default: TokenTotals()] = totalsByDay[dayKey, default: TokenTotals()].adding(usage.totals)
+            let modelKey = "\(dayKey)\u{1F}\(model)"
+            modelByDay[modelKey, default: TokenTotals()] = modelByDay[modelKey, default: TokenTotals()].adding(usage.totals)
+            if model.lowercased().contains("deepseek") {
+                deepSeekByDay[dayKey, default: TokenTotals()] = deepSeekByDay[dayKey, default: TokenTotals()].adding(usage.totals)
+            }
+        }
+        return (totalsByDay, deepSeekByDay, modelByDay)
+    }
+
+    private static func parseGenerationUsage(
+        context: Data,
+        usageMarkerOffset: Int,
+        isFinal: Bool
+    ) -> GenerationUsage? {
+        let bytes = Array(context)
+        guard usageMarkerOffset >= 0, usageMarkerOffset < bytes.count else { return nil }
+        let prefix = String(decoding: Data(bytes[..<usageMarkerOffset]), as: UTF8.self)
+            .replacingOccurrences(of: "\\\"", with: "\"")
+        let usageText = String(decoding: Data(bytes[usageMarkerOffset...]), as: UTF8.self)
+            .replacingOccurrences(of: "\\\"", with: "\"")
+
+        guard let input = integerValue(named: "prompt_tokens", in: usageText),
+              let output = integerValue(named: "completion_tokens", in: usageText),
+              input + output > 0 else {
+            return nil
+        }
+
+        let model = stringValue(named: "model", in: prefix) ?? "unknown"
+        let created = integerValue(named: "created", in: prefix)
+        var totals = TokenTotals()
+        totals.input = input
+        totals.cachedInput = integerValue(named: "cached_tokens", in: usageText) ?? 0
+        totals.output = output
+        totals.reasoning = integerValue(named: "reasoning_tokens", in: usageText) ?? 0
+        let date = created.map { raw -> Date in
+            let seconds = raw > 10_000_000_000 ? Double(raw) / 1000 : Double(raw)
+            return Date(timeIntervalSince1970: seconds)
+        }
+        _ = isFinal
+        return GenerationUsage(date: date, model: model, totals: totals)
+    }
+
+    private static func integerValue(named name: String, in text: String) -> Int? {
+        let pattern = "\\\"\(NSRegularExpression.escapedPattern(for: name))\\\"\\s*:\\s*(-?\\d+)"
+        guard let expression = try? NSRegularExpression(pattern: pattern),
+              let match = expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        return Int(text[range])
+    }
+
+    private static func stringValue(named name: String, in text: String) -> String? {
+        let pattern = "\\\"\(NSRegularExpression.escapedPattern(for: name))\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""
+        guard let expression = try? NSRegularExpression(pattern: pattern),
+              let match = expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[range])
     }
 
     /// 从头部的 `"trace":{...}` 起始截取平衡的 JSON 对象（跳过字符串与转义）。

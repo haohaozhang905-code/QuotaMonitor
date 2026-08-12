@@ -211,6 +211,45 @@ struct WorkBuddyTraceClientTests {
         let client = WorkBuddyTraceClient(root: root)
         #expect(await client.fetch().isEmpty)
     }
+
+    @Test func readsGenerationUsageFromNewTraceFormat() async throws {
+        let root = try Fixtures.makeTempDir("workbuddy-generation")
+        defer { Fixtures.remove(root) }
+
+        let day = Fixtures.noon(yesterdayOffset: 0)
+        let created = Int(day.timeIntervalSince1970)
+        let responseObject: [String: Any] = [
+            "id": "g1",
+            "created": created,
+            "model": "hy3",
+            "usage": [
+                "prompt_tokens": 120,
+                "completion_tokens": 30,
+                "total_tokens": 150,
+                "prompt_tokens_details": ["cached_tokens": 80],
+                "completion_tokens_details": ["reasoning_tokens": 7]
+            ]
+        ]
+        let responseData = try JSONSerialization.data(withJSONObject: responseObject)
+        let response = String(decoding: responseData, as: UTF8.self)
+        let escapedResponse = response.replacingOccurrences(of: "\"", with: "\\\"")
+        let trace = "{\"trace\":{\"traceId\":\"new\",\"startedAt\":\""
+            + Fixtures.iso(day)
+            + "\",\"totalTokens\":0},\"spans\":[{\"name\":\"generation\",\"type\":\"generation\",\"toolOutput\":\"["
+            + escapedResponse
+            + "]\"}]}"
+        try trace.write(to: root.appendingPathComponent("trace_new.json"), atomically: true, encoding: .utf8)
+
+        let client = WorkBuddyTraceClient(root: root)
+        let all = await client.fetch()
+        let buckets = await client.fetchBuckets()
+
+        #expect(all.first?.total == 150)
+        #expect(all.first?.cachedInput == 80)
+        #expect(all.first?.reasoning == 7)
+        #expect(buckets.first?.model == "hy3")
+    }
+
 }
 
 // MARK: - cc-switch 请求日志解析

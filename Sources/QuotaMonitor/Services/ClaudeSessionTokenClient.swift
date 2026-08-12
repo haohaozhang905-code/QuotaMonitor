@@ -19,7 +19,6 @@ actor ClaudeSessionTokenClient {
     }
 
     private var cache: [URL: FileCache] = [:]
-    private let maximumFileSize = 50 * 1024 * 1024
     private let root: URL
 
     init(root: URL? = nil) {
@@ -123,9 +122,6 @@ actor ClaudeSessionTokenClient {
     }
 
     private func parseFile(_ url: URL, fallbackDay: String) -> (totalsByDay: [String: TokenTotals], deepSeekByDay: [String: TokenTotals], modelByDay: [String: TokenTotals])? {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let size = (attributes[.size] as? NSNumber)?.intValue,
-              size <= maximumFileSize else { return nil }
         var totalsByDay: [String: TokenTotals] = [:]
         var deepSeekByDay: [String: TokenTotals] = [:]
         var modelByDay: [String: TokenTotals] = [:]

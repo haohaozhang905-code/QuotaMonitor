@@ -43,11 +43,9 @@ extension UsageBreakdownKey {
         switch self {
         case let .platformClient(platform, client):
             switch (platform, client) {
-            case (.codex, _): "Codex"
+            case (.codex, _): platform.displayName
             case (.claude, .cli): claudeCode
-            case (.claude, _): "Claude"
-            case (.workbuddy, _): "WorkBuddy"
-            case (.kimi, _): "Kimi"
+            case (.claude, _), (.workbuddy, _), (.kimi, _): platform.displayName
             }
         case let .model(model): model
         case .otherModels: other
@@ -114,6 +112,14 @@ enum DropdownQuotaState: Equatable, Sendable {
     case unavailable
 }
 
+/// 下拉框只展示已经检测到路由的额度来源；未安装或未配置的平台不创建条目。
+struct DropdownQuotaPresentation: Identifiable, Equatable, Sendable {
+    let platform: TokenPlatform
+    let state: DropdownQuotaState
+
+    var id: String { platform.rawValue }
+}
+
 /// 下拉框使用的专用快照。它不包含任何视图或本地化文案。
 struct DropdownPresentation: Equatable, Sendable {
     let availability: QuotaAvailability
@@ -121,8 +127,7 @@ struct DropdownPresentation: Equatable, Sendable {
     let today: TokenUsageSummary
     let platformToday: [UsageBreakdownSnapshot]
     let topModels: [UsageBreakdownSnapshot]
-    let codexQuota: DropdownQuotaState
-    let claudeQuota: DropdownQuotaState
+    let quotaItems: [DropdownQuotaPresentation]
 }
 
 /// 跨页面共享的只读展示快照。它只保存原始数值和状态，文案格式化仍由 UI 层根据语言完成。
@@ -274,26 +279,38 @@ struct QuotaPresentationSnapshot: Equatable, Sendable {
         deepSeekDays: Int?
     ) -> DropdownPresentation {
         let codex = providers.first { $0.providerId.lowercased() == "codex" }
+        var quotaItems: [DropdownQuotaPresentation] = []
+        if codexRoute != .unknown {
+            quotaItems.append(.init(
+                platform: .codex,
+                state: quotaState(
+                    route: codexRoute,
+                    provider: codex,
+                    deepSeekBalance: deepSeekBalance,
+                    deepSeekCurrency: deepSeekCurrency,
+                    deepSeekDays: deepSeekDays
+                )
+            ))
+        }
+        if claudeRoute != .unknown {
+            quotaItems.append(.init(
+                platform: .claude,
+                state: quotaState(
+                    route: claudeRoute,
+                    provider: nil,
+                    deepSeekBalance: deepSeekBalance,
+                    deepSeekCurrency: deepSeekCurrency,
+                    deepSeekDays: deepSeekDays
+                )
+            ))
+        }
         return DropdownPresentation(
             availability: presentation.availability,
             updatedAt: presentation.updatedAt,
             today: presentation.today,
             platformToday: presentation.platformToday,
             topModels: presentation.topModels(),
-            codexQuota: quotaState(
-                route: codexRoute,
-                provider: codex,
-                deepSeekBalance: deepSeekBalance,
-                deepSeekCurrency: deepSeekCurrency,
-                deepSeekDays: deepSeekDays
-            ),
-            claudeQuota: quotaState(
-                route: claudeRoute,
-                provider: nil,
-                deepSeekBalance: deepSeekBalance,
-                deepSeekCurrency: deepSeekCurrency,
-                deepSeekDays: deepSeekDays
-            )
+            quotaItems: quotaItems
         )
     }
 

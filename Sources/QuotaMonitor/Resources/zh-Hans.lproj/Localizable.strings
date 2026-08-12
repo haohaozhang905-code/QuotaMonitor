@@ -160,6 +160,7 @@
 "overview.low" = "偏低";
 "overview.critical" = "不足";
 "overview.quotaUnavailable" = "暂未提供额度数据";
+"overview.noQuotaSources" = "未检测到可用额度来源，Token 统计仍可用";
 "overview.last7Title" = "近 7 日 Token";
 "overview.last7Note" = "近 7 日";
 "overview.platform" = "平台";

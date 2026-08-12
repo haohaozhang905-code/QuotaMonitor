@@ -169,9 +169,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let status = dropdownStatus(for: presentation.availability) {
                 DropdownStatusRow(text: status.text, tone: status.tone)
             }
-            DropdownSectionHeader(title: language.text("menu.quotaSection"))
-            quotaLine(icon: .codex, title: "Codex", state: presentation.codexQuota)
-            quotaLine(icon: .claude, title: "Claude", state: presentation.claudeQuota)
+            if !presentation.quotaItems.isEmpty {
+                DropdownSectionHeader(title: language.text("menu.quotaSection"))
+                ForEach(presentation.quotaItems) { item in
+                    self.quotaLine(
+                        icon: self.icon(for: item.platform),
+                        title: item.platform.displayName,
+                        state: item.state
+                    )
+                }
+            }
             DropdownSectionHeader(title: language.text("menu.platformSection"))
             if presentation.platformToday.isEmpty {
                 DropdownEmptyRow(text: language.text("menu.noUsage"))
@@ -308,6 +315,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - 下拉框数据
+
+    private func icon(for platform: TokenPlatform) -> BrandIconKind {
+        switch platform {
+        case .codex: .codex
+        case .claude: .claude
+        case .workbuddy: .workBuddy
+        case .kimi: .deepSeek
+        }
+    }
 
     @ViewBuilder
     private func quotaLine(icon: BrandIconKind, title: String, state: DropdownQuotaState) -> some View {
