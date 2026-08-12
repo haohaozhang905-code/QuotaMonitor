@@ -298,7 +298,9 @@ actor WorkBuddyTraceClient {
             return nil
         }
 
-        let model = stringValue(named: "model", in: prefix) ?? "unknown"
+        let model = stringValue(named: "model", in: prefix)
+            ?? stringValue(named: "model", in: String(decoding: context, as: UTF8.self).replacingOccurrences(of: "\\\"", with: "\""))
+            ?? "unknown"
         let created = integerValue(named: "created", in: prefix)
         var totals = TokenTotals()
         totals.input = input

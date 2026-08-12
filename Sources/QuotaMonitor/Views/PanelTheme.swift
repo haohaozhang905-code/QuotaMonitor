@@ -52,18 +52,26 @@ enum PanelTheme {
     static let text = dynamic("#19191C", "#E8EBF0")
     static let text2 = dynamic("#696971", "#97A0AC")
     static let text3 = dynamic("#9A9AA2", "#7B8593")
-    static let codex = dynamic("#4278E7", "#7CC5A3")
-    static let codexDeep = dynamic("#3D4DE4", "#5DA983")
-    static let codexSoft = dynamic("#E9EFFD", "#21372E")
-    static let claude = dynamic("#D86A3F", "#F0A06F")
-    static let claudeDeep = dynamic("#B85A38", "#C56F55")
-    static let claudeSoft = dynamic("#FBE9E3", "#382622")
-    static let claudeCode = dynamic("#7657D9", "#B39BFF")
-    static let claudeCodeSoft = dynamic("#EEE9FF", "#302844")
-    static let deepseek = dynamic("#4D6BFE", "#8BA4D8")
+    static let codex = dynamic("#5B6F8D", "#6C82A3")
+    static let codexDeep = dynamic("#4C607D", "#8296B5")
+    static let codexSoft = dynamic("#E7EBF1", "#28323E")
+    static let claude = dynamic("#A8745D", "#B88972")
+    static let claudeDeep = dynamic("#8F624F", "#C39A86")
+    static let claudeSoft = dynamic("#F3E8E3", "#382D2A")
+    static let claudeCode = dynamic("#77678B", "#8C7BA3")
+    static let claudeCodeSoft = dynamic("#ECE8EF", "#302B38")
+    static let deepseek = dynamic("#5D858D", "#6F98A0")
     static let deepseekSoft = dynamic("#E8EDFF", "#252D40")
-    static let workbuddy = dynamic("#299A70", "#B29BD6")
-    static let workbuddySoft = dynamic("#DFF6EE", "#30283B")
+    static let workbuddy = dynamic("#5E8975", "#78A18F")
+    static let workbuddySoft = dynamic("#E4EFEA", "#293A34")
+    static let gpt = dynamic("#536B92", "#657EA6")
+    static let gpt4o = dynamic("#668787", "#7C9A9A")
+    static let claudeOpus = dynamic("#805F75", "#98768B")
+    static let claudeSonnet = dynamic("#607B89", "#738C9B")
+    static let claudeHaiku = dynamic("#858C69", "#9BA17C")
+    static let deepseekModel = dynamic("#667B95", "#7D91A8")
+    static let workbuddyModel = dynamic("#897666", "#A08E7E")
+    static let modelFallback = dynamic("#8B877F", "#A5A19A")
     static let ok = dynamic("#2FA36B", "#69BD93")
     static let okSoft = dynamic("#E4F5EC", "#1F382D")
     static let warn = dynamic("#D99A2B", "#DCA869")
@@ -73,4 +81,21 @@ enum PanelTheme {
     static let grid = dynamic("#E4E6EB", "#303844")
     static let shadowSmall = Color.black.opacity(0.05)
     static let shadow = Color.black.opacity(0.08)
+
+    static func modelColor(for model: String) -> Color {
+        let normalized = model.lowercased()
+        if normalized.contains("opus") { return claudeOpus }
+        if normalized.contains("sonnet") { return claudeSonnet }
+        if normalized.contains("haiku") { return claudeHaiku }
+        if normalized.contains("deepseek") { return deepseekModel }
+        if normalized.contains("gpt-4o") || normalized.contains("gpt4o") { return gpt4o }
+        if normalized.contains("gpt") || normalized.contains("o1") || normalized.contains("o3") || normalized.contains("o4") { return gpt }
+        if normalized.contains("workbuddy") { return workbuddyModel }
+
+        let hash = model.utf8.reduce(UInt32(2166136261)) { partial, byte in
+            (partial ^ UInt32(byte)) &* 16777619
+        }
+        let fallbackColors = [claudeSonnet, deepseekModel, workbuddyModel, modelFallback]
+        return fallbackColors[Int(hash % UInt32(fallbackColors.count))]
+    }
 }

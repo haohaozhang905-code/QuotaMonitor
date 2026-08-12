@@ -85,6 +85,10 @@ private enum TokenPeriod: String, CaseIterable, Identifiable {
         }
     }
 
+    var fixedDayCount: Int? {
+        self == .all ? nil : dayCount
+    }
+
     var localizationKey: String {
         switch self {
         case .sevenDays: "panel.tokenPeriod.sevenDays"
@@ -104,6 +108,20 @@ private enum TokenPeriod: String, CaseIterable, Identifiable {
     }
 }
 
+private enum TokenChartDimension: String, CaseIterable, Identifiable {
+    case platform
+    case model
+
+    var id: String { rawValue }
+
+    var localizationKey: String {
+        switch self {
+        case .platform: "panel.tokenDimension.platform"
+        case .model: "panel.tokenDimension.model"
+        }
+    }
+}
+
 // MARK: - 主面板
 
 struct MainPanelView: View {
@@ -112,6 +130,7 @@ struct MainPanelView: View {
     @State private var loginItem = LoginItemManager()
     @State private var selectedPage: DashboardPage = .overview
     @State private var tokenPeriod: TokenPeriod = .sevenDays
+    @State private var tokenChartDimension: TokenChartDimension = .platform
     @State private var hoveredPage: DashboardPage?
 
     var body: some View {
@@ -615,7 +634,7 @@ struct MainPanelView: View {
                 name: row.key.displayName(),
                 value: row.total,
                 share: row.share,
-                color: PanelTheme.codex
+                color: breakdownColor(for: row.key)
             )
         }
     }
@@ -630,7 +649,8 @@ struct MainPanelView: View {
             case (.workbuddy, _): PanelTheme.workbuddy
             case (.kimi, _): PanelTheme.text2
             }
-        case .model, .otherModels: PanelTheme.codex
+        case let .model(model): PanelTheme.modelColor(for: model)
+        case .otherModels: PanelTheme.modelFallback
         }
     }
 
@@ -689,7 +709,7 @@ struct MainPanelView: View {
         return VStack(alignment: .leading, spacing: 14) {
             tokenHeading
             tokenMetricStrip(dashboard)
-            tokenChartCard(rows: dashboard.rows)
+            tokenChartCard()
             tokenRankings(dashboard)
             tokenHeatmapCard
         }
@@ -740,28 +760,35 @@ struct MainPanelView: View {
         }
     }
 
-    private func tokenChartCard(rows: [DayRow]) -> some View {
-        let axisIndices = chartAxisIndices(for: rows)
+    private func tokenChartCard() -> some View {
+        let chart = tokenChartSnapshot()
+        let axisIndices = chartAxisIndices(for: chart.rows)
         return panelCard {
-            HStack {
-                Text(language.text("tokens.trendTitle"))
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(PanelTheme.text)
-                Spacer()
-                Text(language.text("tokens.peakValue", QuotaFormatters.tokensCN(rows.map { $0.total }.max() ?? 0)))
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(language.text(tokenChartDimension == .platform ? "panel.tokenTrendPlatformTitle" : "panel.tokenTrendModelTitle"))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(PanelTheme.text)
+                    Text(language.text(tokenChartDimension == .platform ? "panel.chartNote" : "panel.modelChartNote"))
+                        .font(.system(size: 9.5, weight: .regular))
+                        .foregroundStyle(PanelTheme.text3)
+                }
+                Spacer(minLength: 6)
+                tokenChartDimensionPicker
+                Text(language.text("tokens.peakValue", QuotaFormatters.tokensCN(chart.rows.map { $0.total }.max() ?? 0)))
                     .font(.system(size: 10, weight: .regular))
                     .fontDesign(.monospaced)
                     .foregroundStyle(PanelTheme.text3)
             }
-            StackedBarChart(rows: rows, claudeCodeLabel: language.text("panel.claudeCode"))
+            StackedBarChart(rows: chart.rows)
                 .frame(height: 140)
                 .padding(.top, 7)
             GeometryReader { proxy in
                 let plotWidth = max(proxy.size.width - 44, 1)
                 ZStack(alignment: .topLeading) {
                     ForEach(axisIndices, id: \.self) { index in
-                        let row = rows[index]
-                        let x = 40 + (CGFloat(index) + 0.5) / CGFloat(max(rows.count, 1)) * plotWidth
+                        let row = chart.rows[index]
+                        let x = 40 + (CGFloat(index) + 0.5) / CGFloat(max(chart.rows.count, 1)) * plotWidth
                         Text(row.isToday ? language.text("panel.today") : row.label)
                             .font(.system(size: 8.5, weight: row.isToday ? .semibold : .regular))
                             .fontDesign(.monospaced)
@@ -773,16 +800,22 @@ struct MainPanelView: View {
                 }
             }
             .frame(height: 14)
-            .padding(.top, -2)
+            // 留出约 2px 的呼吸空间，避免日期标签贴住柱体底边。
+            .padding(.top, 2)
             HStack(spacing: 14) {
                 Spacer(minLength: 0)
-                legendItem(PanelTheme.codex, "Codex")
-                legendItem(PanelTheme.claude, "Claude")
-                legendItem(PanelTheme.claudeCode, language.text("panel.claudeCode"))
-                legendItem(PanelTheme.workbuddy, "WorkBuddy")
+                ForEach(chart.legend) { item in
+                    legendItem(item.color, item.name)
+                }
                 Spacer(minLength: 0)
             }
             .padding(.top, 4)
+            if chart.legend.isEmpty {
+                Text(language.text("panel.modelNoData"))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(PanelTheme.text3)
+                    .frame(maxWidth: .infinity)
+            }
         }
     }
 
@@ -794,7 +827,7 @@ struct MainPanelView: View {
     }
 
     private func modelRankingItems(from rows: [ModelRow]) -> [BreakdownItem] {
-        let top = rows.prefix(4).map { BreakdownItem(name: $0.model, value: $0.total, share: $0.share, color: PanelTheme.codex) }
+        let top = rows.prefix(4).map { BreakdownItem(name: $0.model, value: $0.total, share: $0.share, color: PanelTheme.modelColor(for: $0.model)) }
         guard rows.count > 4 else { return top }
         let otherTotal = rows.dropFirst(4).reduce(0) { $0 + $1.total }
         let total = rows.reduce(0) { $0 + $1.total }
@@ -1050,11 +1083,149 @@ struct MainPanelView: View {
         )
     }
 
-    private func chartAxisIndices(for rows: [DayRow]) -> [Int] {
+    private func chartAxisIndices(for rows: [TokenChartRow]) -> [Int] {
         guard !rows.isEmpty else { return [] }
         guard rows.count > 5 else { return Array(rows.indices) }
         let last = rows.count - 1
         return [0, last / 4, last / 2, last * 3 / 4, last]
+    }
+
+    private var tokenChartDimensionPicker: some View {
+        HStack(spacing: 2) {
+            ForEach(TokenChartDimension.allCases) { dimension in
+                Button {
+                    guard tokenChartDimension != dimension else { return }
+                    var transaction = Transaction()
+                    transaction.animation = nil
+                    withTransaction(transaction) {
+                        tokenChartDimension = dimension
+                    }
+                } label: {
+                    Text(language.text(dimension.localizationKey))
+                        .font(.system(size: 9.5, weight: tokenChartDimension == dimension ? .semibold : .regular))
+                        .foregroundStyle(tokenChartDimension == dimension ? PanelTheme.text : PanelTheme.text2)
+                        .padding(.horizontal, 7)
+                        .frame(height: 20)
+                        .background(tokenChartDimension == dimension ? PanelTheme.surface3 : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(PanelTheme.surface2, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(PanelTheme.border, lineWidth: 1))
+    }
+
+    private func tokenChartSnapshot() -> TokenChartSnapshot {
+        let chartStart = tokenChartStartDate
+        let dayCount = tokenChartDayCount(startingAt: chartStart)
+        let calendar = Calendar.current
+        let end = calendar.startOfDay(for: .now)
+        let filteredBuckets = store.tokenBuckets.filter { bucket in
+            let day = calendar.startOfDay(for: bucket.bucketStart)
+            return day >= chartStart && day <= end && bucket.total > 0
+        }
+
+        let categories = filteredBuckets.map { chartCategory(for: $0) }
+        let totalsByCategory = filteredBuckets.reduce(into: [String: Int]()) { totals, bucket in
+            let category = chartCategory(for: bucket)
+            totals[category.id, default: 0] += bucket.total
+        }
+        let topCategoryIDs: Set<String>
+        if tokenChartDimension == .model {
+            topCategoryIDs = Set(
+                totalsByCategory
+                    .sorted { lhs, rhs in
+                        if lhs.value != rhs.value { return lhs.value > rhs.value }
+                        return lhs.key < rhs.key
+                    }
+                    .prefix(6)
+                    .map(\.key)
+            )
+        } else {
+            topCategoryIDs = Set(totalsByCategory.keys)
+        }
+
+        var valuesByDay: [String: [String: Int]] = [:]
+        for bucket in filteredBuckets {
+            let category = chartCategory(for: bucket)
+            let categoryID = topCategoryIDs.contains(category.id) ? category.id : TokenChartCategory.otherID
+            let dayKey = DailyTokenUsage.dayKey(for: calendar.startOfDay(for: bucket.bucketStart))
+            valuesByDay[dayKey, default: [:]][categoryID, default: 0] += bucket.total
+        }
+
+        let rows: [TokenChartRow] = (0..<dayCount).compactMap { index in
+            guard let day = calendar.date(byAdding: .day, value: index - (dayCount - 1), to: end) else { return nil }
+            let dayKey = DailyTokenUsage.dayKey(for: day)
+            let values = valuesByDay[dayKey] ?? [:]
+            let segments = values.compactMap { id, value -> TokenChartSegment? in
+                guard value > 0 else { return nil }
+                let category = id == TokenChartCategory.otherID
+                    ? TokenChartCategory(id: id, name: language.text("tokens.otherModel"), color: PanelTheme.modelFallback)
+                    : categories.first { $0.id == id }
+                guard let category else { return nil }
+                return TokenChartSegment(id: category.id, name: category.name, value: value, color: category.color)
+            }
+            .sorted { $0.id < $1.id }
+            return TokenChartRow(
+                id: dayKey,
+                label: chartLabel(for: day),
+                isToday: dayKey == DailyTokenUsage.dayKey(for: .now),
+                segments: segments
+            )
+        }
+
+        let legendCategories = rows.flatMap(\.segments)
+            .reduce(into: [String: TokenChartCategory]()) { result, segment in
+                result[segment.id] = TokenChartCategory(id: segment.id, name: segment.name, color: segment.color)
+            }
+            .values
+            .sorted { lhs, rhs in
+                let left = totalsByCategory[lhs.id] ?? (lhs.id == TokenChartCategory.otherID ? rows.flatMap(\.segments).filter { $0.id == lhs.id }.reduce(0) { $0 + $1.value } : 0)
+                let right = totalsByCategory[rhs.id] ?? (rhs.id == TokenChartCategory.otherID ? rows.flatMap(\.segments).filter { $0.id == rhs.id }.reduce(0) { $0 + $1.value } : 0)
+                if left != right { return left > right }
+                return lhs.id < rhs.id
+            }
+            .map { TokenChartLegendItem(id: $0.id, name: $0.name, color: $0.color) }
+
+        return TokenChartSnapshot(rows: rows, legend: legendCategories)
+    }
+
+    private var tokenChartStartDate: Date {
+        let calendar = Calendar.current
+        let end = calendar.startOfDay(for: .now)
+        if let fixedDayCount = tokenPeriod.fixedDayCount {
+            return calendar.date(byAdding: .day, value: -(fixedDayCount - 1), to: end) ?? end
+        }
+        let earliest = (store.tokenBuckets.map(\.bucketStart) + store.totalTokenHistory.map(\.day)).min()
+        return earliest.map(calendar.startOfDay) ?? end
+    }
+
+    private func tokenChartDayCount(startingAt start: Date) -> Int {
+        let end = Calendar.current.startOfDay(for: .now)
+        return max(Calendar.current.dateComponents([.day], from: start, to: end).day ?? 0, 0) + 1
+    }
+
+    private func chartLabel(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = language.language.locale
+        formatter.dateFormat = tokenPeriod == .all ? "MM-dd" : "MM-dd"
+        return formatter.string(from: date)
+    }
+
+    private func chartCategory(for bucket: TokenUsageBucket) -> TokenChartCategory {
+        switch tokenChartDimension {
+        case .platform:
+            let key = UsageBreakdownKey.platformClient(platform: bucket.platform, client: bucket.client)
+            return TokenChartCategory(
+                id: key.stableID,
+                name: key.displayName(claudeCode: language.text("panel.claudeCode")),
+                color: breakdownColor(for: key)
+            )
+        case .model:
+            let model = bucket.model.isEmpty ? language.text("login.unknown") : bucket.model
+            return TokenChartCategory(id: "model|\(model)", name: model, color: PanelTheme.modelColor(for: model))
+        }
     }
 
     private struct BreakdownItem: Identifiable {
@@ -1064,6 +1235,41 @@ struct MainPanelView: View {
         let color: Color
 
         var id: String { name }
+    }
+
+    private struct TokenChartCategory {
+        static let otherID = "model|other"
+
+        let id: String
+        let name: String
+        let color: Color
+    }
+
+    fileprivate struct TokenChartSegment: Identifiable {
+        let id: String
+        let name: String
+        let value: Int
+        let color: Color
+    }
+
+    fileprivate struct TokenChartRow: Identifiable {
+        let id: String
+        let label: String
+        let isToday: Bool
+        let segments: [TokenChartSegment]
+
+        var total: Int { segments.reduce(0) { $0 + $1.value } }
+    }
+
+    private struct TokenChartLegendItem: Identifiable {
+        let id: String
+        let name: String
+        let color: Color
+    }
+
+    private struct TokenChartSnapshot {
+        let rows: [TokenChartRow]
+        let legend: [TokenChartLegendItem]
     }
 
     private struct TokenDashboardSnapshot {
@@ -1658,8 +1864,7 @@ private struct Sparkline: View {
 }
 
 private struct StackedBarChart: View {
-    let rows: [MainPanelView.DayRow]
-    let claudeCodeLabel: String
+    let rows: [MainPanelView.TokenChartRow]
     @State private var hoveredIndex: Int?
     @State private var tooltipSize = CGSize(width: 164, height: 142)
 
@@ -1690,13 +1895,9 @@ private struct StackedBarChart: View {
                     for (index, row) in rows.enumerated() {
                         let x = plot.minX + CGFloat(index) * slotWidth + (slotWidth - barWidth) / 2
                         var bottom = plot.maxY
-                        let segments: [(Int, Color)] = [
-                            (row.workbuddy, PanelTheme.workbuddy),
-                            (row.claudeCode, PanelTheme.claudeCode),
-                            (row.claude, PanelTheme.claude),
-                            (row.codex, PanelTheme.codex),
-                        ]
-                        for (value, color) in segments where value > 0 {
+                        for segment in row.segments {
+                            let value = segment.value
+                            let color = segment.color
                             let height = max(CGFloat(value) / CGFloat(peak) * plot.height, min(1, plot.height))
                             let rect = CGRect(x: x, y: bottom - height, width: barWidth, height: height)
                             let radius = min(2, min(barWidth / 2, height / 2))
@@ -1730,12 +1931,9 @@ private struct StackedBarChart: View {
                         title: row.isToday ? "今日" : row.label,
                         value: QuotaFormatters.tokensCN(row.total),
                         valueLabel: "Token",
-                        items: [
-                            ChartTooltipItem(label: "Codex", value: QuotaFormatters.tokensCN(row.codex), color: PanelTheme.codex),
-                            ChartTooltipItem(label: "Claude", value: QuotaFormatters.tokensCN(row.claude), color: PanelTheme.claude),
-                            ChartTooltipItem(label: claudeCodeLabel, value: QuotaFormatters.tokensCN(row.claudeCode), color: PanelTheme.claudeCode),
-                            ChartTooltipItem(label: "WorkBuddy", value: QuotaFormatters.tokensCN(row.workbuddy), color: PanelTheme.workbuddy)
-                        ]
+                        items: row.segments.map { segment in
+                            ChartTooltipItem(label: segment.name, value: QuotaFormatters.tokensCN(segment.value), color: segment.color)
+                        }
                     )
                     .position(
                         x: ChartTooltipPlacement.x(

@@ -98,12 +98,19 @@ error         没有可用旧数据，显示错误和重试入口
 | `text` | `#F0F1F4` | 主文字 |
 | `text2` | `#A3AAB5` | 次级文字 |
 | `text3` | `#7B8593` | 辅助文字、占位、轴标签 |
-| `codex` | `#7CC5A3` | Codex、主数据、选中态 |
-| `claude` | `#F0A06F` | Claude |
-| `claudeCode` | `#B39BFF` | Claude Code |
-| `deepseek` | `#8BA4D8` | DeepSeek 路由/模型 |
-| `gpt` | `#D4B27E` | GPT 模型 |
-| `workbuddy` | `#B29BD6` | WorkBuddy |
+| `codex` | `#6C82A3` | Codex、平台主数据、选中态 |
+| `claude` | `#B88972` | Claude 平台 |
+| `claudeCode` | `#8C7BA3` | Claude Code 平台 |
+| `deepseek` | `#6F98A0` | DeepSeek 路由 |
+| `gpt` | `#657EA6` | GPT / GPT-5 模型 |
+| `gpt4o` | `#7C9A9A` | GPT-4o 模型 |
+| `claudeOpus` | `#98768B` | Claude Opus 模型 |
+| `claudeSonnet` | `#738C9B` | Claude Sonnet 模型 |
+| `claudeHaiku` | `#9BA17C` | Claude Haiku 模型 |
+| `deepseekModel` | `#7D91A8` | DeepSeek 模型 |
+| `workbuddy` | `#78A18F` | WorkBuddy 平台 |
+| `workbuddyModel` | `#A08E7E` | WorkBuddy 模型 |
+| `modelFallback` | `#A5A19A` | 其他模型 |
 | `ok` | `#69BD93` | 正常、下降、同步成功 |
 | `warn` | `#DCA869` | 未读取、低余额、提醒 |
 | `danger` | `#E07C6C` | 上升、危急、退出/错误 |
@@ -195,12 +202,15 @@ error         没有可用旧数据，显示错误和重试入口
 
 趋势图：
 
-- 标题使用“模型类型趋势”
-- 图表分段按模型类型聚合：Codex 模型、DeepSeek、GPT、Claude
+- 支持“按平台 / 按模型”切换
+- 图表分段按当前时间范围内真实出现的类别聚合
+- 模型图例按当前区间动态展示，最多显示主要 6 个模型，其余合并为“其他模型”
+- 7 日、30 日、90 日和累计切换时，柱体与图例同步重新计算
 - 图例居中
 - 平台用量卡单独表达客户端/工具维度
 - 模型用量卡表达模型明细维度
 - 不通过固定比例伪造平台或模型分布
+- 柱状图日期标签与柱体底边保持约 2px 间距
 
 热力图：
 
