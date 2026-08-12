@@ -64,13 +64,6 @@ enum PanelTheme {
     static let deepseekSoft = dynamic("#E8EDFF", "#252D40")
     static let workbuddy = dynamic("#5E8975", "#78A18F")
     static let workbuddySoft = dynamic("#E4EFEA", "#293A34")
-    static let gpt = dynamic("#536B92", "#657EA6")
-    static let gpt4o = dynamic("#668787", "#7C9A9A")
-    static let claudeOpus = dynamic("#805F75", "#98768B")
-    static let claudeSonnet = dynamic("#607B89", "#738C9B")
-    static let claudeHaiku = dynamic("#858C69", "#9BA17C")
-    static let deepseekModel = dynamic("#667B95", "#7D91A8")
-    static let workbuddyModel = dynamic("#897666", "#A08E7E")
     static let modelFallback = dynamic("#8B877F", "#A5A19A")
     static let ok = dynamic("#2FA36B", "#69BD93")
     static let okSoft = dynamic("#E4F5EC", "#1F382D")
@@ -82,20 +75,13 @@ enum PanelTheme {
     static let shadowSmall = Color.black.opacity(0.05)
     static let shadow = Color.black.opacity(0.08)
 
-    static func modelColor(for model: String) -> Color {
-        let normalized = model.lowercased()
-        if normalized.contains("opus") { return claudeOpus }
-        if normalized.contains("sonnet") { return claudeSonnet }
-        if normalized.contains("haiku") { return claudeHaiku }
-        if normalized.contains("deepseek") { return deepseekModel }
-        if normalized.contains("gpt-4o") || normalized.contains("gpt4o") { return gpt4o }
-        if normalized.contains("gpt") || normalized.contains("o1") || normalized.contains("o3") || normalized.contains("o4") { return gpt }
-        if normalized.contains("workbuddy") { return workbuddyModel }
+    /// 平台与模型共用的五色分类色板。状态色（ok/warn/danger）不纳入分类色板。
+    static let categoryPalette: [Color] = [codex, claude, claudeCode, workbuddy, modelFallback]
 
+    static func modelColor(for model: String) -> Color {
         let hash = model.utf8.reduce(UInt32(2166136261)) { partial, byte in
             (partial ^ UInt32(byte)) &* 16777619
         }
-        let fallbackColors = [claudeSonnet, deepseekModel, workbuddyModel, modelFallback]
-        return fallbackColors[Int(hash % UInt32(fallbackColors.count))]
+        return categoryPalette[Int(hash % UInt32(categoryPalette.count))]
     }
 }

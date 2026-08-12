@@ -102,15 +102,10 @@ error         没有可用旧数据，显示错误和重试入口
 | `claude` | `#B88972` | Claude 平台 |
 | `claudeCode` | `#8C7BA3` | Claude Code 平台 |
 | `deepseek` | `#6F98A0` | DeepSeek 路由 |
-| `gpt` | `#657EA6` | GPT / GPT-5 模型 |
-| `gpt4o` | `#7C9A9A` | GPT-4o 模型 |
-| `claudeOpus` | `#98768B` | Claude Opus 模型 |
-| `claudeSonnet` | `#738C9B` | Claude Sonnet 模型 |
-| `claudeHaiku` | `#9BA17C` | Claude Haiku 模型 |
-| `deepseekModel` | `#7D91A8` | DeepSeek 模型 |
 | `workbuddy` | `#78A18F` | WorkBuddy 平台 |
-| `workbuddyModel` | `#A08E7E` | WorkBuddy 模型 |
-| `modelFallback` | `#A5A19A` | 其他模型 |
+| `modelFallback` | `#AAA59B` | 其他模型、合并项 |
+
+平台和模型共用以上五个分类色。单张图表内不重复使用颜色；模型超过四类时保留主要四类，其余合并为“其他”。
 | `ok` | `#69BD93` | 正常、下降、同步成功 |
 | `warn` | `#DCA869` | 未读取、低余额、提醒 |
 | `danger` | `#E07C6C` | 上升、危急、退出/错误 |
@@ -210,7 +205,9 @@ error         没有可用旧数据，显示错误和重试入口
 - 平台用量卡单独表达客户端/工具维度
 - 模型用量卡表达模型明细维度
 - 不通过固定比例伪造平台或模型分布
-- 柱状图日期标签与柱体底边保持约 2px 间距
+- 柱状图数据标签放在柱顶外侧，与柱体保持约 2px 间距
+- 7 日范围显示各柱总量；更长范围只显示稀疏的主要柱值，完整明细通过悬浮提示查看
+- 堆叠分段之间使用细分隔线，避免小占比被相邻大分段吞没
 
 热力图：
 

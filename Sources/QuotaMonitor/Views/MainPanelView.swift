@@ -629,14 +629,27 @@ struct MainPanelView: View {
     }
 
     private var modelSummaries: [BreakdownItem] {
-        store.presentationSnapshot.modelToday.prefix(3).map { row in
+        let rows = Array(store.presentationSnapshot.modelToday.prefix(3))
+        let colors = modelColors(for: rows)
+        return rows.map { row in
             BreakdownItem(
                 name: row.key.displayName(),
                 value: row.total,
                 share: row.share,
-                color: breakdownColor(for: row.key)
+                color: colors[row.id] ?? PanelTheme.modelFallback
             )
         }
+    }
+
+    private func modelColors(for rows: [UsageBreakdownSnapshot]) -> [String: Color] {
+        let categories = rows.map { row in
+            TokenChartCategory(
+                id: row.id,
+                name: row.key.displayName(),
+                preferredPaletteIndex: stablePaletteIndex(for: row.id)
+            )
+        }
+        return categoryColors(for: categories)
     }
 
     private func breakdownColor(for key: UsageBreakdownKey) -> Color {
@@ -827,7 +840,22 @@ struct MainPanelView: View {
     }
 
     private func modelRankingItems(from rows: [ModelRow]) -> [BreakdownItem] {
-        let top = rows.prefix(4).map { BreakdownItem(name: $0.model, value: $0.total, share: $0.share, color: PanelTheme.modelColor(for: $0.model)) }
+        let topRows = Array(rows.prefix(4))
+        let colors = categoryColors(for: topRows.map { row in
+            TokenChartCategory(
+                id: "model|\(row.model)",
+                name: row.model,
+                preferredPaletteIndex: stablePaletteIndex(for: row.model)
+            )
+        })
+        let top = topRows.map {
+            BreakdownItem(
+                name: $0.model,
+                value: $0.total,
+                share: $0.share,
+                color: colors["model|\($0.model)"] ?? PanelTheme.modelFallback
+            )
+        }
         guard rows.count > 4 else { return top }
         let otherTotal = rows.dropFirst(4).reduce(0) { $0 + $1.total }
         let total = rows.reduce(0) { $0 + $1.total }
@@ -835,7 +863,7 @@ struct MainPanelView: View {
             name: language.text("tokens.otherModel"),
             value: otherTotal,
             share: total > 0 ? Double(otherTotal) / Double(total) : 0,
-            color: PanelTheme.text3
+            color: PanelTheme.modelFallback
         )]
     }
 
@@ -1126,25 +1154,28 @@ struct MainPanelView: View {
             return day >= chartStart && day <= end && bucket.total > 0
         }
 
-        let categories = filteredBuckets.map { chartCategory(for: $0) }
+        let categories = Dictionary(
+            filteredBuckets.map { chartCategory(for: $0) }.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let totalsByCategory = filteredBuckets.reduce(into: [String: Int]()) { totals, bucket in
             let category = chartCategory(for: bucket)
             totals[category.id, default: 0] += bucket.total
         }
-        let topCategoryIDs: Set<String>
-        if tokenChartDimension == .model {
-            topCategoryIDs = Set(
-                totalsByCategory
-                    .sorted { lhs, rhs in
-                        if lhs.value != rhs.value { return lhs.value > rhs.value }
-                        return lhs.key < rhs.key
-                    }
-                    .prefix(6)
-                    .map(\.key)
-            )
-        } else {
-            topCategoryIDs = Set(totalsByCategory.keys)
-        }
+        let categoryLimit = tokenChartDimension == .model ? 4 : 5
+        let sortedCategoryIDs = totalsByCategory.sorted { lhs, rhs in
+            if lhs.value != rhs.value { return lhs.value > rhs.value }
+            return lhs.key < rhs.key
+        }.map(\.key)
+        let needsOther = sortedCategoryIDs.count > categoryLimit
+        let topCategoryIDs = Set(sortedCategoryIDs.prefix(needsOther ? categoryLimit - 1 : categoryLimit))
+        let visibleCategories = categories.values.filter { topCategoryIDs.contains($0.id) }
+        let otherCategory = TokenChartCategory(
+            id: TokenChartCategory.otherID,
+            name: language.text("tokens.otherModel"),
+            preferredPaletteIndex: 4
+        )
+        let categoryColors = categoryColors(for: visibleCategories + (needsOther ? [otherCategory] : []))
 
         var valuesByDay: [String: [String: Int]] = [:]
         for bucket in filteredBuckets {
@@ -1161,10 +1192,15 @@ struct MainPanelView: View {
             let segments = values.compactMap { id, value -> TokenChartSegment? in
                 guard value > 0 else { return nil }
                 let category = id == TokenChartCategory.otherID
-                    ? TokenChartCategory(id: id, name: language.text("tokens.otherModel"), color: PanelTheme.modelFallback)
-                    : categories.first { $0.id == id }
+                    ? otherCategory
+                    : categories[id]
                 guard let category else { return nil }
-                return TokenChartSegment(id: category.id, name: category.name, value: value, color: category.color)
+                return TokenChartSegment(
+                    id: category.id,
+                    name: category.name,
+                    value: value,
+                    color: categoryColors[category.id] ?? PanelTheme.modelFallback
+                )
             }
             .sorted { $0.id < $1.id }
             return TokenChartRow(
@@ -1175,18 +1211,20 @@ struct MainPanelView: View {
             )
         }
 
+        let displayedTotals = rows.flatMap(\.segments).reduce(into: [String: Int]()) { totals, segment in
+            totals[segment.id, default: 0] += segment.value
+        }
         let legendCategories = rows.flatMap(\.segments)
-            .reduce(into: [String: TokenChartCategory]()) { result, segment in
-                result[segment.id] = TokenChartCategory(id: segment.id, name: segment.name, color: segment.color)
+            .reduce(into: [String: TokenChartLegendItem]()) { result, segment in
+                result[segment.id] = TokenChartLegendItem(id: segment.id, name: segment.name, color: segment.color)
             }
             .values
             .sorted { lhs, rhs in
-                let left = totalsByCategory[lhs.id] ?? (lhs.id == TokenChartCategory.otherID ? rows.flatMap(\.segments).filter { $0.id == lhs.id }.reduce(0) { $0 + $1.value } : 0)
-                let right = totalsByCategory[rhs.id] ?? (rhs.id == TokenChartCategory.otherID ? rows.flatMap(\.segments).filter { $0.id == rhs.id }.reduce(0) { $0 + $1.value } : 0)
+                let left = displayedTotals[lhs.id] ?? totalsByCategory[lhs.id] ?? 0
+                let right = displayedTotals[rhs.id] ?? totalsByCategory[rhs.id] ?? 0
                 if left != right { return left > right }
                 return lhs.id < rhs.id
             }
-            .map { TokenChartLegendItem(id: $0.id, name: $0.name, color: $0.color) }
 
         return TokenChartSnapshot(rows: rows, legend: legendCategories)
     }
@@ -1213,18 +1251,57 @@ struct MainPanelView: View {
         return formatter.string(from: date)
     }
 
+    private func categoryColors(for categories: [TokenChartCategory]) -> [String: Color] {
+        let palette = PanelTheme.categoryPalette
+        var usedIndices = Set<Int>()
+        var colors: [String: Color] = [:]
+        for category in categories.sorted(by: {
+            if $0.preferredPaletteIndex != $1.preferredPaletteIndex {
+                return $0.preferredPaletteIndex < $1.preferredPaletteIndex
+            }
+            return $0.id < $1.id
+        }) {
+            let candidates = (0..<palette.count).map { offset in
+                (category.preferredPaletteIndex + offset) % palette.count
+            }
+            let index = candidates.first(where: { !usedIndices.contains($0) }) ?? category.preferredPaletteIndex
+            usedIndices.insert(index)
+            colors[category.id] = palette[index]
+        }
+        return colors
+    }
+
+    private func stablePaletteIndex(for value: String) -> Int {
+        let hash = value.utf8.reduce(UInt32(2166136261)) { partial, byte in
+            (partial ^ UInt32(byte)) &* 16777619
+        }
+        return Int(hash % UInt32(PanelTheme.categoryPalette.count))
+    }
+
     private func chartCategory(for bucket: TokenUsageBucket) -> TokenChartCategory {
         switch tokenChartDimension {
         case .platform:
             let key = UsageBreakdownKey.platformClient(platform: bucket.platform, client: bucket.client)
+            let paletteIndex: Int
+            switch (bucket.platform, bucket.client) {
+            case (.codex, _): paletteIndex = 0
+            case (.claude, .cli): paletteIndex = 2
+            case (.claude, _): paletteIndex = 1
+            case (.workbuddy, _): paletteIndex = 3
+            case (.kimi, _): paletteIndex = 4
+            }
             return TokenChartCategory(
                 id: key.stableID,
                 name: key.displayName(claudeCode: language.text("panel.claudeCode")),
-                color: breakdownColor(for: key)
+                preferredPaletteIndex: paletteIndex
             )
         case .model:
             let model = bucket.model.isEmpty ? language.text("login.unknown") : bucket.model
-            return TokenChartCategory(id: "model|\(model)", name: model, color: PanelTheme.modelColor(for: model))
+            return TokenChartCategory(
+                id: "model|\(model)",
+                name: model,
+                preferredPaletteIndex: stablePaletteIndex(for: model)
+            )
         }
     }
 
@@ -1238,11 +1315,11 @@ struct MainPanelView: View {
     }
 
     private struct TokenChartCategory {
-        static let otherID = "model|other"
+        static let otherID = "category|other"
 
         let id: String
         let name: String
-        let color: Color
+        let preferredPaletteIndex: Int
     }
 
     fileprivate struct TokenChartSegment: Identifiable {
@@ -1871,12 +1948,14 @@ private struct StackedBarChart: View {
     var body: some View {
         GeometryReader { proxy in
             let peak = max(rows.map(\.total).max() ?? 1, 1)
-            let plotHeight = max(proxy.size.height - 8, 1)
+            let plotTopInset: CGFloat = 15
+            let plotBottomInset: CGFloat = 8
+            let plotHeight = max(proxy.size.height - plotTopInset - plotBottomInset, 1)
             let plotX: CGFloat = 40
             let plotWidth = max(proxy.size.width - 44, 1)
             ZStack(alignment: .topLeading) {
                 Canvas { context, size in
-                    let plot = CGRect(x: plotX, y: 0, width: plotWidth, height: plotHeight)
+                    let plot = CGRect(x: plotX, y: plotTopInset, width: plotWidth, height: plotHeight)
                     for line in 0...3 {
                         let y = plot.minY + plot.height * CGFloat(line) / 3
                         var path = Path()
@@ -1906,6 +1985,10 @@ private struct StackedBarChart: View {
                                 with: .color(color)
                             )
                             bottom -= height
+                            var separator = Path()
+                            separator.move(to: CGPoint(x: x, y: bottom))
+                            separator.addLine(to: CGPoint(x: x + barWidth, y: bottom))
+                            context.stroke(separator, with: .color(PanelTheme.surface.opacity(0.78)), lineWidth: 0.75)
                         }
                     }
                 }
@@ -1921,12 +2004,27 @@ private struct StackedBarChart: View {
                 .font(.system(size: 8.5))
                 .foregroundStyle(PanelTheme.text3)
                 .frame(width: 32, height: plotHeight, alignment: .topTrailing)
+                .position(x: 16, y: plotTopInset + plotHeight / 2)
+
+                ForEach(dataLabelIndices(for: rows), id: \.self) { index in
+                    let row = rows[index]
+                    let slotWidth = plotWidth / CGFloat(max(rows.count, 1))
+                    let barCenterX = plotX + CGFloat(index) * slotWidth + slotWidth / 2
+                    let barTopY = plotTopInset + plotHeight - CGFloat(row.total) / CGFloat(peak) * plotHeight
+                    Text(QuotaFormatters.tokensCN(row.total))
+                        .font(.system(size: 8, weight: .semibold))
+                        .fontDesign(.monospaced)
+                        .foregroundStyle(PanelTheme.text2)
+                        .fixedSize()
+                        // 数据标签放在柱顶外侧，标签底部与柱体保留约 2px。
+                        .position(x: barCenterX, y: max(6, barTopY - 2 - 6))
+                }
 
                 if let hoveredIndex, rows.indices.contains(hoveredIndex) {
                     let row = rows[hoveredIndex]
                     let slotWidth = plotWidth / CGFloat(max(rows.count, 1))
                     let barCenterX = plotX + CGFloat(hoveredIndex) * slotWidth + slotWidth / 2
-                    let barTopY = plotHeight - CGFloat(row.total) / CGFloat(peak) * plotHeight
+                    let barTopY = plotTopInset + plotHeight - CGFloat(row.total) / CGFloat(peak) * plotHeight
                     ChartTooltip(
                         title: row.isToday ? "今日" : row.label,
                         value: QuotaFormatters.tokensCN(row.total),
@@ -1962,6 +2060,21 @@ private struct StackedBarChart: View {
                 }
             }
         }
+    }
+
+    private func dataLabelIndices(for rows: [MainPanelView.TokenChartRow]) -> [Int] {
+        let candidates = rows.indices.filter { rows[$0].total > 0 }
+        guard candidates.count > 14 else { return Array(candidates) }
+
+        let targetCount = min(5, candidates.count)
+        let minimumIndexGap = max(1, rows.count / targetCount)
+        var selected: [Int] = []
+        for index in candidates.sorted(by: { rows[$0].total > rows[$1].total }) {
+            guard selected.allSatisfy({ abs($0 - index) >= minimumIndexGap }) else { continue }
+            selected.append(index)
+            if selected.count == targetCount { break }
+        }
+        return selected.sorted()
     }
 
     private func index(at location: CGPoint, plotX: CGFloat, plotWidth: CGFloat) -> Int? {
