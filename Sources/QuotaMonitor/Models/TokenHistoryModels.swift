@@ -2,7 +2,7 @@ import Foundation
 
 /// 按天聚合的 Codex token 用量（来自本地会话日志）。
 /// `day` 已归一化到本地零点，`id` 为该天的稳定 key，便于与历史数组比对。
-struct DailyTokenUsage: Identifiable, Sendable {
+struct DailyTokenUsage: Identifiable, Codable, Equatable, Sendable {
     let day: Date
     let input: Int
     let cachedInput: Int
@@ -119,7 +119,7 @@ struct DailyTokenUsage: Identifiable, Sendable {
 }
 
 /// 单文件解析出的 token 累计值（会话内为累计量，取末值即可）。
-struct TokenTotals: Codable, Sendable {
+struct TokenTotals: Codable, Equatable, Sendable {
     var input: Int = 0
     var cachedInput: Int = 0
     var cacheWriteInput: Int = 0

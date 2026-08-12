@@ -161,6 +161,21 @@ struct CodexSessionTokenClientTests {
         #expect(await secondClient.fetch().first?.total == 150)
     }
 
+    @Test func retainsLastGoodFileAggregateWhenAnActiveFileTemporarilyStopsParsing() async throws {
+        let root = try Fixtures.makeTempDir("codex-last-good")
+        defer { Fixtures.remove(root) }
+        let sessions = root.appendingPathComponent("sessions/2026/08/11", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        let file = sessions.appendingPathComponent("rollout-active.jsonl")
+        let valid = #"{"timestamp":"2026-08-11T08:00:00Z","payload":{"info":{"model":"gpt-5.6-sol","total_token_usage":{"input_tokens":120,"output_tokens":30}}}}"#
+        try valid.write(to: file, atomically: true, encoding: .utf8)
+
+        let client = CodexSessionTokenClient(root: root)
+        #expect(try await client.fetchSnapshot().history.first?.total == 150)
+        try "temporarily incomplete".write(to: file, atomically: true, encoding: .utf8)
+        #expect(try await client.fetchSnapshot().history.first?.total == 150)
+    }
+
     private static func pathDay(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy/MM/dd"
@@ -248,6 +263,32 @@ struct WorkBuddyTraceClientTests {
         #expect(all.first?.cachedInput == 80)
         #expect(all.first?.reasoning == 7)
         #expect(buckets.first?.model == "hy3")
+    }
+
+    @Test func waitsForCompleteGenerationUsageAcrossReadChunks() async throws {
+        let root = try Fixtures.makeTempDir("workbuddy-generation-boundary")
+        defer { Fixtures.remove(root) }
+        let created = Int(Fixtures.noon(yesterdayOffset: 0).timeIntervalSince1970)
+        let padding = String(repeating: "x", count: 63_500)
+        let response = "{\"id\":\"g2\",\"created\":\(created),\"model\":\"hy3\",\"choices\":[{\"message\":{\"content\":\"\(padding)\"}}],\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":30,\"total_tokens\":150,\"prompt_tokens_details\":{\"cached_tokens\":80},\"completion_tokens_details\":{\"reasoning_tokens\":7}}}"
+        let escaped = response.replacingOccurrences(of: "\"", with: "\\\"")
+        let trace = "{\"trace\":{\"startedAt\":\"\(Fixtures.iso(.now))\",\"totalTokens\":0},\"spans\":[{\"name\":\"generation\",\"type\":\"generation\",\"toolOutput\":\"[\(escaped)]\"}]}"
+        try trace.write(to: root.appendingPathComponent("trace_boundary.json"), atomically: true, encoding: .utf8)
+
+        let snapshot = try await WorkBuddyTraceClient(root: root).fetchSnapshot()
+        #expect(snapshot.history.first?.total == 150)
+        #expect(snapshot.history.first?.cachedInput == 80)
+        #expect(snapshot.history.first?.reasoning == 7)
+    }
+
+    @Test func ignoresUsageShapedJSONOutsideToolOutput() async throws {
+        let root = try Fixtures.makeTempDir("workbuddy-generation-false-marker")
+        defer { Fixtures.remove(root) }
+        let fake = #"{\"created\":1780000000,\"model\":\"deepseek-v4-pro\",\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"total_tokens\":120}}"#
+        let trace = "{\"trace\":{\"startedAt\":\"\(Fixtures.iso(.now))\",\"totalTokens\":0},\"spans\":[{\"name\":\"generation\",\"type\":\"generation\",\"toolInput\":\"\(fake)\",\"toolOutput\":\"[]\"}]}"
+        try trace.write(to: root.appendingPathComponent("trace_fake.json"), atomically: true, encoding: .utf8)
+
+        #expect(try await WorkBuddyTraceClient(root: root).fetchSnapshot().history.isEmpty)
     }
 
 }

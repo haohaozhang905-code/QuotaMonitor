@@ -3,6 +3,38 @@ import Testing
 @testable import QuotaMonitor
 
 struct QuotaModelsTests {
+    @Test func canonicalModelNamesMergeAutoAndUnknownBuckets() {
+        let day = Date(timeIntervalSince1970: 1_786_400_000)
+        let buckets = [
+            Self.bucket(day: day, platform: .codex, client: .cli, model: "auto", total: 20),
+            Self.bucket(day: day, platform: .codex, client: .cli, model: " UNKNOWN ", total: 30),
+            Self.bucket(day: day, platform: .codex, client: .cli, model: "", total: 40),
+            Self.bucket(day: day, platform: .codex, client: .cli, model: "gpt-5.6-sol", total: 50)
+        ]
+
+        let combined = TokenUsageBucket.combining(buckets)
+        let presentation = QuotaPresentationSnapshot.make(
+            providers: [],
+            updatedAt: day,
+            errorMessageKey: nil,
+            isRefreshing: false,
+            codexRoute: .official,
+            claudeRoute: .unknown,
+            totalHistory: [],
+            buckets: buckets,
+            now: day
+        )
+
+        #expect(TokenModelName.canonical(" AUTO ") == "unknown")
+        #expect(TokenModelName.canonical("unknown") == "unknown")
+        #expect(TokenModelName.canonical(" gpt-5.6-sol ") == "gpt-5.6-sol")
+        #expect(combined.count == 2)
+        #expect(combined.first { $0.model == "unknown" }?.total == 90)
+        #expect(combined.first { $0.model == "gpt-5.6-sol" }?.total == 50)
+        #expect(presentation.modelToday.count == 2)
+        #expect(presentation.modelToday.first { $0.key == .model("unknown") }?.total == 90)
+    }
+
     @Test func presentationSnapshotUsesSharedDenominatorsAndGroupsOtherModels() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -229,12 +261,27 @@ struct QuotaModelsTests {
             reasoning: 100_000
         )
         let cost = TokenCostEstimator.estimatedCost(tokens: totals, model: "deepseek-v4-flash")
-        // 官方价：未命中 500k×1 + 命中 500k×0.02 + 输出 200k×2 + reasoning 100k×2
-        #expect(abs(cost - 1.11) < 0.0001)
+        // reasoning 是 completion_tokens 的明细：未命中 500k×1 + 命中 500k×0.02 + 输出 200k×2。
+        #expect(abs((cost ?? 0) - 0.91) < 0.0001)
 
-        let history = [DailyTokenUsage](repeating: .init(day: .now, totals: totals), count: 2)
-        #expect(TokenCostEstimator.daysSupported(balance: 10.9, history: history, model: nil) == 9)
-        #expect(TokenCostEstimator.daysSupported(balance: 10.9, history: [], model: nil) == nil)
+        let buckets = [TokenUsageBucket(
+            bucketStart: .now,
+            platform: .codex,
+            client: .cli,
+            model: "deepseek-v4-flash",
+            provider: .deepseek,
+            totals: totals
+        )]
+        // 只有今天有消耗时仍然除以七个自然日：0.91 / 7 = 0.13 元/日。
+        #expect(TokenCostEstimator.daysSupported(balance: 0.9, currency: "CNY", buckets: buckets) == 6)
+        #expect(TokenCostEstimator.daysSupported(balance: 10.9, currency: "CNY", buckets: []) == nil)
+        #expect(TokenCostEstimator.estimatedCost(tokens: totals, currency: "EUR") == nil)
+        let usdCost = TokenCostEstimator.estimatedCost(
+            tokens: totals,
+            model: "deepseek-v4-pro",
+            currency: "USD"
+        )
+        #expect(abs((usdCost ?? 0) - 0.3933125) < 0.0000001)
         #expect(TokenCostEstimator.cacheHitRate(tokens: DailyTokenUsage(day: .now, totals: totals)) == 0.5)
     }
 
@@ -307,6 +354,28 @@ struct QuotaModelsTests {
         #expect(layout.months.count == 12)
         #expect(layout.months.first?.column == 3) // September begins in the fourth displayed week.
         #expect(layout.months.last?.column == 50)
+    }
+
+    @Test func chartTooltipPlacementFollowsBarsAndStaysInsideEdges() {
+        let container = CGSize(width: 300, height: 180)
+        let tooltip = CGSize(width: 100, height: 80)
+        let leftBar = CGRect(x: 40, y: 60, width: 20, height: 100)
+        let rightBar = CGRect(x: 260, y: 20, width: 20, height: 140)
+
+        let leftPlacement = ChartTooltipPlacement.adjacentToBar(
+            barRect: leftBar,
+            tooltipSize: tooltip,
+            containerSize: container
+        )
+        let rightPlacement = ChartTooltipPlacement.adjacentToBar(
+            barRect: rightBar,
+            tooltipSize: tooltip,
+            containerSize: container
+        )
+        #expect(leftPlacement.x > leftBar.maxX)
+        #expect(rightPlacement.x < rightBar.minX)
+        #expect(leftPlacement.y == 100)
+        #expect(rightPlacement.y >= ChartTooltipPlacement.edgeInset + tooltip.height / 2)
     }
 
     @Test func keychainAccountMatchesCodexCLIStorageKey() {

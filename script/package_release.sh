@@ -17,6 +17,11 @@ APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 STAGING_DIR="$DIST_DIR/dmg-root"
 ZIP_PATH="$DIST_DIR/$APP_NAME-$VERSION.zip"
 
+cleanup() {
+  rm -rf "$STAGING_DIR" "$ZIP_PATH" "$APP_BUNDLE"
+}
+trap cleanup EXIT
+
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
@@ -56,6 +61,6 @@ if [[ "$MODE" == "notarized" ]]; then
   spctl --assess --type execute --verbose=2 "$APP_BUNDLE"
 fi
 
-rm -rf "$STAGING_DIR" "$ZIP_PATH"
+cleanup
 shasum -a 256 "$DMG_PATH"
 echo "$DMG_PATH"

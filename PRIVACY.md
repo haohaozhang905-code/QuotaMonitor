@@ -8,9 +8,9 @@ QuotaMonitor is a local macOS utility. It has no QuotaMonitor account system, an
 - Codex session logs in `~/.codex/sessions` for local token-use aggregation.
 - Claude Code transcripts in `~/.claude/projects` (assistant messages only: model, usage counts, timestamp) for local token-use aggregation.
 - The cc-switch local database `~/.cc-switch/cc-switch.db` (request log rows for Claude / Claude Desktop: model, token counts, timestamp) when available. This is the only local source of Claude Desktop usage and depends on the cc-switch app running.
-- WorkBuddy trace headers in `~/.workbuddy/traces` (the first few kilobytes of each `trace_*.json`, containing only the workflow summary such as total tokens, cached tokens, model names, and timestamps). Full conversation content inside trace files is never read.
+- WorkBuddy traces in `~/.workbuddy/traces`. Older files expose token summaries in their headers. For newer files, QuotaMonitor streams through the local trace to locate structured generation usage fields such as token counts, model names, and timestamps. Prompt and response content is not retained, displayed, or transmitted.
 
-No conversation content is read from any of these sources. WorkBuddy trace bodies and Claude transcript message text are intentionally ignored.
+QuotaMonitor does not extract, retain, display, or transmit conversation content. Claude message text is ignored, and WorkBuddy scanning keeps only small temporary byte windows needed to locate structured usage metadata.
 
 ## Network requests
 
@@ -21,6 +21,6 @@ Credentials are never sent to an intermediary operated by QuotaMonitor. Claude D
 
 ## Storage and logging
 
-QuotaMonitor does not store raw authentication tokens in preferences or logs. It stores only the language preference. Operational logs contain refresh status but not credentials.
+QuotaMonitor does not store raw authentication tokens in preferences or logs. It stores the language preference plus local caches containing source file paths, modification metadata, dates, model names, and aggregated token counts. These caches stay in the user's macOS Caches directory and contain no prompt or response text. Operational logs contain refresh status but not credentials.
 
 Security issues involving credentials should be reported privately according to [SECURITY.md](SECURITY.md).

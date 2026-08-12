@@ -34,6 +34,8 @@
 "panel.routeDeepSeekHint" = "Codex is currently routed through DeepSeek";
 "panel.routeUnknownHint" = "Waiting for a valid local Codex route";
 "panel.routeUnknown" = "Unknown route";
+"panel.routeOther" = "Third-party route";
+"panel.routeMixed" = "Mixed routes";
 "panel.usageBreakdown" = "Usage breakdown";
 "panel.model" = "Current model";
 "panel.syncingTitle" = "Syncing Codex data";
@@ -95,7 +97,7 @@
 "panel.tokenTrendTitle" = "Token trend";
 "panel.tokenTrendPlatformTitle" = "Token trend · by platform";
 "panel.tokenTrendModelTitle" = "Token trend · by model";
-"panel.modelChartNote" = "Stacked by model · top models shown";
+"panel.modelChartNote" = "Stacked by model · all models in range shown";
 "panel.modelBreakdownTitle" = "Model usage ranking";
 "panel.modelBreakdownNote" = "Selected period · tokens";
 "panel.modelNoData" = "No model-level data is available yet";

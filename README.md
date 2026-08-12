@@ -23,7 +23,7 @@
 | Codex | Official quota endpoint and local session logs | New Codex versions store login credentials in the macOS Keychain; older file-based credentials are still supported. |
 | Claude Code | Local project transcripts | Token usage only; Anthropic official quota is not currently available. |
 | Claude Desktop | cc-switch request-log database | cc-switch is the available source for this usage. When it is not running, the desktop column is marked as not captured. |
-| WorkBuddy | Trace-file summaries | Only the compact trace summary is read, never conversation bodies. |
+| WorkBuddy | Trace summary and generation usage fields | Older traces are read from their compact header. Newer traces are streamed locally to locate structured usage metadata; prompt and response content is not retained, displayed, or transmitted. |
 | DeepSeek | Official balance endpoint | Uses the active Codex or Claude/cc-switch DeepSeek credential and treats the balance as a shared pool. |
 
 ## How the numbers are calculated

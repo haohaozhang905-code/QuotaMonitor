@@ -51,7 +51,9 @@ final class ClaudeRouteDetectorTests: XCTestCase {
             ("claude", "KomAPI", "",
              #"{"env":{"ANTHROPIC_BASE_URL":"https://www.komapi.top/"}}"#, true),
         ])
-        XCTAssertEqual(ClaudeRouteDetector.detectFromCCSwitchDB(at: db), .deepseek)
+        XCTAssertEqual(ClaudeRouteDetector.detectFromCCSwitchDB(at: db), .mixed)
+        XCTAssertEqual(ClaudeRouteDetector.detectFromCCSwitchDB(at: db, appType: "claude"), .other)
+        XCTAssertEqual(ClaudeRouteDetector.detectFromCCSwitchDB(at: db, appType: "claude-desktop"), .deepseek)
     }
 
     func testDetectsOfficialCurrentProvider() throws {
@@ -62,12 +64,12 @@ final class ClaudeRouteDetectorTests: XCTestCase {
         XCTAssertEqual(ClaudeRouteDetector.detectFromCCSwitchDB(at: db), .official)
     }
 
-    func testThirdPartyRouteIsUnknown() throws {
+    func testThirdPartyRouteIsIdentifiedWithoutConflatingItWithDeepSeek() throws {
         let db = try makeDB(withRows: [
             ("claude", "KomAPI", "",
              #"{"env":{"ANTHROPIC_BASE_URL":"https://www.komapi.top/"}}"#, true),
         ])
-        XCTAssertEqual(ClaudeRouteDetector.detectFromCCSwitchDB(at: db), .unknown)
+        XCTAssertEqual(ClaudeRouteDetector.detectFromCCSwitchDB(at: db), .other)
     }
 
     func testMissingDBIsUnknown() {

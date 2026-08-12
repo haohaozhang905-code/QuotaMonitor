@@ -10,7 +10,7 @@ import Foundation
 ///
 /// 用 actor 持有 mtime 增量缓存，避免每隔刷新周期全量重扫所有历史会话文件。
 actor CodexSessionTokenClient {
-    private struct CachedUsage: Codable {
+    private struct CachedUsage: Codable, Equatable {
         let mtime: Date
         let fileSize: Int
         let totalsByDay: [String: TokenTotals]
@@ -48,92 +48,61 @@ actor CodexSessionTokenClient {
     }
 
     func fetch() -> [DailyTokenUsage] {
-        aggregate(modelFilter: nil)
+        (try? fetchSnapshot().history) ?? []
     }
 
     /// 只统计模型名包含 deepseek 的请求增量。
     func fetch(modelFilter: String?) -> [DailyTokenUsage] {
-        aggregate(modelFilter: modelFilter)
+        guard modelFilter?.lowercased().contains("deepseek") == true else { return fetch() }
+        return (try? fetchSnapshot().deepSeekHistory) ?? []
     }
 
     /// 返回按日期和实际模型拆分的用量，供 Token 看板的“按模型”视图使用。
     func fetchBuckets() -> [TokenUsageBucket] {
-        aggregateBuckets()
+        (try? fetchSnapshot().buckets) ?? []
     }
 
-    private func aggregate(modelFilter: String?) -> [DailyTokenUsage] {
-        loadPersistentCacheIfNeeded()
-        var newCache: [URL: CachedUsage] = [:]
-        var perDay: [String: TokenTotals] = [:]
-        let deepSeekOnly = modelFilter?.lowercased().contains("deepseek") ?? false
-
-        for root in Self.sessionRoots(from: self.root) {
-            guard let enumerator = FileManager.default.enumerator(
-                at: root,
-                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-                options: [.skipsHiddenFiles]
-            ) else { continue }
-
-            for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-                guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
-                      let mtime = values.contentModificationDate,
-                      let fileSize = values.fileSize else { continue }
-                let fallbackDay = Self.dayComponents(from: url)
-
-                let buckets: [String: TokenTotals]
-                if let cached = cache[url], cached.matches(mtime: mtime, fileSize: fileSize) {
-                    newCache[url] = cached
-                    buckets = deepSeekOnly ? cached.deepSeekByDay : cached.totalsByDay
-                } else {
-                    guard let parsed = parseFile(url, fallbackDay: fallbackDay) else { continue }
-                    let entry = CachedUsage(
-                        mtime: mtime,
-                        fileSize: fileSize,
-                        totalsByDay: parsed.totalsByDay,
-                        deepSeekByDay: parsed.deepSeekByDay,
-                        modelByDay: parsed.modelByDay
-                    )
-                    newCache[url] = entry
-                    buckets = deepSeekOnly ? entry.deepSeekByDay : entry.totalsByDay
-                }
-
-                for (dayKey, totals) in buckets {
-                    if let existing = perDay[dayKey] {
-                        perDay[dayKey] = existing.adding(totals)
-                    } else {
-                        perDay[dayKey] = totals
-                    }
-                }
-            }
-        }
-
-        cache = newCache
-        savePersistentCache()
-        return perDay.map { key, totals in
-            DailyTokenUsage(day: Self.day(from: key), totals: totals)
-        }
-        .sorted { $0.day < $1.day }
+    func fetchSnapshot() throws -> TokenSourceSnapshot {
+        TokenSourceSnapshot(buckets: try aggregateBuckets())
     }
 
-    private func aggregateBuckets() -> [TokenUsageBucket] {
+    private func aggregateBuckets() throws -> [TokenUsageBucket] {
         loadPersistentCacheIfNeeded()
         var buckets: [TokenUsageBucket] = []
-        var cacheChanged = false
+        var newCache: [URL: CachedUsage] = [:]
         for root in Self.sessionRoots(from: self.root) {
+            var enumerationError: Error?
             guard let enumerator = FileManager.default.enumerator(
                 at: root,
                 includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-                options: [.skipsHiddenFiles]
-            ) else { continue }
+                options: [.skipsHiddenFiles],
+                errorHandler: { _, error in
+                    enumerationError = error
+                    return false
+                }
+            ) else { throw TokenSourceReadError.unreadableRoot(root) }
             for case let url as URL in enumerator where url.pathExtension == "jsonl" {
                 guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
                       let mtime = values.contentModificationDate,
-                      let fileSize = values.fileSize else { continue }
+                      let fileSize = values.fileSize else {
+                    if let cached = cache[url] {
+                        newCache[url] = cached
+                        buckets.append(contentsOf: Self.makeBuckets(from: cached.modelByDay))
+                    }
+                    continue
+                }
                 let parsed: [String: TokenTotals]
                 if let cached = cache[url], cached.matches(mtime: mtime, fileSize: fileSize) {
+                    newCache[url] = cached
                     parsed = cached.modelByDay
                 } else {
-                    guard let result = parseFile(url, fallbackDay: Self.dayComponents(from: url)) else { continue }
+                    guard let result = parseFile(url, fallbackDay: Self.dayComponents(from: url)) else {
+                        // 活跃日志可能在写入边界暂时无法解析；保留上一份文件汇总。
+                        guard let cached = cache[url] else { continue }
+                        newCache[url] = cached
+                        buckets.append(contentsOf: Self.makeBuckets(from: cached.modelByDay))
+                        continue
+                    }
                     let entry = CachedUsage(
                         mtime: mtime,
                         fileSize: fileSize,
@@ -141,28 +110,33 @@ actor CodexSessionTokenClient {
                         deepSeekByDay: result.deepSeekByDay,
                         modelByDay: result.modelByDay
                     )
-                    cache[url] = entry
-                    cacheChanged = true
+                    newCache[url] = entry
                     parsed = entry.modelByDay
                 }
-                for (key, totals) in parsed {
-                    let parts = key.split(separator: "\u{1F}", maxSplits: 1).map(String.init)
-                    guard parts.count == 2 else { continue }
-                    let day = Self.day(from: parts[0])
-                    let model = parts[1]
-                    buckets.append(TokenUsageBucket(
-                        bucketStart: day,
-                        platform: .codex,
-                        client: .cli,
-                        model: model,
-                        provider: model.lowercased().contains("deepseek") ? .deepseek : .official,
-                        totals: totals
-                    ))
-                }
+                buckets.append(contentsOf: Self.makeBuckets(from: parsed))
             }
+            if enumerationError != nil { throw TokenSourceReadError.unreadableRoot(root) }
         }
+        let cacheChanged = cache != newCache
+        cache = newCache
         if cacheChanged { savePersistentCache() }
         return TokenUsageBucket.combining(buckets)
+    }
+
+    private static func makeBuckets(from modelByDay: [String: TokenTotals]) -> [TokenUsageBucket] {
+        modelByDay.compactMap { key, totals in
+            let parts = key.split(separator: "\u{1F}", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { return nil }
+            let model = TokenModelName.canonical(parts[1])
+            return TokenUsageBucket(
+                bucketStart: day(from: parts[0]),
+                platform: .codex,
+                client: .cli,
+                model: model,
+                provider: model.lowercased().contains("deepseek") ? .deepseek : .official,
+                totals: totals
+            )
+        }
     }
 
     /// 历史会话解析结果跨启动保存；活跃文件按 mtime + 大小自动失效。

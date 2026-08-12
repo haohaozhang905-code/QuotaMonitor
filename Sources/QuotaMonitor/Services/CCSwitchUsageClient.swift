@@ -12,7 +12,7 @@ struct CCSwitchDailyUsage: Sendable {
 ///
 /// 数据来源：`~/.cc-switch/cc-switch.db` 的 `proxy_request_logs` 表，
 /// 每行一次请求：app_type / model / input / output / cache_read /
-/// cache_creation / created_at（epoch 毫秒）。cc-switch 为 Claude 桌面版
+/// cache_creation / created_at（epoch 秒）。cc-switch 为 Claude 桌面版
 /// 的本地代理捕获，这是桌面版唯一可用的用量来源。
 ///
 /// 统一口径：input = input_tokens + cache_read + cache_creation（cc-switch
@@ -37,42 +37,16 @@ actor CCSwitchUsageClient {
         self.dbURL = dbURL ?? Self.defaultDBURL()
     }
 
-    func fetch(appType: String) -> CCSwitchDailyUsage? {
+    /// 同一次 SQLite 查询同时生成总量、DeepSeek 子集和模型桶。
+    func fetchSnapshot(appType: String, client: TokenClient = .desktop) -> TokenSourceSnapshot? {
         guard let rows = queryRows(appType: appType) else { return nil }
-        var allByDay: [String: TokenTotals] = [:]
-        var deepSeekByDay: [String: TokenTotals] = [:]
-
-        for row in rows {
-            let dayKey = DailyTokenUsage.dayKey(
-                for: Date(timeIntervalSince1970: Double(row.createdAt))
-            )
+        return TokenSourceSnapshot(buckets: rows.map { row in
             var totals = TokenTotals()
             totals.input = row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens
             totals.cachedInput = row.cacheReadTokens
             totals.cacheWriteInput = row.cacheCreationTokens
             totals.output = row.outputTokens
-
-            allByDay[dayKey, default: TokenTotals()] = allByDay[dayKey, default: TokenTotals()].adding(totals)
-            if row.model.lowercased().contains("deepseek") {
-                deepSeekByDay[dayKey, default: TokenTotals()] = deepSeekByDay[dayKey, default: TokenTotals()].adding(totals)
-            }
-        }
-
-        return CCSwitchDailyUsage(
-            all: makeUsage(byDay: allByDay),
-            deepSeek: makeUsage(byDay: deepSeekByDay)
-        )
-    }
-
-    func fetchBuckets(appType: String, client: TokenClient = .desktop) -> [TokenUsageBucket]? {
-        guard let rows = queryRows(appType: appType) else { return nil }
-        let buckets = rows.map { row -> TokenUsageBucket in
-            var totals = TokenTotals()
-            totals.input = row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens
-            totals.cachedInput = row.cacheReadTokens
-            totals.cacheWriteInput = row.cacheCreationTokens
-            totals.output = row.outputTokens
-            let model = row.model.isEmpty ? "unknown" : row.model
+            let model = TokenModelName.canonical(row.model)
             return TokenUsageBucket(
                 bucketStart: Calendar.current.startOfDay(for: Date(timeIntervalSince1970: Double(row.createdAt))),
                 platform: .claude,
@@ -81,15 +55,16 @@ actor CCSwitchUsageClient {
                 provider: model.lowercased().contains("deepseek") ? .deepseek : .official,
                 totals: totals
             )
-        }
-        return TokenUsageBucket.combining(buckets)
+        })
     }
 
-    private func makeUsage(byDay: [String: TokenTotals]) -> [DailyTokenUsage] {
-        byDay.map { key, totals in
-            DailyTokenUsage(day: Self.day(from: key), totals: totals)
-        }
-        .sorted { $0.day < $1.day }
+    func fetch(appType: String) -> CCSwitchDailyUsage? {
+        guard let snapshot = fetchSnapshot(appType: appType) else { return nil }
+        return CCSwitchDailyUsage(all: snapshot.history, deepSeek: snapshot.deepSeekHistory)
+    }
+
+    func fetchBuckets(appType: String, client: TokenClient = .desktop) -> [TokenUsageBucket]? {
+        fetchSnapshot(appType: appType, client: client)?.buckets
     }
 
     private func queryRows(appType: String) -> [Row]? {
@@ -100,9 +75,17 @@ actor CCSwitchUsageClient {
         defer { sqlite3_close(db) }
         sqlite3_busy_timeout(db, 2_000)
 
+        // 直接在 SQLite 层按日和模型聚合，避免把完整请求历史加载进内存，
+        // 也消除旧版 500,000 行静默截断造成的不确定结果。
         let sql = """
-        SELECT app_type, model, input_tokens, output_tokens, cache_read_tokens, \
-        cache_creation_tokens, created_at FROM proxy_request_logs WHERE app_type = ?1
+        SELECT model,
+               SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
+               SUM(cache_creation_tokens),
+               MIN(created_at)
+        FROM proxy_request_logs
+        WHERE app_type = ?1
+        GROUP BY model, date(created_at, 'unixepoch', 'localtime')
+        ORDER BY MIN(created_at) ASC, model ASC
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
@@ -115,16 +98,15 @@ actor CCSwitchUsageClient {
         while true {
             let step = sqlite3_step(statement)
             if step == SQLITE_ROW {
-                guard let modelC = sqlite3_column_text(statement, 1) else { continue }
+                let model = sqlite3_column_text(statement, 0).map { String(cString: $0) } ?? TokenModelName.unknown
                 rows.append(Row(
-                    model: String(cString: modelC),
-                    inputTokens: Int(sqlite3_column_int64(statement, 2)),
-                    outputTokens: Int(sqlite3_column_int64(statement, 3)),
-                    cacheReadTokens: Int(sqlite3_column_int64(statement, 4)),
-                    cacheCreationTokens: Int(sqlite3_column_int64(statement, 5)),
-                    createdAt: sqlite3_column_int64(statement, 6)
+                    model: model,
+                    inputTokens: Int(sqlite3_column_int64(statement, 1)),
+                    outputTokens: Int(sqlite3_column_int64(statement, 2)),
+                    cacheReadTokens: Int(sqlite3_column_int64(statement, 3)),
+                    cacheCreationTokens: Int(sqlite3_column_int64(statement, 4)),
+                    createdAt: sqlite3_column_int64(statement, 5)
                 ))
-                if rows.count >= 500_000 { break }
             } else if step == SQLITE_DONE {
                 break
             } else {
@@ -134,26 +116,12 @@ actor CCSwitchUsageClient {
         return rows
     }
 
-    /// 数据库文件最近修改时间；QuotaStore 用它判断 cc-switch 是否仍在写入。
-    static func lastDatabaseModification() -> Date? {
-        let url = defaultDBURL()
-        guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]) else { return nil }
-        return values.contentModificationDate
-    }
-
     /// cc-switch 是否正在运行（Claude 桌面版用量依赖它的本地代理）。
     @MainActor
     static func isCCSwitchRunning() -> Bool {
         NSWorkspace.shared.runningApplications.contains {
             $0.bundleIdentifier == "com.ccswitch.desktop"
         }
-    }
-
-    private static func day(from key: String) -> Date {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone.current
-        return formatter.date(from: key) ?? .now
     }
 
     private static func defaultDBURL() -> URL {

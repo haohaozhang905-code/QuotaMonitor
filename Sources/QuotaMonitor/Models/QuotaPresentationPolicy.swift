@@ -20,6 +20,7 @@ enum QuotaPresentationPolicy {
         switch route {
         case .official: .officialQuota
         case .deepseek: .sharedBalance
+        case .other, .mixed: .unavailable
         case .unknown: .unavailable
         }
     }

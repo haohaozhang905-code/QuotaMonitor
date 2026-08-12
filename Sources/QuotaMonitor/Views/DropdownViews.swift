@@ -205,64 +205,6 @@ struct DropdownQuotaStatusLine: View {
 
 // MARK: - 用量区
 
-struct DropdownTotalRow: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .font(.system(size: 11.5, weight: .medium))
-                .fontDesign(.monospaced)
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 8)
-            Text(value)
-                .font(.system(size: 17, weight: .bold))
-                .fontDesign(.monospaced)
-                .foregroundStyle(.primary)
-        }
-        .padding(.horizontal, DropdownLayout.horizontalPadding)
-        .padding(.top, 3)
-        .padding(.bottom, 2)
-        .frame(width: DropdownLayout.width, alignment: .leading)
-    }
-}
-
-struct DropdownUsageRow: View {
-    let icon: BrandIconKind
-    let title: String
-    let barColor: Color
-    let barWidth: Double
-    let value: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            BrandIconView(kind: icon, size: 13)
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.primary)
-            Spacer(minLength: 6)
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.primary.opacity(0.08))
-                    Capsule()
-                        .fill(barColor)
-                        .frame(width: proxy.size.width * barWidth)
-                }
-            }
-            .frame(width: 72, height: 4)
-            Text(value)
-                .font(.system(size: 11, weight: .semibold))
-                .fontDesign(.monospaced)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, DropdownLayout.horizontalPadding)
-        .padding(.vertical, 3)
-        .frame(width: DropdownLayout.width, alignment: .leading)
-    }
-}
-
 struct DropdownCompactRow: View {
     let name: String
     let amount: String
@@ -303,34 +245,6 @@ struct DropdownEmptyRow: View {
             .padding(.horizontal, DropdownLayout.horizontalPadding)
             .padding(.vertical, 5)
             .frame(width: DropdownLayout.width, alignment: .leading)
-    }
-}
-
-struct DropdownDeepSeekRow: View {
-    let value: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            BrandIconView(kind: .deepSeek, size: 12)
-            Text("其中 DeepSeek 路由")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 8)
-            Text(value)
-                .font(.system(size: 11, weight: .semibold))
-                .fontDesign(.monospaced)
-                .foregroundStyle(.primary)
-        }
-        .padding(.horizontal, DropdownLayout.horizontalPadding)
-        .padding(.top, 5)
-        .padding(.bottom, 3)
-        .frame(width: DropdownLayout.width, alignment: .leading)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.primary.opacity(0.10))
-                .frame(height: 1)
-                .padding(.horizontal, DropdownLayout.horizontalPadding)
-        }
     }
 }
 

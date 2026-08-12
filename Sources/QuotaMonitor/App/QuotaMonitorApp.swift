@@ -20,8 +20,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: MainPanelController?
     private var refreshTask: Task<Void, Never>?
     private var menuBarUpdateTask: Task<Void, Never>?
+    private var renderedMenuBarState: MenuBarRenderState?
+
+    private struct MenuBarRenderState: Equatable {
+        let codexRoute: CodexRoute
+        let claudeRoute: ClaudeRoute
+        let codexRemaining: Double?
+        let balanceAmount: Double?
+        let balanceCurrency: String?
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard enforceSingleInstance() else { return }
         NSApp.setActivationPolicy(.accessory)
         // 改造版视觉标准以暗黑界面为默认外观；保留环境变量作为验收脚本的显式开关。
         if ProcessInfo.processInfo.environment["CODEXQUOTA_FORCE_DARK"] == "1"
@@ -52,6 +62,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - 菜单栏状态项
 
+    private func enforceSingleInstance() -> Bool {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return true }
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let existing = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+            .first { $0.processIdentifier != currentPID }
+        guard let existing else { return true }
+
+        existing.activate(options: [.activateAllWindows])
+        NSApp.terminate(nil)
+        return false
+    }
+
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
@@ -71,32 +93,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenuBarContent()
     }
 
-    private var menuBarContent: MenuBarSlotsView {
+    private var menuBarRenderState: MenuBarRenderState {
         let codex = store.providers.first { $0.providerId.lowercased() == "codex" }
-        return MenuBarSlotsView(
+        return MenuBarRenderState(
             codexRoute: store.codexRoute,
-            claudeRoute: store.claudeRoute,
+            claudeRoute: store.claudeUsesDeepSeek ? .deepseek : store.claudeRouteSummary,
             codexRemaining: codex?.weekly?.remainingPercent,
-            claudeRemaining: nil,
             balanceAmount: store.deepSeekBalance,
             balanceCurrency: store.deepSeekCurrency
         )
     }
 
+    private func menuBarContent(for state: MenuBarRenderState) -> MenuBarSlotsView {
+        MenuBarSlotsView(
+            codexRoute: state.codexRoute,
+            claudeRoute: state.claudeRoute,
+            codexRemaining: state.codexRemaining,
+            claudeRemaining: nil,
+            balanceAmount: state.balanceAmount,
+            balanceCurrency: state.balanceCurrency
+        )
+    }
+
     /// 刷新菜单栏内容并按内容重新调整状态项宽度。
     private func updateMenuBarContent() {
+        let state = menuBarRenderState
+        guard state != renderedMenuBarState else { return }
         menuBarUpdateTask?.cancel()
         menuBarUpdateTask = Task { @MainActor [weak self] in
             await Task.yield()
             guard !Task.isCancelled else { return }
-            self?.renderMenuBarContent()
+            guard let self, self.menuBarRenderState == state else { return }
+            self.renderMenuBarContent(for: state)
         }
     }
 
-    private func renderMenuBarContent() {
+    private func renderMenuBarContent(for state: MenuBarRenderState) {
         guard let button = statusItem?.button else { return }
         let renderer = ImageRenderer(
-            content: menuBarContent
+            content: menuBarContent(for: state)
                 .padding(.horizontal, 1)
                 .padding(.vertical, 3)
         )
@@ -107,6 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleNone
         statusItem?.length = ceil(image.size.width) + 8
+        renderedMenuBarState = state
     }
 
     /// 用 Observation 追踪 store 变化，菜单栏文字自动跟随。
@@ -114,11 +150,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         withObservationTracking {
             _ = store.codexRoute
             _ = store.claudeRoute
+            _ = store.claudeDesktopRoute
             _ = store.deepSeekBalance
             _ = store.providers.count
-            _ = store.lastUpdated
-            _ = store.isRefreshing
-            _ = store.errorMessageKey
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.updateMenuBarContent()

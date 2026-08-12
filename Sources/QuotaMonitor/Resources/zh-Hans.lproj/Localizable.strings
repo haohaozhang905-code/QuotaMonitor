@@ -34,6 +34,8 @@
 "panel.routeDeepSeekHint" = "Codex 当前通过 DeepSeek 路由";
 "panel.routeUnknownHint" = "正在等待有效的本地 Codex 路由";
 "panel.routeUnknown" = "路由未知";
+"panel.routeOther" = "第三方路由";
+"panel.routeMixed" = "混合路由";
 "panel.usageBreakdown" = "用量构成";
 "panel.model" = "当前模型";
 "panel.syncingTitle" = "正在同步 Codex 数据";
@@ -95,7 +97,7 @@
 "panel.tokenTrendTitle" = "Token 趋势";
 "panel.tokenTrendPlatformTitle" = "Token 趋势 · 按平台";
 "panel.tokenTrendModelTitle" = "Token 趋势 · 按模型";
-"panel.modelChartNote" = "按模型堆叠 · 显示主要模型";
+"panel.modelChartNote" = "按模型堆叠 · 显示当前范围内的全部模型";
 "panel.modelBreakdownTitle" = "模型用量排行";
 "panel.modelBreakdownNote" = "当前时间范围 · tokens";
 "panel.modelNoData" = "当前还没有按模型拆分的数据";

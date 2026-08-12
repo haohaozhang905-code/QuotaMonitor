@@ -213,12 +213,12 @@ struct QuotaPresentationSnapshot: Equatable, Sendable {
             modelToday: breakdown(
                 buckets: buckets,
                 startingAt: todayStart,
-                key: { .model($0.model) }
+                key: { .model(TokenModelName.canonical($0.model)) }
             ),
             modelLastSevenDays: breakdown(
                 buckets: buckets,
                 startingAt: sevenDayStart,
-                key: { .model($0.model) }
+                key: { .model(TokenModelName.canonical($0.model)) }
             ),
             history: historyAvailability(history: totalHistory, now: now, calendar: calendar)
         )
@@ -264,7 +264,7 @@ struct QuotaPresentationSnapshot: Equatable, Sendable {
             models: breakdown(
                 buckets: buckets,
                 startingAt: start,
-                key: { .model($0.model) }
+                key: { .model(TokenModelName.canonical($0.model)) }
             )
         )
     }
@@ -377,6 +377,8 @@ struct QuotaPresentationSnapshot: Equatable, Sendable {
             let weekly = provider?.weekly.map(metricPresentation)
             guard session != nil || weekly != nil else { return .connectedWithoutQuota }
             return .official(plan: provider?.plan, session: session, weekly: weekly)
+        case .other, .mixed:
+            return .connectedWithoutQuota
         case .unknown:
             return .unavailable
         }

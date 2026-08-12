@@ -11,114 +11,152 @@ import Foundation
 ///
 /// 用 actor 持有 mtime 增量缓存，避免每次刷新全量重扫历史转录。
 actor ClaudeSessionTokenClient {
-    private struct FileCache {
+    private struct FileCache: Codable, Equatable {
         let mtime: Date
+        let fileSize: Int
         let totalsByDay: [String: TokenTotals]
         let deepSeekByDay: [String: TokenTotals]
         let modelByDay: [String: TokenTotals]
+
+        func matches(mtime candidateMtime: Date, fileSize candidateSize: Int) -> Bool {
+            fileSize == candidateSize
+                && abs(mtime.timeIntervalSinceReferenceDate - candidateMtime.timeIntervalSinceReferenceDate) < 0.001
+        }
+    }
+
+    private struct PersistedCache: Codable {
+        let version: Int
+        let rootPath: String
+        let entries: [String: FileCache]
     }
 
     private var cache: [URL: FileCache] = [:]
+    private var didLoadPersistentCache = false
     private let root: URL
+    private let persistentCacheURL: URL?
 
     init(root: URL? = nil) {
         self.root = root ?? Self.defaultRoot()
+        self.persistentCacheURL = root == nil ? Self.defaultPersistentCacheURL() : nil
     }
 
     func fetch() -> [DailyTokenUsage] {
-        aggregate(deepSeekOnly: false)
+        (try? fetchSnapshot().history) ?? []
     }
 
     /// 只统计模型名包含 deepseek 的消息（与 Codex 客户端口径一致）。
     func fetch(modelFilter: String?) -> [DailyTokenUsage] {
-        aggregate(deepSeekOnly: modelFilter?.lowercased().contains("deepseek") ?? false)
+        guard modelFilter?.lowercased().contains("deepseek") == true else { return fetch() }
+        return (try? fetchSnapshot().deepSeekHistory) ?? []
     }
 
     func fetchBuckets() -> [TokenUsageBucket] {
-        var buckets: [TokenUsageBucket] = []
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
-
-        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
-                  let mtime = values.contentModificationDate else { continue }
-            let modelByDay: [String: TokenTotals]
-            if let cached = cache[url], cached.mtime == mtime {
-                modelByDay = cached.modelByDay
-            } else {
-                guard let parsed = parseFile(url, fallbackDay: Self.dayKey(for: mtime)) else { continue }
-                let entry = FileCache(
-                    mtime: mtime,
-                    totalsByDay: parsed.totalsByDay,
-                    deepSeekByDay: parsed.deepSeekByDay,
-                    modelByDay: parsed.modelByDay
-                )
-                cache[url] = entry
-                modelByDay = entry.modelByDay
-            }
-            for (key, totals) in modelByDay {
-                let parts = key.split(separator: "\u{1F}", maxSplits: 1).map(String.init)
-                guard parts.count == 2 else { continue }
-                buckets.append(TokenUsageBucket(
-                    bucketStart: Self.day(from: parts[0]),
-                    platform: .claude,
-                    client: .cli,
-                    model: parts[1],
-                    provider: parts[1].lowercased().contains("deepseek") ? .deepseek : .official,
-                    totals: totals
-                ))
-            }
-        }
-        return TokenUsageBucket.combining(buckets)
+        (try? fetchSnapshot().buckets) ?? []
     }
 
-    private func aggregate(deepSeekOnly: Bool) -> [DailyTokenUsage] {
-        var newCache: [URL: FileCache] = [:]
-        var perDay: [String: TokenTotals] = [:]
+    func fetchSnapshot() throws -> TokenSourceSnapshot {
+        TokenSourceSnapshot(buckets: try scanBuckets())
+    }
 
+    private func scanBuckets() throws -> [TokenUsageBucket] {
+        loadPersistentCacheIfNeeded()
+        var newCache: [URL: FileCache] = [:]
+        var buckets: [TokenUsageBucket] = []
+        var enumerationError: Error?
         guard let enumerator = FileManager.default.enumerator(
             at: root,
-            includingPropertiesForKeys: [.contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+            options: [.skipsHiddenFiles],
+            errorHandler: { _, error in
+                enumerationError = error
+                return false
+            }
+        ) else {
+            if !FileManager.default.fileExists(atPath: root.path) { return [] }
+            throw TokenSourceReadError.unreadableRoot(root)
+        }
 
         for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
-                  let mtime = values.contentModificationDate else { continue }
-
-            let buckets: [String: TokenTotals]
-            if let cached = cache[url], cached.mtime == mtime {
+            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+                  let mtime = values.contentModificationDate,
+                  let fileSize = values.fileSize else {
+                if let cached = cache[url] {
+                    newCache[url] = cached
+                    buckets.append(contentsOf: Self.makeBuckets(from: cached.modelByDay))
+                }
+                continue
+            }
+            let modelByDay: [String: TokenTotals]
+            if let cached = cache[url], cached.matches(mtime: mtime, fileSize: fileSize) {
                 newCache[url] = cached
-                buckets = deepSeekOnly ? cached.deepSeekByDay : cached.totalsByDay
+                modelByDay = cached.modelByDay
             } else {
-                guard let parsed = parseFile(url, fallbackDay: Self.dayKey(for: mtime)) else { continue }
+                guard let parsed = parseFile(url, fallbackDay: Self.dayKey(for: mtime)) else {
+                    guard let cached = cache[url] else { continue }
+                    newCache[url] = cached
+                    modelByDay = cached.modelByDay
+                    for bucket in Self.makeBuckets(from: modelByDay) { buckets.append(bucket) }
+                    continue
+                }
                 let entry = FileCache(
                     mtime: mtime,
+                    fileSize: fileSize,
                     totalsByDay: parsed.totalsByDay,
                     deepSeekByDay: parsed.deepSeekByDay,
                     modelByDay: parsed.modelByDay
                 )
                 newCache[url] = entry
-                buckets = deepSeekOnly ? entry.deepSeekByDay : entry.totalsByDay
+                modelByDay = entry.modelByDay
             }
-
-            for (dayKey, totals) in buckets {
-                if let existing = perDay[dayKey] {
-                    perDay[dayKey] = existing.adding(totals)
-                } else {
-                    perDay[dayKey] = totals
-                }
-            }
+            buckets.append(contentsOf: Self.makeBuckets(from: modelByDay))
         }
-
+        if enumerationError != nil { throw TokenSourceReadError.unreadableRoot(root) }
+        let cacheChanged = cache != newCache
         cache = newCache
-        return perDay.map { key, totals in
-            DailyTokenUsage(day: Self.day(from: key), totals: totals)
+        if cacheChanged { savePersistentCache() }
+        return TokenUsageBucket.combining(buckets)
+    }
+
+    private static func makeBuckets(from modelByDay: [String: TokenTotals]) -> [TokenUsageBucket] {
+        modelByDay.compactMap { key, totals in
+            let parts = key.split(separator: "\u{1F}", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { return nil }
+            let model = TokenModelName.canonical(parts[1])
+            return TokenUsageBucket(
+                bucketStart: day(from: parts[0]),
+                platform: .claude,
+                client: .cli,
+                model: model,
+                provider: model.lowercased().contains("deepseek") ? .deepseek : .official,
+                totals: totals
+            )
         }
-        .sorted { $0.day < $1.day }
+    }
+
+    private func loadPersistentCacheIfNeeded() {
+        guard !didLoadPersistentCache else { return }
+        didLoadPersistentCache = true
+        guard let persistentCacheURL,
+              let data = try? Data(contentsOf: persistentCacheURL),
+              let persisted = try? JSONDecoder().decode(PersistedCache.self, from: data),
+              persisted.version == 1,
+              persisted.rootPath == root.standardizedFileURL.path else { return }
+        cache = Dictionary(uniqueKeysWithValues: persisted.entries.map {
+            (URL(fileURLWithPath: $0.key), $0.value)
+        })
+    }
+
+    private func savePersistentCache() {
+        guard let persistentCacheURL else { return }
+        let payload = PersistedCache(
+            version: 1,
+            rootPath: root.standardizedFileURL.path,
+            entries: Dictionary(uniqueKeysWithValues: cache.map { ($0.key.path, $0.value) })
+        )
+        guard let data = try? JSONEncoder().encode(payload) else { return }
+        let directory = persistentCacheURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? data.write(to: persistentCacheURL, options: .atomic)
     }
 
     private func parseFile(_ url: URL, fallbackDay: String) -> (totalsByDay: [String: TokenTotals], deepSeekByDay: [String: TokenTotals], modelByDay: [String: TokenTotals])? {
@@ -202,5 +240,11 @@ actor ClaudeSessionTokenClient {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude", isDirectory: true)
             .appendingPathComponent("projects", isDirectory: true)
+    }
+
+    private static func defaultPersistentCacheURL() -> URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("com.cmsjcm.QuotaMonitor", isDirectory: true)
+            .appendingPathComponent("claude-session-token-cache-v1.json")
     }
 }

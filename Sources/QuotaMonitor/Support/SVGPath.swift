@@ -20,7 +20,7 @@ enum SVGPath {
         var lastQuadControl: CGPoint?
 
         func number() -> CGFloat? {
-            guard index < tokens.count, let raw = tokens[index] as? String, let value = Double(raw) else {
+            guard index < tokens.count, let value = Double(tokens[index]) else {
                 return nil
             }
             index += 1
@@ -29,7 +29,10 @@ enum SVGPath {
 
         /// 按 SVG flag 语法读取单个 0/1 字符；剩余数字串插回 token 流。
         func flag() -> Bool? {
-            guard index < tokens.count, let raw = tokens[index] as? String,
+            guard index < tokens.count,
+                  !tokens[index].isEmpty else { return nil }
+            let raw = tokens[index]
+            guard
                   let first = raw.first, first == "0" || first == "1" else {
                 return nil
             }
@@ -48,7 +51,7 @@ enum SVGPath {
         }
 
         while index < tokens.count {
-            guard let raw = tokens[index] as? String else { break }
+            let raw = tokens[index]
             let command: Character
             if raw.count == 1, "MLHVCSQTAZmlhvcsqtaz".contains(raw) {
                 command = raw[raw.startIndex]

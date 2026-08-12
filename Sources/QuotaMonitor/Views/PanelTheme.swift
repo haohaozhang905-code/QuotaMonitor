@@ -77,6 +77,14 @@ enum PanelTheme {
 
     /// 平台与模型共用的五色分类色板。状态色（ok/warn/danger）不纳入分类色板。
     static let categoryPalette: [Color] = [codex, claude, claudeCode, workbuddy, modelFallback]
+    /// 模型较多时沿用五个基础色的低饱和明度变体，不引入新的色相。
+    static let categoryPaletteExtended: [Color] = categoryPalette + [
+        dynamic("#7E91AE", "#8FA4C1"),
+        dynamic("#C49A87", "#D0A999"),
+        dynamic("#9D8FB0", "#AB9CBC"),
+        dynamic("#8BAE9D", "#98B9A8"),
+        dynamic("#B9B5AB", "#C9C5BB")
+    ]
 
     static func modelColor(for model: String) -> Color {
         let hash = model.utf8.reduce(UInt32(2166136261)) { partial, byte in

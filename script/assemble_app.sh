@@ -8,7 +8,11 @@ BUNDLE_ID="com.cmsjcm.QuotaMonitor"
 VERSION="${QUOTAMONITOR_VERSION:-0.1.8}"
 BUILD_NUMBER="${QUOTAMONITOR_BUILD_NUMBER:-10}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_BUNDLE="${2:-$ROOT_DIR/dist/$APP_NAME.app}"
+APP_BUNDLE="${2:-}"
+if [[ -z "$APP_BUNDLE" || "$(basename "$APP_BUNDLE")" != "$APP_NAME.app" ]]; then
+  echo "usage: $0 [debug|release] /explicit/path/$APP_NAME.app" >&2
+  exit 2
+fi
 APP_MACOS="$APP_BUNDLE/Contents/MacOS"
 APP_RESOURCES="$APP_BUNDLE/Contents/Resources"
 
@@ -92,9 +96,9 @@ if [[ -z "$SIGNING_IDENTITY" ]]; then
   else
     echo "No suitable signing identity found." >&2
     if [[ "$CONFIGURATION" == "release" ]]; then
-      echo "Install a Developer ID Application certificate, or set QUOTADOT_ALLOW_ADHOC=1 for local packaging QA only." >&2
+      echo "Install a Developer ID Application certificate, or set QUOTAMONITOR_ALLOW_ADHOC=1 for local packaging QA only." >&2
     else
-      echo "Install an Apple Development certificate, or set QUOTADOT_ALLOW_ADHOC=1." >&2
+      echo "Install an Apple Development certificate, or set QUOTAMONITOR_ALLOW_ADHOC=1." >&2
     fi
     exit 4
   fi

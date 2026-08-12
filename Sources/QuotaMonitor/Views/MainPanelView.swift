@@ -412,7 +412,7 @@ struct MainPanelView: View {
                 state: codexOverviewState
             ))
         }
-        if store.claudeRoute != .unknown {
+        if store.claudeRouteSummary != .unknown {
             items.append(.init(
                 platform: .claude,
                 icon: .claude,
@@ -445,9 +445,11 @@ struct MainPanelView: View {
     }
 
     private var claudeOverviewRoute: String {
-        switch store.claudeRoute {
+        switch store.claudeRouteSummary {
         case .deepseek: language.text("panel.deepSeekRouteTag")
         case .official: "Pro"
+        case .other: language.text("panel.routeOther")
+        case .mixed: language.text("panel.routeMixed")
         case .unknown: language.text("settings.notConnected")
         }
     }
@@ -461,8 +463,8 @@ struct MainPanelView: View {
     }
 
     private var claudeOverviewFacts: [(String, String, String)] {
-        if QuotaPresentationPolicy.mode(for: store.claudeRoute) == .sharedBalance { return sharedOverviewFacts }
-        let detail = store.claudeRoute == .unknown
+        if store.claudeUsesDeepSeek { return sharedOverviewFacts }
+        let detail = store.claudeRouteSummary == .unknown
             ? language.text("settings.notConnected")
             : language.text("overview.quotaUnavailable")
         return [
@@ -487,9 +489,10 @@ struct MainPanelView: View {
     }
 
     private var claudeOverviewState: BalanceState? {
-        switch store.claudeRoute {
+        if store.claudeUsesDeepSeek { return BalanceState(days: store.deepSeekDays) }
+        return switch store.claudeRouteSummary {
+        case .official, .other, .mixed: BalanceState.unknown
         case .deepseek: BalanceState(days: store.deepSeekDays)
-        case .official: .unknown
         case .unknown: nil
         }
     }
@@ -793,7 +796,11 @@ struct MainPanelView: View {
                     .fontDesign(.monospaced)
                     .foregroundStyle(PanelTheme.text3)
             }
-            StackedBarChart(rows: chart.rows)
+            StackedBarChart(
+                rows: chart.rows,
+                todayLabel: language.text("panel.today"),
+                tokenLabel: language.text("panel.totalTokens")
+            )
                 .frame(height: 140)
                 .padding(.top, 7)
             GeometryReader { proxy in
@@ -808,20 +815,20 @@ struct MainPanelView: View {
                             .foregroundStyle(row.isToday ? PanelTheme.codex : PanelTheme.text3)
                             .lineLimit(1)
                             .fixedSize()
-                            .position(x: x, y: 7)
+                            .position(x: x, y: 5)
                     }
                 }
             }
-            .frame(height: 14)
-            // 留出约 2px 的呼吸空间，避免日期标签贴住柱体底边。
-            .padding(.top, 2)
-            HStack(spacing: 14) {
-                Spacer(minLength: 0)
-                ForEach(chart.legend) { item in
-                    legendItem(item.color, item.name)
+            .frame(height: 10)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(chart.legend) { item in
+                        legendItem(item.color, item.name)
+                    }
                 }
-                Spacer(minLength: 0)
+                .padding(.horizontal, 2)
             }
+            .frame(maxWidth: .infinity, alignment: .center)
             .padding(.top, 4)
             if chart.legend.isEmpty {
                 Text(language.text("panel.modelNoData"))
@@ -1162,25 +1169,29 @@ struct MainPanelView: View {
             let category = chartCategory(for: bucket)
             totals[category.id, default: 0] += bucket.total
         }
-        let categoryLimit = tokenChartDimension == .model ? 4 : 5
+        let categoryLimit = 5
         let sortedCategoryIDs = totalsByCategory.sorted { lhs, rhs in
             if lhs.value != rhs.value { return lhs.value > rhs.value }
             return lhs.key < rhs.key
         }.map(\.key)
-        let needsOther = sortedCategoryIDs.count > categoryLimit
+        // 模型趋势必须保留每个模型；平台类别过多时才合并尾部平台。
+        let needsOther = tokenChartDimension == .platform && sortedCategoryIDs.count > categoryLimit
         let topCategoryIDs = Set(sortedCategoryIDs.prefix(needsOther ? categoryLimit - 1 : categoryLimit))
-        let visibleCategories = categories.values.filter { topCategoryIDs.contains($0.id) }
-        let otherCategory = TokenChartCategory(
-            id: TokenChartCategory.otherID,
-            name: language.text("tokens.otherModel"),
-            preferredPaletteIndex: 4
-        )
-        let categoryColors = categoryColors(for: visibleCategories + (needsOther ? [otherCategory] : []))
+        let chartCategoryIDs = needsOther ? topCategoryIDs : Set(sortedCategoryIDs)
+        let visibleCategories = categories.values.filter { chartCategoryIDs.contains($0.id) }
+        let otherCategory: TokenChartCategory? = needsOther
+            ? TokenChartCategory(
+                id: TokenChartCategory.otherID,
+                name: language.text("tokens.otherModel"),
+                preferredPaletteIndex: 4
+            )
+            : nil
+        let categoryColors = categoryColors(for: visibleCategories + (otherCategory.map { [$0] } ?? []))
 
         var valuesByDay: [String: [String: Int]] = [:]
         for bucket in filteredBuckets {
             let category = chartCategory(for: bucket)
-            let categoryID = topCategoryIDs.contains(category.id) ? category.id : TokenChartCategory.otherID
+            let categoryID = chartCategoryIDs.contains(category.id) ? category.id : TokenChartCategory.otherID
             let dayKey = DailyTokenUsage.dayKey(for: calendar.startOfDay(for: bucket.bucketStart))
             valuesByDay[dayKey, default: [:]][categoryID, default: 0] += bucket.total
         }
@@ -1252,7 +1263,7 @@ struct MainPanelView: View {
     }
 
     private func categoryColors(for categories: [TokenChartCategory]) -> [String: Color] {
-        let palette = PanelTheme.categoryPalette
+        let palette = PanelTheme.categoryPaletteExtended
         var usedIndices = Set<Int>()
         var colors: [String: Color] = [:]
         for category in categories.sorted(by: {
@@ -1296,7 +1307,7 @@ struct MainPanelView: View {
                 preferredPaletteIndex: paletteIndex
             )
         case .model:
-            let model = bucket.model.isEmpty ? language.text("login.unknown") : bucket.model
+            let model = TokenModelName.canonical(bucket.model)
             return TokenChartCategory(
                 id: "model|\(model)",
                 name: model,
@@ -1677,42 +1688,6 @@ private struct ChartTooltipSizePreferenceKey: PreferenceKey {
     }
 }
 
-private enum ChartTooltipPlacement {
-    static let gap: CGFloat = 10
-    static let edgeInset: CGFloat = 6
-
-    /// 右侧优先；如果右侧放不下，再尝试左侧。两侧都不足时，选择空间更大的一侧并贴边夹紧。
-    static func x(anchorX: CGFloat, tooltipWidth: CGFloat, containerWidth: CGFloat) -> CGFloat {
-        let width = max(tooltipWidth, 1)
-        let rightEdge = anchorX + gap + width
-        if rightEdge <= containerWidth - edgeInset {
-            return anchorX + gap + width / 2
-        }
-
-        let leftEdge = anchorX - gap - width
-        if leftEdge >= edgeInset {
-            return anchorX - gap - width / 2
-        }
-
-        let rightSpace = containerWidth - edgeInset - (anchorX + gap)
-        let leftSpace = anchorX - gap - edgeInset
-        let preferred = rightSpace >= leftSpace
-            ? anchorX + gap + width / 2
-            : anchorX - gap - width / 2
-        let minimum = edgeInset + width / 2
-        let maximum = max(minimum, containerWidth - edgeInset - width / 2)
-        return min(max(preferred, minimum), maximum)
-    }
-
-    static func y(anchorY: CGFloat, tooltipHeight: CGFloat, containerHeight: CGFloat) -> CGFloat {
-        let halfHeight = max(tooltipHeight, 1) / 2
-        let minimum = edgeInset + halfHeight
-        let maximum = containerHeight - edgeInset - halfHeight
-        guard maximum >= minimum else { return containerHeight / 2 }
-        return min(max(anchorY, minimum), maximum)
-    }
-}
-
 private struct ChartTooltip: View {
     let title: String
     let value: String
@@ -1942,17 +1917,27 @@ private struct Sparkline: View {
 
 private struct StackedBarChart: View {
     let rows: [MainPanelView.TokenChartRow]
+    let todayLabel: String
+    let tokenLabel: String
     @State private var hoveredIndex: Int?
-    @State private var tooltipSize = CGSize(width: 164, height: 142)
+    @State private var tooltipSize = CGSize(width: 128, height: 76)
 
     var body: some View {
         GeometryReader { proxy in
             let peak = max(rows.map(\.total).max() ?? 1, 1)
             let plotTopInset: CGFloat = 15
-            let plotBottomInset: CGFloat = 8
+            let plotBottomInset: CGFloat = 2
             let plotHeight = max(proxy.size.height - plotTopInset - plotBottomInset, 1)
             let plotX: CGFloat = 40
             let plotWidth = max(proxy.size.width - 44, 1)
+            let slotWidth = plotWidth / CGFloat(max(rows.count, 1))
+            let barWidth = min(22, max(slotWidth * 0.64, 0.65))
+            let barRects = rows.enumerated().map { index, row in
+                let x = plotX + CGFloat(index) * slotWidth + (slotWidth - barWidth) / 2
+                let height = max(CGFloat(row.total) / CGFloat(peak) * plotHeight, min(1, plotHeight))
+                return CGRect(x: x, y: plotTopInset + plotHeight - height, width: barWidth, height: height)
+            }
+
             ZStack(alignment: .topLeading) {
                 Canvas { context, size in
                     let plot = CGRect(x: plotX, y: plotTopInset, width: plotWidth, height: plotHeight)
@@ -1969,14 +1954,25 @@ private struct StackedBarChart: View {
                     }
 
                     guard !rows.isEmpty else { return }
-                    let slotWidth = plot.width / CGFloat(rows.count)
-                    let barWidth = min(22, max(slotWidth * 0.64, 0.65))
                     for (index, row) in rows.enumerated() {
                         let x = plot.minX + CGFloat(index) * slotWidth + (slotWidth - barWidth) / 2
+                        if hoveredIndex == index {
+                            let highlightRect = CGRect(
+                                x: plot.minX + CGFloat(index) * slotWidth + 2,
+                                y: plot.minY,
+                                width: max(slotWidth - 4, 1),
+                                height: plot.height
+                            )
+                            context.fill(
+                                Path(roundedRect: highlightRect, cornerRadius: 5),
+                                with: .color(PanelTheme.text.opacity(0.045))
+                            )
+                        }
                         var bottom = plot.maxY
                         for segment in row.segments {
                             let value = segment.value
-                            let color = segment.color
+                            let isEmphasized = hoveredIndex == nil || hoveredIndex == index
+                            let color = segment.color.opacity(isEmphasized ? 1 : 0.42)
                             let height = max(CGFloat(value) / CGFloat(peak) * plot.height, min(1, plot.height))
                             let rect = CGRect(x: x, y: bottom - height, width: barWidth, height: height)
                             let radius = min(2, min(barWidth / 2, height / 2))
@@ -1989,6 +1985,13 @@ private struct StackedBarChart: View {
                             separator.move(to: CGPoint(x: x, y: bottom))
                             separator.addLine(to: CGPoint(x: x + barWidth, y: bottom))
                             context.stroke(separator, with: .color(PanelTheme.surface.opacity(0.78)), lineWidth: 0.75)
+                        }
+                        if hoveredIndex == index {
+                            context.stroke(
+                                Path(roundedRect: barRects[index], cornerRadius: min(2, barWidth / 2)),
+                                with: .color(PanelTheme.text.opacity(0.34)),
+                                lineWidth: 1
+                            )
                         }
                     }
                 }
@@ -2006,45 +2009,25 @@ private struct StackedBarChart: View {
                 .frame(width: 32, height: plotHeight, alignment: .topTrailing)
                 .position(x: 16, y: plotTopInset + plotHeight / 2)
 
-                ForEach(dataLabelIndices(for: rows), id: \.self) { index in
-                    let row = rows[index]
-                    let slotWidth = plotWidth / CGFloat(max(rows.count, 1))
-                    let barCenterX = plotX + CGFloat(index) * slotWidth + slotWidth / 2
-                    let barTopY = plotTopInset + plotHeight - CGFloat(row.total) / CGFloat(peak) * plotHeight
-                    Text(QuotaFormatters.tokensCN(row.total))
-                        .font(.system(size: 8, weight: .semibold))
-                        .fontDesign(.monospaced)
-                        .foregroundStyle(PanelTheme.text2)
-                        .fixedSize()
-                        // 数据标签放在柱顶外侧，标签底部与柱体保留约 2px。
-                        .position(x: barCenterX, y: max(6, barTopY - 2 - 6))
-                }
-
                 if let hoveredIndex, rows.indices.contains(hoveredIndex) {
                     let row = rows[hoveredIndex]
-                    let slotWidth = plotWidth / CGFloat(max(rows.count, 1))
-                    let barCenterX = plotX + CGFloat(hoveredIndex) * slotWidth + slotWidth / 2
-                    let barTopY = plotTopInset + plotHeight - CGFloat(row.total) / CGFloat(peak) * plotHeight
+                    let tooltipCenter = ChartTooltipPlacement.adjacentToBar(
+                        barRect: barRects[hoveredIndex],
+                        tooltipSize: tooltipSize,
+                        containerSize: proxy.size
+                    )
                     ChartTooltip(
-                        title: row.isToday ? "今日" : row.label,
+                        title: row.isToday ? todayLabel : row.label,
                         value: QuotaFormatters.tokensCN(row.total),
-                        valueLabel: "Token",
-                        items: row.segments.map { segment in
+                        valueLabel: tokenLabel,
+                        items: row.segments.sorted { lhs, rhs in
+                            if lhs.value != rhs.value { return lhs.value > rhs.value }
+                            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                        }.map { segment in
                             ChartTooltipItem(label: segment.name, value: QuotaFormatters.tokensCN(segment.value), color: segment.color)
                         }
                     )
-                    .position(
-                        x: ChartTooltipPlacement.x(
-                            anchorX: barCenterX,
-                            tooltipWidth: tooltipSize.width,
-                            containerWidth: proxy.size.width
-                        ),
-                        y: ChartTooltipPlacement.y(
-                            anchorY: barTopY,
-                            tooltipHeight: tooltipSize.height,
-                            containerHeight: proxy.size.height
-                        )
-                    )
+                    .position(x: tooltipCenter.x, y: tooltipCenter.y)
                 }
             }
             .contentShape(Rectangle())
@@ -2060,21 +2043,6 @@ private struct StackedBarChart: View {
                 }
             }
         }
-    }
-
-    private func dataLabelIndices(for rows: [MainPanelView.TokenChartRow]) -> [Int] {
-        let candidates = rows.indices.filter { rows[$0].total > 0 }
-        guard candidates.count > 14 else { return Array(candidates) }
-
-        let targetCount = min(5, candidates.count)
-        let minimumIndexGap = max(1, rows.count / targetCount)
-        var selected: [Int] = []
-        for index in candidates.sorted(by: { rows[$0].total > rows[$1].total }) {
-            guard selected.allSatisfy({ abs($0 - index) >= minimumIndexGap }) else { continue }
-            selected.append(index)
-            if selected.count == targetCount { break }
-        }
-        return selected.sorted()
     }
 
     private func index(at location: CGPoint, plotX: CGFloat, plotWidth: CGFloat) -> Int? {
