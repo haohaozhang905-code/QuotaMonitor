@@ -30,7 +30,7 @@ if [[ "$MODE" == "notarized" ]]; then
   xcrun stapler validate "$APP_BUNDLE"
   DMG_PATH="$DIST_DIR/$APP_NAME-$VERSION.dmg"
 else
-  QUOTADOT_ALLOW_ADHOC=1 QUOTADOT_SIGNING_IDENTITY=- \
+  QUOTAMONITOR_ALLOW_ADHOC=1 QUOTAMONITOR_SIGNING_IDENTITY=- \
     "$ROOT_DIR/script/assemble_app.sh" release "$APP_BUNDLE" >/dev/null
   DMG_PATH="$DIST_DIR/$APP_NAME-$VERSION-UNSIGNED.dmg"
 fi
