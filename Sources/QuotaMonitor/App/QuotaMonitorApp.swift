@@ -99,13 +99,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = item.button {
             button.title = ""
             button.image = nil
-            // 交给 NSStatusBarButton 绘制 macOS 原生 hover/pressed 容器，
-            // 不再用自定义 CALayer 模拟状态栏点击态。
-            button.isBordered = true
-            button.bezelStyle = .texturedRounded
-            button.showsBorderOnlyWhileMouseInside = true
+            // 使用无边框的 NSStatusBarButton，让 AppKit 自己绘制状态栏
+            // hover/pressed 的圆形高亮容器；不要用普通按钮 bezel，否则会出现黑底。
+            button.isBordered = false
+            button.showsBorderOnlyWhileMouseInside = false
             if let cell = button.cell as? NSButtonCell {
-                cell.highlightsBy = NSCell.StyleMask(rawValue: 1 | 8)
+                cell.highlightsBy = NSCell.StyleMask(rawValue: 8)
                 cell.showsStateBy = []
             }
             button.target = self
