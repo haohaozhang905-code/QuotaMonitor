@@ -1,13 +1,21 @@
-# Security Policy
+# 安全策略
 
-## Reporting a vulnerability
+## 报告安全漏洞
 
-Please use GitHub's private security advisory feature for vulnerabilities involving credentials, token refresh, local file access, Keychain access, code signing, or update distribution. Do not open a public issue containing secrets or an exploitable proof of concept.
+涉及凭据、Token 刷新、本地文件访问、Keychain、代码签名或更新分发的安全问题，请使用 GitHub 的私密安全公告功能报告。
 
-Include the affected macOS and QuotaMonitor versions, a minimal reproduction, and sanitized logs. Remove tokens, account identifiers, usernames, and credential files.
+请不要在公开 Issue 中提交密码、Token、凭据文件或可利用的完整复现代码。
 
-The repository CI runs `script/security_check.sh` to reject common credentials, private keys, personal home paths, and local authentication files before changes are merged. Contributors should run it locally before every push.
+报告中请尽量包含：
 
-## Supported versions
+- 受影响的 macOS 和 QuotaMonitor 版本
+- 最小化的复现步骤
+- 已脱敏的日志
 
-Security fixes are provided for the latest released version. QuotaMonitor depends on local authentication formats and quota endpoints controlled by third parties; compatibility failures are not automatically security vulnerabilities unless they expose or mishandle user data.
+提交前请删除 Token、账号标识、用户名和凭据文件。
+
+仓库 CI 会运行 `script/security_check.sh`，用于检查常见凭据、私钥、个人路径和本地认证文件。每次推送前，贡献者也应在本地运行该脚本。
+
+## 支持的版本
+
+安全修复面向最新发布版本提供。QuotaMonitor 依赖第三方控制的本地认证格式和额度接口；兼容性变化只有在造成用户数据暴露或处理不当时，才属于安全问题。

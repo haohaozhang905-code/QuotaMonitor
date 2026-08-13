@@ -1,12 +1,12 @@
-# Release Guide
+# 发布指南
 
-QuotaMonitor's public DMG must be signed with a **Developer ID Application** certificate and notarized by Apple. Apple Development, Apple Distribution, and ad-hoc signatures are not substitutes for direct distribution outside the Mac App Store.
+QuotaMonitor 面向公众发布的 DMG 必须使用 **Developer ID Application** 证书签名，并通过 Apple 公证。Apple Development、Apple Distribution 和 ad-hoc 签名不能替代 Mac App Store 之外的正式分发签名。
 
-## One-time setup
+## 一次性配置
 
-1. Create and install a Developer ID Application certificate for the release team.
-2. Create an app-specific password or App Store Connect API key for notarization.
-3. Store the credentials in a local keychain profile:
+1. 为发布环境创建并安装 Developer ID Application 证书。
+2. 准备用于公证的 App 专用密码或 App Store Connect API Key。
+3. 将公证凭据保存到本机钥匙串配置中：
 
 ```bash
 xcrun notarytool store-credentials QuotaMonitorNotary \
@@ -15,9 +15,9 @@ xcrun notarytool store-credentials QuotaMonitorNotary \
   --password "APP_SPECIFIC_PASSWORD"
 ```
 
-Never commit signing certificates, private keys, passwords, or notarization credentials.
+不要将签名证书、私钥、密码或公证凭据提交到代码仓库。
 
-## Build a public release
+## 构建正式版本
 
 ```bash
 export NOTARYTOOL_PROFILE=QuotaMonitorNotary
@@ -26,16 +26,23 @@ export QUOTAMONITOR_BUILD_NUMBER=1
 ./script/package_release.sh
 ```
 
-The script builds a release executable, enables the hardened runtime, adds a secure timestamp, notarizes and staples the app, creates and signs the DMG, notarizes and staples the DMG, then prints its SHA-256 checksum.
+脚本会构建发布版本、启用 Hardened Runtime、添加安全时间戳，对应用进行公证并装订公证票据，然后创建并签名 DMG，再打印 SHA-256 校验值。
 
-Before publishing, install the DMG on a clean standard macOS account and verify launch, official Codex mode, DeepSeek mode, route switching, login-at-startup, and uninstall behavior.
+发布前，应在干净的标准 macOS 用户环境中安装 DMG，并检查：
 
-## Local packaging QA
+- 应用能否正常启动
+- Codex 官方路由是否正常
+- DeepSeek 路由和余额是否正常
+- 路由切换后显示是否正确
+- 开机启动是否正常
+- 卸载流程是否正常
 
-To inspect the DMG layout without release credentials:
+## 本地打包检查
+
+没有发布凭据时，可以检查 DMG 布局：
 
 ```bash
 ./script/package_release.sh --unsigned
 ```
 
-This creates a file whose name ends in `UNSIGNED.dmg`. It must never be attached to a public release.
+该命令会生成文件名以 `UNSIGNED.dmg` 结尾的未签名 DMG，只能用于本地检查，不能作为公开版本发布。

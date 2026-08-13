@@ -198,7 +198,7 @@ Sources/QuotaMonitor/
 └── Resources/    图标与中英文本地化资源
 
 Tests/QuotaMonitorTests/  单元测试和数据源测试
-docs/                     安装、设计和发布文档
+docs/                     安装和发布文档
 script/                   构建、运行、安全检查和打包脚本
 ```
 
