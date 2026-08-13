@@ -72,7 +72,7 @@ struct QuotaModelsTests {
         #expect(snapshot.platformToday.reduce(0.0) { $0 + $1.share } == 1)
         #expect(snapshot.modelToday.map(\.total) == [60, 20, 10, 10])
         #expect(snapshot.topModels().map(\.total) == [60, 20, 10, 10])
-        #expect(snapshot.topModels().last?.key == .otherModels)
+        #expect(snapshot.topModels().last?.key == .model("model-d"))
     }
 
     @Test func dashboardBreakdownsUseFourPlusOtherForPlatformsAndModels() {
@@ -93,8 +93,10 @@ struct QuotaModelsTests {
 
         #expect(dashboard.platform.count == 5)
         #expect(dashboard.platform.last?.key == .otherPlatforms)
+        #expect(dashboard.platform.map(\.total) == [100, 90, 80, 70, 90])
         #expect(dashboard.models.count == 5)
         #expect(dashboard.models.last?.key == .otherModels)
+        #expect(dashboard.models.map(\.total) == [100, 90, 80, 70, 90])
     }
 
     @Test func presentationSnapshotDistinguishesConnectedOnlyFromUnavailable() {
@@ -156,6 +158,45 @@ struct QuotaModelsTests {
         #expect(sharedBalance.quotaItems.allSatisfy {
             $0.state == .sharedBalance(amount: 12.26, currency: "CNY", estimatedDays: 7)
         })
+    }
+
+    @Test func dropdownKeepsExactlyFiveCategoriesWithoutOtherRows() {
+        let now = Date(timeIntervalSince1970: 1_786_400_000)
+        let platforms: [TokenPlatform] = [.codex, .claude, .workbuddy, .kimi, .opencode]
+        let buckets = platforms.enumerated().map { index, platform in
+            Self.bucket(
+                day: now,
+                platform: platform,
+                client: .desktop,
+                model: "model-\(index)",
+                total: 100 - index * 10
+            )
+        }
+        let presentation = QuotaPresentationSnapshot.make(
+            providers: [],
+            updatedAt: now,
+            errorMessageKey: nil,
+            isRefreshing: false,
+            codexRoute: .official,
+            claudeRoute: .official,
+            totalHistory: [DailyTokenUsage(day: now, totals: TokenTotals(input: 400))],
+            buckets: buckets,
+            now: now
+        )
+        let dropdown = QuotaPresentationSnapshot.makeDropdown(
+            presentation: presentation,
+            providers: [],
+            codexRoute: .official,
+            claudeRoute: .official,
+            deepSeekBalance: nil,
+            deepSeekCurrency: nil,
+            deepSeekDays: nil
+        )
+
+        #expect(dropdown.platformToday.count == 5)
+        #expect(dropdown.platformToday.last?.key != .otherPlatforms)
+        #expect(dropdown.topModels.count == 5)
+        #expect(dropdown.topModels.last?.key != .otherModels)
     }
 
     @Test func tokenDashboardUsesNaturalDaysForTotalsAndAverages() {

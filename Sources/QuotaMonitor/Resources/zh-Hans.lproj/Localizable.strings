@@ -187,8 +187,8 @@
 "tokens.peakValue" = "峰值 %@";
 "tokens.platformUsage" = "平台用量";
 "tokens.modelUsage" = "模型用量";
-"tokens.otherModel" = "其他模型";
-"tokens.otherPlatform" = "其他平台";
+"tokens.otherModel" = "其他";
+"tokens.otherPlatform" = "其他";
 "tokens.yearTitle" = "365 天 Token 用量";
 "tokens.yearDetail" = "每天一个方格，颜色越深表示用量越高";
 "tokens.less" = "少";

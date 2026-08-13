@@ -7,6 +7,25 @@ enum TokenPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
     case claude
     case workbuddy
     case kimi
+    case opencode
+    case hermes
+    case openclaw
+    case cursor
+    case antigravity
+    case cline
+    case qwen
+    case grok
+    case copilot
+    case pi
+    case zed
+    case kilo
+    case mimo
+    case zcode
+    case kiro
+    case codebuddy
+    case qoder
+    case proma
+    case reasonix
 
     var id: String { rawValue }
 }
@@ -18,6 +37,25 @@ extension TokenPlatform {
         case .claude: "Claude"
         case .workbuddy: "WorkBuddy"
         case .kimi: "Kimi"
+        case .opencode: "OpenCode"
+        case .hermes: "Hermes Agent"
+        case .openclaw: "OpenClaw"
+        case .cursor: "Cursor"
+        case .antigravity: "Antigravity"
+        case .cline: "Cline"
+        case .qwen: "Qwen CLI"
+        case .grok: "Grok Build"
+        case .copilot: "GitHub Copilot"
+        case .pi: "Pi"
+        case .zed: "Zed"
+        case .kilo: "Kilo Code"
+        case .mimo: "MiMo Code"
+        case .zcode: "ZCode / GLM"
+        case .kiro: "Kiro"
+        case .codebuddy: "CodeBuddy"
+        case .qoder: "Qoder"
+        case .proma: "Proma"
+        case .reasonix: "Reasonix"
         }
     }
 }

@@ -35,6 +35,8 @@ final class QuotaStore {
         case workBuddy(TokenSourceSnapshot?)
         case desktop(TokenSourceSnapshot?)
         case claudeCrossCheck(TokenSourceSnapshot?)
+        case additional([TokenSourceSnapshot]?)
+        case qoder(TokenSourceSnapshot?)
     }
 
     private(set) var providers: [ProviderUsage] = []
@@ -75,6 +77,8 @@ final class QuotaStore {
     private let claudeSessionTokenClient = ClaudeSessionTokenClient()
     private let workBuddyTraceClient = WorkBuddyTraceClient()
     private let ccSwitchUsageClient = CCSwitchUsageClient()
+    private let additionalLocalTokenClient = AdditionalLocalTokenClient()
+    private let qoderSessionTokenClient = QoderSessionTokenClient()
     private let logger = Logger(subsystem: "com.cmsjcm.QuotaMonitor", category: "quota")
     private let tokenSnapshotURL: URL?
     private var lastSavedTokenSnapshot: TokenHistorySnapshot?
@@ -142,7 +146,9 @@ final class QuotaStore {
 
     /// 全部工具的按天合计。来源保留完整可用历史，视图层再按今日/7 日/30 日取窗口。
     var totalTokenHistory: [DailyTokenUsage] {
-        Self.combineByDay([tokenHistory, claudeHistory, claudeDesktopHistory, workBuddyHistory])
+        // 以 buckets 为唯一汇总来源，使新接入工具自动进入总量、趋势和热力图，
+        // 不再要求为每一种平台增加一组专用 history 属性。
+        TokenSourceSnapshot(buckets: tokenBuckets).history
     }
 
     private func tokenUsage(for day: Date) -> DailyTokenUsage? {
@@ -385,7 +391,7 @@ final class QuotaStore {
     private func refreshTokenSources() async {
         guard !isRefreshingTokenSources else { return }
         isRefreshingTokenSources = true
-        let totalSources = 5
+        let totalSources = 7
         tokenProgressRevealTask?.cancel()
         tokenProgressRevealTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(180))
@@ -406,6 +412,8 @@ final class QuotaStore {
         let claudeClient = claudeSessionTokenClient
         let workBuddyClient = workBuddyTraceClient
         let ccSwitchClient = ccSwitchUsageClient
+        let additionalClient = additionalLocalTokenClient
+        let qoderClient = qoderSessionTokenClient
         var completed = 0
 
         await withTaskGroup(of: TokenRefreshResult.self) { group in
@@ -414,6 +422,8 @@ final class QuotaStore {
             group.addTask { .workBuddy(try? await workBuddyClient.fetchSnapshot()) }
             group.addTask { .desktop(await ccSwitchClient.fetchSnapshot(appType: "claude-desktop")) }
             group.addTask { .claudeCrossCheck(await ccSwitchClient.fetchSnapshot(appType: "claude", client: .cli)) }
+            group.addTask { .additional(try? await additionalClient.fetchSnapshots()) }
+            group.addTask { .qoder(try? await qoderClient.fetchSnapshot()) }
 
             for await result in group {
                 applyTokenRefreshResult(result)
@@ -431,7 +441,7 @@ final class QuotaStore {
         lastTokenUpdatedAt = .now
         saveTokenSnapshotIfNeeded()
         logger.info(
-            "sources codex=\(Self.todayTotal(self.tokenHistory)) claude=\(Self.todayTotal(self.claudeHistory)) desktop=\(Self.todayTotal(self.claudeDesktopHistory)) workbuddy=\(Self.todayTotal(self.workBuddyHistory)) deepseek=\(Self.todayTotal(self.deepSeekHistory)) desktopStale=\(self.claudeDesktopStale)"
+            "sources codex=\(Self.todayTotal(self.tokenHistory)) claude=\(Self.todayTotal(self.claudeHistory)) desktop=\(Self.todayTotal(self.claudeDesktopHistory)) workbuddy=\(Self.todayTotal(self.workBuddyHistory)) additional=\(Self.todayTotal(self.totalTokenHistory) - Self.todayTotal(Self.combineByDay([self.tokenHistory, self.claudeHistory, self.claudeDesktopHistory, self.workBuddyHistory]))) deepseek=\(Self.todayTotal(self.deepSeekHistory)) desktopStale=\(self.claudeDesktopStale)"
         )
         refreshTokenDerivedState()
     }
@@ -483,14 +493,22 @@ final class QuotaStore {
             }
         case let .claudeCrossCheck(snapshot):
             if let snapshot { crossCheckClaudeSource(cc: snapshot.history) }
+        case let .additional(snapshots):
+            guard let snapshots else {
+                logger.warning("Additional local token refresh failed; retaining last good snapshot")
+                break
+            }
+            let platforms = Set(LocalToolTokenSource.additional.map(\.platform))
+            Self.replaceBuckets(in: &freshBuckets, matching: { platforms.contains($0.platform) }, with: snapshots.flatMap(\.buckets))
+        case let .qoder(snapshot):
+            guard let snapshot else {
+                logger.warning("Qoder token refresh failed; retaining last good snapshot")
+                break
+            }
+            Self.replaceBuckets(in: &freshBuckets, matching: { $0.platform == .qoder }, with: snapshot.buckets)
         }
         tokenBuckets = TokenUsageBucket.combining(freshBuckets)
-        deepSeekHistory = Self.mergeSparse([
-            codexDeepSeekHistory,
-            claudeDeepSeekHistory,
-            desktopDeepSeekHistory,
-            workbuddyDeepSeekHistory
-        ])
+        deepSeekHistory = TokenSourceSnapshot(buckets: tokenBuckets.filter { $0.provider == .deepseek }).history
     }
 
     private static func replaceBuckets(
@@ -518,12 +536,7 @@ final class QuotaStore {
         workbuddyDeepSeekHistory = snapshot.workbuddyDeepSeekHistory
         tokenBuckets = TokenUsageBucket.combining(snapshot.tokenBuckets)
         claudeDesktopStale = snapshot.claudeDesktopStale
-        deepSeekHistory = Self.mergeSparse([
-            codexDeepSeekHistory,
-            claudeDeepSeekHistory,
-            desktopDeepSeekHistory,
-            workbuddyDeepSeekHistory
-        ])
+        deepSeekHistory = TokenSourceSnapshot(buckets: tokenBuckets.filter { $0.provider == .deepseek }).history
         lastTokenUpdatedAt = snapshot.tokenUpdatedAt
             ?? (try? tokenSnapshotURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
         lastSavedTokenSnapshot = snapshot

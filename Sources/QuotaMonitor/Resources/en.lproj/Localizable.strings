@@ -187,8 +187,8 @@
 "tokens.peakValue" = "Peak %@";
 "tokens.platformUsage" = "Platform usage";
 "tokens.modelUsage" = "Model usage";
-"tokens.otherModel" = "Other models";
-"tokens.otherPlatform" = "Other platforms";
+"tokens.otherModel" = "Other";
+"tokens.otherPlatform" = "Other";
 "tokens.yearTitle" = "365-day token usage";
 "tokens.yearDetail" = "One square per day; darker means higher usage";
 "tokens.less" = "Less";

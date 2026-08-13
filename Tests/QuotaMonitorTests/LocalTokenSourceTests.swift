@@ -419,3 +419,123 @@ struct CCSwitchUsageClientTests {
         case insertFailed
     }
 }
+
+// MARK: - 可扩展工具来源解析
+
+struct AdditionalLocalTokenClientTests {
+    @Test func collectsJSONLJSONAndSQLiteSourcesIntoSeparatePlatforms() async throws {
+        let root = try Fixtures.makeTempDir("additional-tools")
+        defer { Fixtures.remove(root) }
+        let day = Fixtures.noon(yesterdayOffset: 0)
+
+        let openClaw = root.appendingPathComponent("openclaw", isDirectory: true)
+        try FileManager.default.createDirectory(at: openClaw, withIntermediateDirectories: true)
+        try #"{"timestamp":"\#(Fixtures.iso(day))","model":"gpt-5.6-sol","usage":{"prompt_tokens":100,"completion_tokens":20,"cached_tokens":40}}"#
+            .write(to: openClaw.appendingPathComponent("session.jsonl"), atomically: true, encoding: .utf8)
+
+        let kimi = root.appendingPathComponent("kimi", isDirectory: true)
+        try FileManager.default.createDirectory(at: kimi, withIntermediateDirectories: true)
+        let kimiJSON = #"{"events":[{"created":\#(Int(day.timeIntervalSince1970 * 1_000)),"model_name":"kimi-k2","tokenUsage":{"inputTokens":30,"outputTokens":7}}]}"#
+        try kimiJSON.write(to: kimi.appendingPathComponent("session.json"), atomically: true, encoding: .utf8)
+
+        let zed = root.appendingPathComponent("zed", isDirectory: true)
+        try FileManager.default.createDirectory(at: zed, withIntermediateDirectories: true)
+        try createUsageDB(at: zed.appendingPathComponent("threads.db"), day: day)
+
+        let client = AdditionalLocalTokenClient(
+            sources: [
+                .init(platform: .openclaw, roots: ["openclaw"], overrideEnvironment: ""),
+                .init(platform: .kimi, roots: ["kimi"], overrideEnvironment: ""),
+                .init(platform: .zed, roots: ["zed"], overrideEnvironment: "")
+            ],
+            home: root,
+            environment: [:],
+            persistentCacheURL: nil
+        )
+        let snapshots = try await client.fetchSnapshots()
+        let totals = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.buckets.first!.platform, $0.history.first!.total) })
+
+        #expect(totals[.openclaw] == 120)
+        #expect(totals[.kimi] == 37)
+        #expect(totals[.zed] == 18)
+        // 第二次读取复用 mtime + size 缓存，聚合结果保持一致。
+        #expect(try await client.fetchSnapshots() == snapshots)
+    }
+
+    private func createUsageDB(at url: URL, day: Date) throws {
+        var db: OpaquePointer?
+        guard sqlite3_open(url.path, &db) == SQLITE_OK, let db else { throw TestError.dbOpenFailed }
+        defer { sqlite3_close(db) }
+        let timestamp = Int64(day.timeIntervalSince1970)
+        let sql = """
+        CREATE TABLE messages (model TEXT, input_tokens INTEGER, output_tokens INTEGER, created_at INTEGER);
+        INSERT INTO messages VALUES ('zed-ai', 12, 6, \(timestamp));
+        """
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else { throw TestError.writeFailed }
+    }
+
+    private enum TestError: Error {
+        case dbOpenFailed
+        case writeFailed
+    }
+}
+
+struct KimiDesktopTokenClientTests {
+    @Test func countsUsageRecordsWithoutRepeatingStepEndEvents() async throws {
+        let root = try Fixtures.makeTempDir("kimi-desktop")
+        defer { Fixtures.remove(root) }
+        let day = Fixtures.noon(yesterdayOffset: 0)
+        let sessions = root.appendingPathComponent("sessions/a/agents/main", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        let timestamp = Int(day.timeIntervalSince1970 * 1_000)
+        let lines = [
+            #"{"type":"context.append_loop_event","event":{"type":"step.end","usage":{"inputOther":100,"inputCacheRead":50,"inputCacheCreation":10,"output":20}},"time":\#(timestamp)}"#,
+            #"{"type":"usage.record","model":"k2d6-agent","usage":{"inputOther":100,"inputCacheRead":50,"inputCacheCreation":10,"output":20},"usageScope":"turn","time":\#(timestamp)}"#
+        ]
+        try lines.joined(separator: "\n").write(to: sessions.appendingPathComponent("wire.jsonl"), atomically: true, encoding: .utf8)
+
+        let source = LocalToolTokenSource(
+            platform: .kimi,
+            roots: ["sessions"],
+            overrideEnvironment: "",
+            format: .kimiWire,
+            client: .desktop
+        )
+        let client = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:])
+        let snapshot = try await client.fetchSnapshots().first
+
+        #expect(snapshot?.history.first?.total == 180)
+        #expect(snapshot?.history.first?.cachedInput == 50)
+        #expect(snapshot?.buckets.first?.client == .desktop)
+        #expect(snapshot?.buckets.first?.model == "k2d6-agent")
+    }
+}
+
+struct QoderSessionTokenClientTests {
+    @Test func readsCanonicalEventsAndDeduplicatesDesktopMessageCopies() async throws {
+        let root = try Fixtures.makeTempDir("qoder")
+        defer { Fixtures.remove(root) }
+        let day = Fixtures.noon(yesterdayOffset: 0)
+        let native = root.appendingPathComponent(".qoder/logs/sessions/history.jsonl")
+        try FileManager.default.createDirectory(at: native.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let nativeLines = [
+            #"{"type":"model.response.completed","request_id":"request-1","ts":"\#(Fixtures.iso(day))","data":{"model":"qoder-max","input_tokens":100,"cache_read_input_tokens":50,"cache_creation_input_tokens":10,"output_tokens":20}}"#,
+            #"{"type":"turn.finished","ts":"\#(Fixtures.iso(day))","data":{"input_tokens":100,"cache_read_input_tokens":50,"cache_creation_input_tokens":10,"output_tokens":20}}"#
+        ]
+        try nativeLines.joined(separator: "\n").write(to: native, atomically: true, encoding: .utf8)
+
+        let desktop = root.appendingPathComponent("Library/Application Support/Qoder/SharedClientCache/cli/projects/task", isDirectory: true)
+        try FileManager.default.createDirectory(at: desktop, withIntermediateDirectories: true)
+        let duplicate = #"{"type":"assistant","timestamp":"\#(Fixtures.iso(day))","message":{"id":"message-1","usage":{"input_tokens":10,"cache_read_input_tokens":3,"cache_creation_input_tokens":0,"output_tokens":2}}}"#
+        try duplicate.write(to: desktop.appendingPathComponent("main.jsonl"), atomically: true, encoding: .utf8)
+        try duplicate.write(to: desktop.appendingPathComponent("subagent.jsonl"), atomically: true, encoding: .utf8)
+
+        let client = QoderSessionTokenClient(home: root)
+        let snapshot = try await client.fetchSnapshot()
+
+        // Native event: 100 + 50 + 10 + 20 = 180; duplicated desktop message: 10 + 3 + 2 = 15.
+        #expect(snapshot.history.first?.total == 195)
+        #expect(snapshot.buckets.filter { $0.client == .desktop }.count == 1)
+        #expect(snapshot.buckets.contains { $0.model == "qoder-max" && $0.client == .cli })
+    }
+}

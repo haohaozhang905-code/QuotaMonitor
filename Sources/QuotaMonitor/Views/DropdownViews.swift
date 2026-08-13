@@ -263,9 +263,7 @@ struct DropdownPopoverView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(spacing: 0) {
-                    DropdownHeader(title: QuotaMonitorIdentity.displayName, updated: updatedText)
+            DropdownHeader(title: QuotaMonitorIdentity.displayName, updated: updatedText)
             DropdownHero(
                 value: heroValue,
                 label: language.text("menu.todayTokensLabel"),
@@ -305,13 +303,6 @@ struct DropdownPopoverView: View {
                     )
                 }
             }
-                }
-            }
-            .scrollIndicators(.never)
-            // MenuBarExtra(.window) 没有旧 NSPanel 的显式 contentSize；
-            // ScrollView 必须提供最小高度，否则系统会按零高度收缩，只剩操作区。
-            .frame(minHeight: 300, maxHeight: 520)
-
             DropdownHairline()
                 .padding(.horizontal, DropdownLayout.horizontalPadding)
                 .padding(.top, 6)
@@ -440,7 +431,7 @@ struct DropdownPopoverView: View {
         case .codex: .codex
         case .claude: .claude
         case .workbuddy: .workBuddy
-        case .kimi: .deepSeek
+        default: .deepSeek
         }
     }
 

@@ -709,7 +709,7 @@ struct MainPanelView: View {
             case (.claude, .cli): PanelTheme.claudeCode
             case (.claude, _): PanelTheme.claude
             case (.workbuddy, _): PanelTheme.workbuddy
-            case (.kimi, _): PanelTheme.text2
+            default: PanelTheme.modelColor(for: platform.rawValue)
             }
         case let .model(model): PanelTheme.modelColor(for: model)
         case .otherModels, .otherPlatforms: PanelTheme.modelFallback
@@ -1205,7 +1205,7 @@ struct MainPanelView: View {
     }
 
     private var hourlyChartAxisIndices: [Int] {
-        [0, 3, 6, 9, 12, 15, 18, 21, 23]
+        [0, 4, 8, 12, 16, 20]
     }
 
     private func hourlyTokenChartSnapshot() -> TokenChartSnapshot {
@@ -1231,7 +1231,7 @@ struct MainPanelView: View {
                 : []
             return TokenChartRow(
                 id: "hour-\(hour)",
-                label: String(format: "%02d:00", hour),
+                label: String(format: "%02d:00-%02d:00", hour, (hour + 1) % 24),
                 isToday: false,
                 segments: segments
             )
@@ -1261,29 +1261,18 @@ struct MainPanelView: View {
             if lhs.value != rhs.value { return lhs.value > rhs.value }
             return lhs.key < rhs.key
         }.map(\.key)
-        // The trend chart's model view is meant to expose the complete model
-        // mix, so it must not inherit the dashboard's four-plus-other summary
-        // rule. Keep the compact grouping only for the platform view, where
-        // the number of tool sources is intentionally capped for readability.
-        let needsOther = tokenChartDimension == .platform && sortedCategoryIDs.count > 4
-        let topCategoryIDs = Set(sortedCategoryIDs.prefix(4))
-        let chartCategoryIDs = needsOther ? topCategoryIDs : Set(sortedCategoryIDs)
+        // The trend chart is the detailed view: show every platform and model
+        // category. The compact four-plus-other grouping belongs to the lists
+        // below the chart, not to this chart or its legend.
+        let chartCategoryIDs = Set(sortedCategoryIDs)
         let visibleCategories = categories.values.filter { chartCategoryIDs.contains($0.id) }
-        let otherCategory: TokenChartCategory? = needsOther
-            ? TokenChartCategory(
-                id: TokenChartCategory.otherID,
-                name: language.text(tokenChartDimension == .platform ? "tokens.otherPlatform" : "tokens.otherModel"),
-                preferredPaletteIndex: 4
-            )
-            : nil
-        let categoryColors = categoryColors(for: visibleCategories + (otherCategory.map { [$0] } ?? []))
+        let categoryColors = categoryColors(for: Array(visibleCategories))
 
         var valuesByDay: [String: [String: Int]] = [:]
         for bucket in filteredBuckets {
             let category = chartCategory(for: bucket)
-            let categoryID = chartCategoryIDs.contains(category.id) ? category.id : TokenChartCategory.otherID
             let dayKey = DailyTokenUsage.dayKey(for: calendar.startOfDay(for: bucket.bucketStart))
-            valuesByDay[dayKey, default: [:]][categoryID, default: 0] += bucket.total
+            valuesByDay[dayKey, default: [:]][category.id, default: 0] += bucket.total
         }
 
         let rows: [TokenChartRow] = (0..<dayCount).compactMap { index in
@@ -1292,10 +1281,7 @@ struct MainPanelView: View {
             let values = valuesByDay[dayKey] ?? [:]
             let segments = values.compactMap { id, value -> TokenChartSegment? in
                 guard value > 0 else { return nil }
-                let category = id == TokenChartCategory.otherID
-                    ? otherCategory
-                    : categories[id]
-                guard let category else { return nil }
+                guard let category = categories[id] else { return nil }
                 return TokenChartSegment(
                     id: category.id,
                     name: category.name,
@@ -1393,7 +1379,7 @@ struct MainPanelView: View {
             case (.claude, .cli): paletteIndex = 2
             case (.claude, _): paletteIndex = 1
             case (.workbuddy, _): paletteIndex = 3
-            case (.kimi, _): paletteIndex = 4
+            default: paletteIndex = stablePaletteIndex(for: bucket.platform.rawValue)
             }
             return TokenChartCategory(
                 id: key.stableID,
@@ -1420,8 +1406,6 @@ struct MainPanelView: View {
     }
 
     private struct TokenChartCategory {
-        static let otherID = "category|other"
-
         let id: String
         let name: String
         let preferredPaletteIndex: Int
@@ -1908,10 +1892,10 @@ private struct ChartTooltipSizePreferenceKey: PreferenceKey {
 private struct ChartTooltip: View {
     let title: String
     let value: String
-    let valueLabel: String
+    let valueLabel: String?
     let items: [ChartTooltipItem]
 
-    init(title: String, value: String, valueLabel: String, items: [ChartTooltipItem] = []) {
+    init(title: String, value: String, valueLabel: String?, items: [ChartTooltipItem] = []) {
         self.title = title
         self.value = value
         self.valueLabel = valueLabel
@@ -1954,7 +1938,7 @@ private struct ChartTooltip: View {
                         }
                     }
                 }
-            } else {
+            } else if let valueLabel {
                 Text(valueLabel)
                     .font(.system(size: 9))
                     .foregroundStyle(PanelTheme.text3)
@@ -2160,7 +2144,7 @@ private struct StackedBarChart: View {
     let todayLabel: String
     let tokenLabel: String
     @State private var hoveredIndex: Int?
-    @State private var tooltipSize = CGSize(width: 128, height: 76)
+    @State private var tooltipSize = CGSize(width: 128, height: 46)
 
     var body: some View {
         GeometryReader { proxy in
@@ -2252,6 +2236,14 @@ private struct StackedBarChart: View {
 
                 if let hoveredIndex, rows.indices.contains(hoveredIndex) {
                     let row = rows[hoveredIndex]
+                    let tooltipItems = row.segments.count > 1
+                        ? row.segments.sorted { lhs, rhs in
+                            if lhs.value != rhs.value { return lhs.value > rhs.value }
+                            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                        }.map { segment in
+                            ChartTooltipItem(label: segment.name, value: QuotaFormatters.tokensCN(segment.value), color: segment.color)
+                        }
+                        : []
                     let tooltipCenter = ChartTooltipPlacement.adjacentToBar(
                         barRect: barRects[hoveredIndex],
                         tooltipSize: tooltipSize,
@@ -2260,13 +2252,8 @@ private struct StackedBarChart: View {
                     ChartTooltip(
                         title: row.isToday ? todayLabel : row.label,
                         value: QuotaFormatters.tokensCN(row.total),
-                        valueLabel: tokenLabel,
-                        items: row.segments.sorted { lhs, rhs in
-                            if lhs.value != rhs.value { return lhs.value > rhs.value }
-                            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-                        }.map { segment in
-                            ChartTooltipItem(label: segment.name, value: QuotaFormatters.tokensCN(segment.value), color: segment.color)
-                        }
+                        valueLabel: tooltipItems.isEmpty ? nil : tokenLabel,
+                        items: tooltipItems
                     )
                     .position(x: tooltipCenter.x, y: tooltipCenter.y)
                 }

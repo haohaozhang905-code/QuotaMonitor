@@ -48,7 +48,7 @@ extension UsageBreakdownKey {
             switch (platform, client) {
             case (.codex, _): platform.displayName
             case (.claude, .cli): claudeCode
-            case (.claude, _), (.workbuddy, _), (.kimi, _): platform.displayName
+            default: platform.displayName
             }
         case let .model(model): model
         case .otherModels: other
@@ -66,9 +66,10 @@ struct UsageBreakdownSnapshot: Identifiable, Equatable, Sendable {
 }
 
 extension Array where Element == UsageBreakdownSnapshot {
-    /// Keep dashboard lists comparable: four ranked entries plus one tail row.
+    /// Keep dashboard lists to five rows: show five categories as-is; when
+    /// there are more, show the four largest entries plus one tail row.
     func topFourPlusOther(limit: Int = 4, otherKey: UsageBreakdownKey) -> [UsageBreakdownSnapshot] {
-        guard limit > 0, count > limit else { return self }
+        guard limit > 0, count > limit + 1 else { return self }
         let top = Array(prefix(limit))
         let otherTotal = dropFirst(limit).reduce(0) { $0 + $1.total }
         guard otherTotal > 0 else { return top }
@@ -162,8 +163,8 @@ struct QuotaPresentationSnapshot: Equatable, Sendable {
     let modelLastSevenDays: [UsageBreakdownSnapshot]
     let history: HistoryAvailability
 
-    /// 下拉框展示今日 Top N 模型并合并其余项，确保平台与模型使用同一个“今日”时间窗口。
-    func topModels(limit: Int = 3) -> [UsageBreakdownSnapshot] {
+    /// 下拉框展示今日模型，最多五行；超出时合并最小的尾部项。
+    func topModels(limit: Int = 4) -> [UsageBreakdownSnapshot] {
         modelToday.topFourPlusOther(limit: limit, otherKey: .otherModels)
     }
 
@@ -323,8 +324,8 @@ struct QuotaPresentationSnapshot: Equatable, Sendable {
             availability: presentation.availability,
             updatedAt: presentation.updatedAt,
             today: presentation.today,
-            platformToday: presentation.platformToday,
-            topModels: presentation.topModels(),
+            platformToday: presentation.topPlatforms(),
+            topModels: presentation.topModels(limit: 4),
             quotaItems: quotaItems
         )
     }
