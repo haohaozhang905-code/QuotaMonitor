@@ -18,6 +18,7 @@
 "menu.updatedAt" = "Updated %@";
 "menu.notUpdated" = "Not updated yet";
 "menu.statusLoading" = "Reading local data";
+"menu.statusProgress" = "Updating local data %d/%d";
 "menu.statusConnectedNoQuota" = "Connected, quota not read yet";
 "menu.statusUnavailable" = "No connected data source";
 "menu.statusStale" = "Refresh failed; showing previous data";
@@ -40,6 +41,7 @@
 "panel.model" = "Current model";
 "panel.syncingTitle" = "Syncing Codex data";
 "panel.syncingDetail" = "Reading your local route, quota, and token usage.";
+"panel.statusProgress" = "Updating %d/%d sources";
 "panel.noDataTitle" = "Codex data is not ready";
 "panel.noDataDetail" = "Confirm that Codex is signed in and allow macOS access to local Codex data when prompted.";
 "panel.retry" = "Try again";
@@ -133,6 +135,11 @@
 "settings.launchAtLogin.detail" = "Show quota status after login";
 "settings.refreshRate.detail" = "Update quota and token data";
 "settings.language.detail" = "Choose the interface language";
+"settings.dockIcon" = "Dock icon";
+"settings.dockIcon.detail" = "Choose when the Dock icon appears with the main window";
+"settings.dockIcon.smart" = "Smart";
+"settings.dockIcon.always" = "Always";
+"settings.dockIcon.never" = "Never";
 "settings.notConnected" = "Not connected";
 "settings.oauthConnected" = "Official OAuth · Connected";
 "settings.deepSeekConnected" = "DeepSeek route · Connected";

@@ -15,11 +15,15 @@ struct QuotaMonitorApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = QuotaStore()
     let language = LanguageSettings()
+    let dockIconSettings = DockIconSettings()
 
     private var statusItem: NSStatusItem?
     private var panelController: MainPanelController?
     private var refreshTask: Task<Void, Never>?
     private var menuBarUpdateTask: Task<Void, Never>?
+    private var menuBarAnimationTask: Task<Void, Never>?
+    private var dropdownPanel: NSPanel?
+    private var dropdownEventMonitors: [Any] = []
     private var renderedMenuBarState: MenuBarRenderState?
 
     private struct MenuBarRenderState: Equatable {
@@ -28,10 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let codexRemaining: Double?
         let balanceAmount: Double?
         let balanceCurrency: String?
+        let isLoading: Bool
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard enforceSingleInstance() else { return }
+        configureApplicationIcon()
         NSApp.setActivationPolicy(.accessory)
         // 改造版视觉标准以暗黑界面为默认外观；保留环境变量作为验收脚本的显式开关。
         if ProcessInfo.processInfo.environment["CODEXQUOTA_FORCE_DARK"] == "1"
@@ -40,7 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.appearance = NSAppearance(named: .darkAqua)
         }
         setupStatusItem()
-        panelController = MainPanelController(store: store, language: language)
+        panelController = MainPanelController(
+            store: store,
+            language: language,
+            dockIconSettings: dockIconSettings
+        )
         observeStore()
         refreshTask = Task { await store.start() }
         // 调试/验收用：设置 CODEXQUOTA_SHOW_PANEL=1 时启动即展示主面板。
@@ -52,6 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         refreshTask?.cancel()
         menuBarUpdateTask?.cancel()
+        menuBarAnimationTask?.cancel()
+        closeDropdownPanel(animated: false)
     }
 
     /// 点击 Dock 图标时重新打开主面板。
@@ -61,6 +73,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - 菜单栏状态项
+
+    private func configureApplicationIcon() {
+        let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+            ?? QuotaResourceBundle.current.url(forResource: "AppIcon", withExtension: "png")
+        if let iconURL, let icon = NSImage(contentsOf: iconURL) {
+            NSApp.applicationIconImage = icon
+        }
+    }
 
     private func enforceSingleInstance() -> Bool {
         guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return true }
@@ -79,9 +99,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = item.button {
             button.title = ""
             button.image = nil
-            button.isBordered = false
+            // 交给 NSStatusBarButton 绘制 macOS 原生 hover/pressed 容器，
+            // 不再用自定义 CALayer 模拟状态栏点击态。
+            button.isBordered = true
+            button.bezelStyle = .texturedRounded
+            button.showsBorderOnlyWhileMouseInside = true
             if let cell = button.cell as? NSButtonCell {
-                cell.highlightsBy = []
+                cell.highlightsBy = NSCell.StyleMask(rawValue: 1 | 8)
                 cell.showsStateBy = []
             }
             button.target = self
@@ -100,24 +124,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             claudeRoute: store.claudeUsesDeepSeek ? .deepseek : store.claudeRouteSummary,
             codexRemaining: codex?.weekly?.remainingPercent,
             balanceAmount: store.deepSeekBalance,
-            balanceCurrency: store.deepSeekCurrency
+            balanceCurrency: store.deepSeekCurrency,
+            isLoading: !store.hasCompletedInitialRefresh
         )
     }
 
-    private func menuBarContent(for state: MenuBarRenderState) -> MenuBarSlotsView {
+    private func menuBarContent(for state: MenuBarRenderState, loadingFrame: Int = 0) -> MenuBarSlotsView {
         MenuBarSlotsView(
             codexRoute: state.codexRoute,
             claudeRoute: state.claudeRoute,
             codexRemaining: state.codexRemaining,
             claudeRemaining: nil,
             balanceAmount: state.balanceAmount,
-            balanceCurrency: state.balanceCurrency
+            balanceCurrency: state.balanceCurrency,
+            isLoading: state.isLoading,
+            loadingFrame: loadingFrame
         )
     }
 
     /// 刷新菜单栏内容并按内容重新调整状态项宽度。
     private func updateMenuBarContent() {
         let state = menuBarRenderState
+        if state.isLoading {
+            startMenuBarLoadingAnimationIfNeeded()
+            renderMenuBarContent(for: state, loadingFrame: 0)
+            return
+        }
+
+        menuBarAnimationTask?.cancel()
+        menuBarAnimationTask = nil
         guard state != renderedMenuBarState else { return }
         menuBarUpdateTask?.cancel()
         menuBarUpdateTask = Task { @MainActor [weak self] in
@@ -128,10 +163,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func renderMenuBarContent(for state: MenuBarRenderState) {
+    private func startMenuBarLoadingAnimationIfNeeded() {
+        guard menuBarAnimationTask == nil else { return }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            renderMenuBarContent(for: menuBarRenderState, loadingFrame: 2)
+            return
+        }
+
+        menuBarAnimationTask = Task { @MainActor [weak self] in
+            var frame = 0
+            while !Task.isCancelled {
+                guard let self, self.menuBarRenderState.isLoading else { break }
+                self.renderMenuBarContent(for: self.menuBarRenderState, loadingFrame: frame)
+                frame = (frame + 1) % 3
+                try? await Task.sleep(for: .milliseconds(360))
+            }
+            self?.menuBarAnimationTask = nil
+        }
+    }
+
+    private func renderMenuBarContent(for state: MenuBarRenderState, loadingFrame: Int = 0) {
         guard let button = statusItem?.button else { return }
         let renderer = ImageRenderer(
-            content: menuBarContent(for: state)
+            content: menuBarContent(for: state, loadingFrame: loadingFrame)
                 .padding(.horizontal, 1)
                 .padding(.vertical, 3)
         )
@@ -153,6 +207,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = store.claudeDesktopRoute
             _ = store.deepSeekBalance
             _ = store.providers.count
+            _ = store.hasCompletedInitialRefresh
+            _ = store.localTokenRefreshProgress
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.updateMenuBarContent()
@@ -163,261 +219,174 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 所有状态栏点击都打开下拉框，主面板只从下拉框动作进入。
     @objc private func statusItemClicked() {
-        showDropDownMenu()
+        if dropdownPanel?.isVisible == true {
+            closeDropdownPanel()
+        } else {
+            showDropdownPanel()
+        }
     }
 
     // MARK: - 下拉框
 
-    private func showDropDownMenu() {
-        guard let button = statusItem?.button,
-              let window = button.window else { return }
-        let menu = makeMenu()
-        menu.update()
+    private func showDropdownPanel() {
+        guard let button = statusItem?.button, let window = button.window else { return }
+
+        closeDropdownPanel(animated: false)
+
+        let panel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .statusBar
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.appearance = NSApp.appearance ?? NSAppearance(named: .darkAqua)
+
+        let rootView = DropdownPopoverView(
+            store: store,
+            language: language,
+            openPanel: { [weak self] in
+                self?.closeDropdownPanelThen {
+                    self?.showMainPanel()
+                }
+            },
+            refresh: { [weak self] in
+                guard let self else { return }
+                Task { await self.store.refreshAll() }
+            },
+            openSettings: { [weak self] in
+                self?.closeDropdownPanelThen {
+                    self?.showSettings()
+                }
+            },
+            quit: { NSApp.terminate(nil) }
+        )
+        let hostingController = NSHostingController(rootView: rootView)
+        panel.contentViewController = hostingController
+
+        let fittingHeight = hostingController.view.fittingSize.height
+        let panelSize = NSSize(
+            width: DropdownLayout.width,
+            height: min(max(fittingHeight, 300), 660)
+        )
+        panel.setContentSize(panelSize)
 
         let buttonRectOnScreen = window.convertToScreen(button.convert(button.bounds, to: nil))
         let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame ?? buttonRectOnScreen
         let edgeInset: CGFloat = 8
-        let desiredLeft = buttonRectOnScreen.midX - menu.size.width / 2
-        let minimumLeft = visibleFrame.minX + edgeInset
-        let maximumLeft = visibleFrame.maxX - menu.size.width - edgeInset
-        let clampedLeft = min(max(desiredLeft, minimumLeft), max(minimumLeft, maximumLeft))
-        let anchorOnScreen = NSPoint(x: clampedLeft, y: buttonRectOnScreen.minY - 3)
-        let anchorInWindow = window.convertFromScreen(NSRect(origin: anchorOnScreen, size: .zero)).origin
-        let anchorInButton = button.convert(anchorInWindow, from: nil)
-        button.highlight(true)
-        menu.popUp(positioning: nil, at: anchorInButton, in: button)
-        button.highlight(false)
-    }
+        let left = min(
+            max(buttonRectOnScreen.midX - panelSize.width / 2, visibleFrame.minX + edgeInset),
+            max(visibleFrame.minX + edgeInset, visibleFrame.maxX - panelSize.width - edgeInset)
+        )
+        let finalFrame = NSRect(
+            x: left,
+            y: buttonRectOnScreen.minY - panelSize.height - 2,
+            width: panelSize.width,
+            height: panelSize.height
+        )
 
-    private func makeMenu() -> NSMenu {
-        let menu = NSMenu()
-        let presentation = store.dropdownPresentation
-        let information = VStack(spacing: 0) {
-            DropdownHeader(title: QuotaMonitorIdentity.displayName, updated: updatedText(for: presentation))
-            DropdownHero(
-                value: heroValue(for: presentation),
-                label: language.text("menu.todayTokensLabel"),
-                comparison: heroComparison(for: presentation),
-                comparisonColor: comparisonColor(for: presentation.today.trendPercent)
-            )
-            if let status = dropdownStatus(for: presentation.availability) {
-                DropdownStatusRow(text: status.text, tone: status.tone)
+        // 顶边固定在状态栏下方 2px，窗口从一条细缝向下展开。
+        let collapsedHeight: CGFloat = 2
+        let collapsedFrame = NSRect(
+            x: finalFrame.minX,
+            y: finalFrame.maxY - collapsedHeight,
+            width: finalFrame.width,
+            height: collapsedHeight
+        )
+        panel.setFrame(collapsedFrame, display: false)
+        panel.alphaValue = 1
+        dropdownPanel = panel
+        installDropdownEventMonitors()
+        setStatusItemHighlighted(true)
+        panel.orderFrontRegardless()
+
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            panel.setFrame(finalFrame, display: true)
+        } else {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1.0)
+                panel.animator().setFrame(finalFrame, display: true)
             }
-            if !presentation.quotaItems.isEmpty {
-                DropdownSectionHeader(title: language.text("menu.quotaSection"))
-                ForEach(presentation.quotaItems) { item in
-                    self.quotaLine(
-                        icon: self.icon(for: item.platform),
-                        title: item.platform.displayName,
-                        state: item.state
-                    )
-                }
+        }
+    }
+
+    private func installDropdownEventMonitors() {
+        removeDropdownEventMonitors()
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
+            Task { @MainActor in
+                self?.closeDropdownPanel()
             }
-            DropdownSectionHeader(title: language.text("menu.platformSection"))
-            if presentation.platformToday.isEmpty {
-                DropdownEmptyRow(text: language.text("menu.noUsage"))
-            } else {
-                ForEach(presentation.platformToday) { row in
-                    DropdownCompactRow(
-                        name: row.key.displayName(claudeCode: self.language.text("panel.claudeCode")),
-                        amount: QuotaFormatters.tokensCN(row.total),
-                        share: self.percentText(row.share)
-                    )
-                }
+        }) {
+            dropdownEventMonitors.append(global)
+        }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            guard let self, let panel = self.dropdownPanel, panel.isVisible else { return event }
+            let statusWindow = self.statusItem?.button?.window
+            if event.window !== panel && event.window !== statusWindow {
+                self.closeDropdownPanel()
             }
-            DropdownSectionHeader(title: language.text("menu.modelSection"))
-            if presentation.topModels.isEmpty {
-                DropdownEmptyRow(text: language.text("menu.noUsage"))
-            } else {
-                ForEach(presentation.topModels) { row in
-                    DropdownCompactRow(
-                        name: row.key.displayName(other: self.language.text("tokens.otherModel")),
-                        amount: QuotaFormatters.tokensCN(row.total),
-                        share: self.percentText(row.share)
-                    )
-                }
+            return event
+        }) {
+            dropdownEventMonitors.append(local)
+        }
+    }
+
+    private func removeDropdownEventMonitors() {
+        dropdownEventMonitors.forEach { NSEvent.removeMonitor($0) }
+        dropdownEventMonitors.removeAll()
+    }
+
+    private func setStatusItemHighlighted(_ highlighted: Bool) {
+        guard let button = statusItem?.button else { return }
+        // NSButton.highlight(_:) 使用系统自己的状态栏高亮绘制，
+        // 包括当前 macOS 的 hover/pressed 容器形状和材质。
+        button.highlight(highlighted)
+    }
+
+    private func closeDropdownPanel(animated: Bool = true) {
+        guard let panel = dropdownPanel else {
+            removeDropdownEventMonitors()
+            setStatusItemHighlighted(false)
+            return
+        }
+        removeDropdownEventMonitors()
+        setStatusItemHighlighted(false)
+
+        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            panel.orderOut(nil)
+            if dropdownPanel === panel { dropdownPanel = nil }
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+        } completionHandler: { [weak self, weak panel] in
+            Task { @MainActor in
+                panel?.orderOut(nil)
+                panel?.alphaValue = 1
+                if self?.dropdownPanel === panel { self?.dropdownPanel = nil }
             }
-            Color.clear.frame(height: 10)
-        }
-        .fontDesign(.monospaced)
-        menu.addItem(DropdownRows.menuItem(information))
-
-        let open = monoMenuItem(
-            title: language.text("menu.openPanel"),
-            action: #selector(showMainPanel),
-            keyEquivalent: "o"
-        )
-        open.target = self
-        menu.addItem(open)
-
-        let refresh = monoMenuItem(
-            title: language.text("menu.refresh"),
-            action: #selector(refreshNow),
-            keyEquivalent: "r"
-        )
-        refresh.target = self
-        menu.addItem(refresh)
-
-        let settings = monoMenuItem(
-            title: language.text("menu.settings"),
-            action: #selector(showSettings),
-            keyEquivalent: ","
-        )
-        settings.target = self
-        menu.addItem(settings)
-
-        menu.addItem(.separator())
-        let quit = monoMenuItem(
-            title: language.text("menu.quit"),
-            action: #selector(quitApp),
-            keyEquivalent: "q"
-        )
-        quit.target = self
-        quit.image = nil
-        menu.addItem(quit)
-        return menu
-    }
-
-    private func monoMenuItem(title: String, action: Selector, keyEquivalent: String) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
-        let font = NSFont(name: "SFMono-Regular", size: 13)
-            ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        item.attributedTitle = NSAttributedString(string: title, attributes: [.font: font])
-        return item
-    }
-
-    private func updatedText(for presentation: DropdownPresentation) -> String {
-        guard let date = presentation.updatedAt else { return language.text("menu.notUpdated") }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return language.text("menu.updatedAt", formatter.string(from: date))
-    }
-
-    private func heroValue(for presentation: DropdownPresentation) -> String {
-        switch presentation.availability {
-        case .ready, .stale:
-            QuotaFormatters.tokensCN(presentation.today.total)
-        case .loading, .connectedOnly, .unavailable, .error:
-            "—"
         }
     }
 
-    private func heroComparison(for presentation: DropdownPresentation) -> String? {
-        switch presentation.availability {
-        case .ready, .stale:
-            comparisonText(for: presentation.today.trendPercent)
-        case .loading, .connectedOnly, .unavailable, .error:
-            nil
+    private func closeDropdownPanelThen(_ action: @escaping @MainActor () -> Void) {
+        closeDropdownPanel()
+        let delay = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.0 : 0.14
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            action()
         }
-    }
-
-    private func percentText(_ value: Double) -> String {
-        String(format: "%.1f%%", value * 100)
-    }
-
-    private func comparisonText(for percent: Double?) -> String? {
-        guard let percent else { return nil }
-        let key = percent >= 0 ? "menu.vsYesterdayUp" : "menu.vsYesterdayDown"
-        return language.text(key, String(format: "%.1f", abs(percent)))
-    }
-
-    private func comparisonColor(for percent: Double?) -> Color {
-        guard let percent else { return .secondary }
-        return percent >= 0 ? PanelTheme.claude : PanelTheme.ok
-    }
-
-    private struct DropdownStatus {
-        let text: String
-        let tone: DropdownStatusTone
-    }
-
-    private func dropdownStatus(for availability: QuotaAvailability) -> DropdownStatus? {
-        switch availability {
-        case .ready:
-            nil
-        case .loading:
-            .init(text: language.text("menu.statusLoading"), tone: .neutral)
-        case .connectedOnly:
-            .init(text: language.text("menu.statusConnectedNoQuota"), tone: .warning)
-        case .unavailable:
-            .init(text: language.text("menu.statusUnavailable"), tone: .warning)
-        case .stale:
-            .init(text: language.text("menu.statusStale"), tone: .warning)
-        case .error:
-            .init(text: language.text("menu.statusError"), tone: .danger)
-        }
-    }
-
-    // MARK: - 下拉框数据
-
-    private func icon(for platform: TokenPlatform) -> BrandIconKind {
-        switch platform {
-        case .codex: .codex
-        case .claude: .claude
-        case .workbuddy: .workBuddy
-        case .kimi: .deepSeek
-        }
-    }
-
-    @ViewBuilder
-    private func quotaLine(icon: BrandIconKind, title: String, state: DropdownQuotaState) -> some View {
-        switch state {
-        case let .official(plan, session, weekly):
-            DropdownQuotaLine(
-                icon: icon,
-                title: title,
-                route: plan ?? language.text("panel.official"),
-                metrics: [
-                    quotaMetric(label: language.text("overview.sessionQuota"), metric: session),
-                    quotaMetric(label: language.text("overview.weekQuota"), metric: weekly)
-                ]
-            )
-        case let .sharedBalance(amount, currency, estimatedDays):
-            DropdownQuotaLine(
-                icon: icon,
-                title: title,
-                route: language.text("panel.deepSeekRouteTag"),
-                metrics: [
-                    .init(label: language.text("overview.sharedBalance"), value: QuotaFormatters.money(amount, currency: currency), detail: ""),
-                    .init(label: language.text("overview.estimatedDays"), value: estimatedDays.map { language.text("panel.daysShortLabel", "\($0)") } ?? "—", detail: "")
-                ]
-            )
-        case .connectedWithoutQuota:
-            DropdownQuotaStatusLine(
-                icon: icon,
-                title: title,
-                status: language.text("menu.quotaConnectedNoData"),
-                tone: .warning
-            )
-        case .unavailable:
-            DropdownQuotaStatusLine(
-                icon: icon,
-                title: title,
-                status: language.text("menu.quotaUnavailable"),
-                tone: .neutral
-            )
-        }
-    }
-
-    private func quotaMetric(
-        label: String,
-        metric: DropdownQuotaMetricPresentation?
-    ) -> DropdownQuotaLine.Metric {
-        let detail = metric?.resetsAt.map {
-            language.text("overview.resetAfter", QuotaFormatters.reset(language: language.language).string(from: $0))
-        } ?? ""
-        return .init(
-            label: label,
-            value: metric?.remainingPercent.map(QuotaFormatters.percent) ?? "—",
-            detail: detail
-        )
     }
 
     // MARK: - 主面板
-
-    @objc private func refreshNow() {
-        Task { await store.refresh() }
-    }
 
     @objc func showMainPanel() {
         panelController?.show()
@@ -426,10 +395,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showSettings() {
         NotificationCenter.default.post(name: .quotaMonitorOpenSettings, object: nil)
         panelController?.show()
-    }
-
-    @objc private func quitApp() {
-        NSApp.terminate(nil)
     }
 
 }

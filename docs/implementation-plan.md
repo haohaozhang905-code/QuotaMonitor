@@ -2,7 +2,7 @@
 
 版本：v1
 
-依据：`docs/design-spec.md` v3
+依据：`docs/design-spec.md` v4
 
 目标：将当前 SwiftUI 菜单栏应用改造成与 `QuotaMonitor 改造版.html` 一致的可维护实现，同时统一下拉框、主面板和菜单栏的数据口径。
 
@@ -21,11 +21,13 @@
 - 浅色/深色主题 token
 - 加载、空态、错误、未连接、额度未读取状态
 - 中英文文案和相关测试
+- 启动快照、来源级渐进刷新与增长 JSONL 增量解析
+- 下拉框、主面板和共享分段控件动效
 
 ### 本次不包含
 
 - 新增数据源
-- 修改 Codex、Claude、DeepSeek、WorkBuddy 的底层日志解析规则
+- 改变 Codex、Claude、DeepSeek、WorkBuddy 的 Token 统计口径
 - 重写现有路由探测器
 - 改变 Token 总量的基础计算口径
 - 引入第三方 UI 框架
@@ -37,7 +39,7 @@
 | 主面板 | `Sources/QuotaMonitor/Views/MainPanelView.swift` | 页面、主题、数据计算、组件全部集中；文件中还存在未使用的第二套 UI 实现 | 拆成页面、组件、主题和展示模型 |
 | 下拉框组件 | `Sources/QuotaMonitor/Views/DropdownViews.swift` | 基础组件已有，但缺少统一状态和空态表达 | 使用统一 `DropdownSnapshot` |
 | 下拉框组装 | `Sources/QuotaMonitor/App/QuotaMonitorApp.swift` | 直接在 AppDelegate 中计算和组装数据；Top 3、百分比、状态口径分散 | AppDelegate 只负责窗口/菜单动作，数据由展示模型提供 |
-| 主窗口 | `Sources/QuotaMonitor/App/MainPanelController.swift` | 默认窗口尺寸和 SwiftUI 最小尺寸分散定义 | 统一窗口规格和滚动行为 |
+| 主窗口 | `Sources/QuotaMonitor/App/MainPanelController.swift` | 菜单栏应用的主面板缺少标准窗口与 Dock 找回行为 | 使用单例 `NSWindow`、智能 Dock 和统一窗口规格 |
 | 额度模型 | `Sources/QuotaMonitor/Models/QuotaModels.swift` | `BalanceState` 缺少未知/未读取状态 | 增加显式 `unknown` / `connectedOnly` 语义 |
 | 路由策略 | `Sources/QuotaMonitor/Models/QuotaPresentationPolicy.swift` | 已有官方/共享/不可用三态，但不能表达连接成功而额度缺失 | 扩展展示策略 |
 | Token 维度 | `Sources/QuotaMonitor/Models/TokenUsageDimensions.swift` | 已定义平台、客户端、模型、提供方，UI 尚未完全复用 | 作为所有聚合的唯一维度来源 |

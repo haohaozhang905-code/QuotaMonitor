@@ -1,7 +1,7 @@
 import Foundation
 
 /// DeepSeek 开放平台的余额快照。
-struct DeepSeekBalanceSnapshot: Sendable {
+struct DeepSeekBalanceSnapshot: Codable, Equatable, Sendable {
     let balance: Double
     let currency: String
     let isAvailable: Bool

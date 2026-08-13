@@ -110,14 +110,7 @@ actor WorkBuddyTraceClient {
             if let cached = cache[url], cached.matches(mtime: mtime, fileSize: fileSize) {
                 newCache[url] = cached
                 modelByDay = cached.modelByDay
-            } else {
-                guard let parsed = parseFile(url) else {
-                    guard let cached = cache[url] else { continue }
-                    newCache[url] = cached
-                    modelByDay = cached.modelByDay
-                    buckets.append(contentsOf: Self.makeBuckets(from: modelByDay))
-                    continue
-                }
+            } else if let parsed = parseFile(url) {
                 let entry = FileCache(
                     mtime: mtime,
                     fileSize: fileSize,
@@ -127,6 +120,21 @@ actor WorkBuddyTraceClient {
                 )
                 newCache[url] = entry
                 modelByDay = entry.modelByDay
+            } else if let cached = cache[url] {
+                // 写入边界暂时不完整时继续展示该文件上一份有效结果。
+                newCache[url] = cached
+                modelByDay = cached.modelByDay
+            } else {
+                // 空 trace 或不含 usage 的 trace 也记入缓存；文件不变时不再反复解析。
+                let entry = FileCache(
+                    mtime: mtime,
+                    fileSize: fileSize,
+                    totalsByDay: [:],
+                    deepSeekByDay: [:],
+                    modelByDay: [:]
+                )
+                newCache[url] = entry
+                modelByDay = [:]
             }
             buckets.append(contentsOf: Self.makeBuckets(from: modelByDay))
         }

@@ -93,6 +93,34 @@ struct ClaudeSessionTokenClientTests {
         #expect(first.first?.total == 12)
         #expect(second.first?.total == 12)
     }
+    @Test func appendsOnlyNewClaudeJSONLLinesAfterCachedBoundary() async throws {
+        let root = try Fixtures.makeTempDir("claude-append")
+        defer { Fixtures.remove(root) }
+
+        let project = root.appendingPathComponent("projects/-Users-test", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let file = project.appendingPathComponent("session-append.jsonl")
+        let timestamp = Fixtures.iso(Fixtures.noon(yesterdayOffset: 0))
+        let firstLine = #"{"type":"assistant","message":{"model":"gpt-5.6-sol","usage":{"input_tokens":10,"output_tokens":2}},"timestamp":"\#(timestamp)"}"#
+        let secondLine = #"{"type":"assistant","message":{"model":"gpt-5.6-sol","usage":{"input_tokens":20,"output_tokens":3}},"timestamp":"\#(timestamp)"}"#
+        let original = Data((firstLine + "\n").utf8)
+        try original.write(to: file)
+
+        let client = ClaudeSessionTokenClient(root: root)
+        #expect(await client.fetch().first?.total == 12)
+
+        // 破坏已缓存前缀但保留原字节数与末尾换行；若错误地全量回扫，旧的 12 会丢失。
+        var corrupted = Data(repeating: 0x20, count: original.count)
+        corrupted[corrupted.index(before: corrupted.endIndex)] = 0x0A
+        try corrupted.write(to: file)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((secondLine + "\n").utf8))
+        try handle.close()
+
+        #expect(await client.fetch().first?.total == 35)
+    }
+
 }
 
 // MARK: - Codex 会话解析（含归档目录）
@@ -174,6 +202,34 @@ struct CodexSessionTokenClientTests {
         #expect(try await client.fetchSnapshot().history.first?.total == 150)
         try "temporarily incomplete".write(to: file, atomically: true, encoding: .utf8)
         #expect(try await client.fetchSnapshot().history.first?.total == 150)
+    }
+
+
+    @Test func appendsOnlyNewCodexJSONLLinesAndContinuesCumulativeTotals() async throws {
+        let root = try Fixtures.makeTempDir("codex-append")
+        defer { Fixtures.remove(root) }
+
+        let sessions = root.appendingPathComponent("sessions/2026/08/13", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        let file = sessions.appendingPathComponent("rollout-active.jsonl")
+        let firstLine = #"{"timestamp":"2026-08-13T08:00:00Z","payload":{"info":{"model":"gpt-5.6-sol","total_token_usage":{"input_tokens":100,"output_tokens":20}}}}"#
+        let secondLine = #"{"timestamp":"2026-08-13T08:01:00Z","payload":{"info":{"model":"gpt-5.6-sol","total_token_usage":{"input_tokens":140,"output_tokens":30}}}}"#
+        let original = Data((firstLine + "\n").utf8)
+        try original.write(to: file)
+
+        let client = CodexSessionTokenClient(root: root)
+        #expect(await client.fetch().first?.total == 120)
+
+        var corrupted = Data(repeating: 0x20, count: original.count)
+        corrupted[corrupted.index(before: corrupted.endIndex)] = 0x0A
+        try corrupted.write(to: file)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((secondLine + "\n").utf8))
+        try handle.close()
+
+        // 新累计值 170；增量游标会在旧 120 基础上只追加 50。
+        #expect(await client.fetch().first?.total == 170)
     }
 
     private static func pathDay(_ date: Date) -> String {

@@ -2,6 +2,16 @@ import Foundation
 import Observation
 import OSLog
 
+struct LocalTokenRefreshProgress: Equatable, Sendable {
+    let completedSources: Int
+    let totalSources: Int
+
+    var fraction: Double {
+        guard totalSources > 0 else { return 0 }
+        return Double(completedSources) / Double(totalSources)
+    }
+}
+
 @MainActor @Observable
 final class QuotaStore {
     private struct TokenHistorySnapshot: Codable, Equatable {
@@ -16,12 +26,25 @@ final class QuotaStore {
         let workbuddyDeepSeekHistory: [DailyTokenUsage]
         let tokenBuckets: [TokenUsageBucket]
         let claudeDesktopStale: Bool
+        let tokenUpdatedAt: Date?
+    }
+
+    private enum TokenRefreshResult: Sendable {
+        case codex(TokenSourceSnapshot?)
+        case claude(TokenSourceSnapshot?)
+        case workBuddy(TokenSourceSnapshot?)
+        case desktop(TokenSourceSnapshot?)
+        case claudeCrossCheck(TokenSourceSnapshot?)
     }
 
     private(set) var providers: [ProviderUsage] = []
     private(set) var lastUpdated: Date?
     private(set) var errorMessageKey: String?
     private(set) var isRefreshing = false
+    private(set) var isRefreshingTokenSources = false
+    private(set) var localTokenRefreshProgress: LocalTokenRefreshProgress?
+    private(set) var lastTokenUpdatedAt: Date?
+    private(set) var hasCompletedInitialRefresh = false
     private(set) var codexResetCredits: CodexResetCredits?
     private(set) var tokenHistory: [DailyTokenUsage] = []
     /// 按日期、平台、客户端和模型拆分的原始聚合桶，供 Token 看板的模型维度查询。
@@ -56,9 +79,14 @@ final class QuotaStore {
     private let tokenSnapshotURL: URL?
     private var lastSavedTokenSnapshot: TokenHistorySnapshot?
     private var tokenTask: Task<Void, Never>?
+    private var tokenProgressRevealTask: Task<Void, Never>?
 
     init() {
         tokenSnapshotURL = Self.defaultTokenSnapshotURL()
+        let detectedClaudeRoutes = ClaudeRouteDetector.detectRoutes()
+        codexRoute = CodexRouteDetector.detect()
+        claudeRoute = detectedClaudeRoutes.code
+        claudeDesktopRoute = detectedClaudeRoutes.desktop
         loadTokenSnapshot()
     }
 
@@ -117,6 +145,10 @@ final class QuotaStore {
 
     var todayTokenUsage: DailyTokenUsage? { tokenUsage(for: .now) }
 
+    var latestUpdatedAt: Date? {
+        [lastUpdated, lastTokenUpdatedAt].compactMap { $0 }.max()
+    }
+
     var yesterdayTokenUsage: DailyTokenUsage? {
         Calendar.current.date(byAdding: .day, value: -1, to: .now).flatMap { tokenUsage(for: $0) }
     }
@@ -125,7 +157,7 @@ final class QuotaStore {
     var presentationSnapshot: QuotaPresentationSnapshot {
         QuotaPresentationSnapshot.make(
             providers: providers,
-            updatedAt: lastUpdated,
+            updatedAt: latestUpdatedAt,
             errorMessageKey: errorMessageKey,
             isRefreshing: isRefreshing,
             codexRoute: codexRoute,
@@ -157,17 +189,21 @@ final class QuotaStore {
     }
 
     func start() async {
-        // 启动阶段先完成官方/DeepSeek 历史扫描，使余额可用天数的估算从首屏就正确。
-        await refreshTokenSources()
+        // 快照已在 init 同步恢复；本地 token 与网络额度并行更新，互不阻塞首屏。
         tokenTask = Task { await monitorTokenSources() }
-        defer {
-            tokenTask?.cancel()
-        }
-        await refresh()
+        defer { tokenTask?.cancel() }
+        await refreshAll()
+        hasCompletedInitialRefresh = true
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(60))
             await refresh()
         }
+    }
+
+    func refreshAll() async {
+        async let local: Void = refreshTokenSources()
+        async let quota: Void = refresh()
+        _ = await (local, quota)
     }
 
     func refresh() async {
@@ -341,74 +377,114 @@ final class QuotaStore {
     /// 不依赖 cc-switch；Claude 桌面版唯一来源是 cc-switch 请求日志，
     /// 它退出时该列显示「未采集」，其余工具不受影响。
     private func refreshTokenSources() async {
-        async let codex = try? codexSessionTokenClient.fetchSnapshot()
-        async let claude = try? claudeSessionTokenClient.fetchSnapshot()
-        async let workBuddy = try? workBuddyTraceClient.fetchSnapshot()
-        async let desktop = ccSwitchUsageClient.fetchSnapshot(appType: "claude-desktop")
-        async let ccClaude = ccSwitchUsageClient.fetchSnapshot(appType: "claude", client: .cli)
-        let snapshots = await (codex, claude, workBuddy, desktop, ccClaude)
+        guard !isRefreshingTokenSources else { return }
+        isRefreshingTokenSources = true
+        let totalSources = 5
+        tokenProgressRevealTask?.cancel()
+        tokenProgressRevealTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled, let self, self.isRefreshingTokenSources else { return }
+            self.localTokenRefreshProgress = LocalTokenRefreshProgress(
+                completedSources: 0,
+                totalSources: totalSources
+            )
+        }
+        defer {
+            tokenProgressRevealTask?.cancel()
+            tokenProgressRevealTask = nil
+            localTokenRefreshProgress = nil
+            isRefreshingTokenSources = false
+        }
 
+        let codexClient = codexSessionTokenClient
+        let claudeClient = claudeSessionTokenClient
+        let workBuddyClient = workBuddyTraceClient
+        let ccSwitchClient = ccSwitchUsageClient
+        var completed = 0
+
+        await withTaskGroup(of: TokenRefreshResult.self) { group in
+            group.addTask { .codex(try? await codexClient.fetchSnapshot()) }
+            group.addTask { .claude(try? await claudeClient.fetchSnapshot()) }
+            group.addTask { .workBuddy(try? await workBuddyClient.fetchSnapshot()) }
+            group.addTask { .desktop(await ccSwitchClient.fetchSnapshot(appType: "claude-desktop")) }
+            group.addTask { .claudeCrossCheck(await ccSwitchClient.fetchSnapshot(appType: "claude", client: .cli)) }
+
+            for await result in group {
+                applyTokenRefreshResult(result)
+                completed += 1
+                if localTokenRefreshProgress != nil {
+                    localTokenRefreshProgress = LocalTokenRefreshProgress(
+                        completedSources: completed,
+                        totalSources: totalSources
+                    )
+                }
+                await Task.yield()
+            }
+        }
+
+        lastTokenUpdatedAt = .now
+        saveTokenSnapshotIfNeeded()
+        logger.info(
+            "sources codex=\(Self.todayTotal(self.tokenHistory)) claude=\(Self.todayTotal(self.claudeHistory)) desktop=\(Self.todayTotal(self.claudeDesktopHistory)) workbuddy=\(Self.todayTotal(self.workBuddyHistory)) deepseek=\(Self.todayTotal(self.deepSeekHistory)) desktopStale=\(self.claudeDesktopStale)"
+        )
+        refreshTokenDerivedState()
+    }
+
+    private func applyTokenRefreshResult(_ result: TokenRefreshResult) {
         var freshBuckets = tokenBuckets
-        if let snapshot = snapshots.0 {
-            tokenHistory = snapshot.history
-            codexDeepSeekHistory = snapshot.deepSeekHistory
-            Self.replaceBuckets(in: &freshBuckets, matching: { $0.platform == .codex }, with: snapshot.buckets)
-        } else {
-            logger.warning("Codex token refresh failed; retaining last good snapshot")
+        switch result {
+        case let .codex(snapshot):
+            if let snapshot {
+                tokenHistory = snapshot.history
+                codexDeepSeekHistory = snapshot.deepSeekHistory
+                Self.replaceBuckets(in: &freshBuckets, matching: { $0.platform == .codex }, with: snapshot.buckets)
+            } else {
+                logger.warning("Codex token refresh failed; retaining last good snapshot")
+            }
+        case let .claude(snapshot):
+            if let snapshot {
+                claudeHistory = snapshot.history
+                claudeDeepSeekHistory = snapshot.deepSeekHistory
+                Self.replaceBuckets(
+                    in: &freshBuckets,
+                    matching: { $0.platform == .claude && $0.client == .cli },
+                    with: snapshot.buckets
+                )
+            } else {
+                logger.warning("Claude Code token refresh failed; retaining last good snapshot")
+            }
+        case let .workBuddy(snapshot):
+            if let snapshot {
+                workBuddyHistory = snapshot.history
+                workbuddyDeepSeekHistory = snapshot.deepSeekHistory
+                Self.replaceBuckets(in: &freshBuckets, matching: { $0.platform == .workbuddy }, with: snapshot.buckets)
+            } else {
+                logger.warning("WorkBuddy token refresh failed; retaining last good snapshot")
+            }
+        case let .desktop(snapshot):
+            if let snapshot {
+                claudeDesktopHistory = snapshot.history
+                desktopDeepSeekHistory = snapshot.deepSeekHistory
+                Self.replaceBuckets(
+                    in: &freshBuckets,
+                    matching: { $0.platform == .claude && $0.client == .desktop },
+                    with: snapshot.buckets
+                )
+                claudeDesktopStale = !CCSwitchUsageClient.isCCSwitchRunning()
+            } else {
+                claudeDesktopStale = true
+                logger.warning("Claude Desktop token refresh failed; retaining last good snapshot")
+            }
+        case let .claudeCrossCheck(snapshot):
+            if let snapshot { crossCheckClaudeSource(cc: snapshot.history) }
         }
-
-        if let snapshot = snapshots.1 {
-            claudeHistory = snapshot.history
-            claudeDeepSeekHistory = snapshot.deepSeekHistory
-            Self.replaceBuckets(
-                in: &freshBuckets,
-                matching: { $0.platform == .claude && $0.client == .cli },
-                with: snapshot.buckets
-            )
-        } else {
-            logger.warning("Claude Code token refresh failed; retaining last good snapshot")
-        }
-
-        if let snapshot = snapshots.2 {
-            workBuddyHistory = snapshot.history
-            workbuddyDeepSeekHistory = snapshot.deepSeekHistory
-            Self.replaceBuckets(in: &freshBuckets, matching: { $0.platform == .workbuddy }, with: snapshot.buckets)
-        } else {
-            logger.warning("WorkBuddy token refresh failed; retaining last good snapshot")
-        }
-
-        if let snapshot = snapshots.3 {
-            claudeDesktopHistory = snapshot.history
-            desktopDeepSeekHistory = snapshot.deepSeekHistory
-            Self.replaceBuckets(
-                in: &freshBuckets,
-                matching: { $0.platform == .claude && $0.client == .desktop },
-                with: snapshot.buckets
-            )
-            claudeDesktopStale = !CCSwitchUsageClient.isCCSwitchRunning()
-        } else {
-            claudeDesktopStale = true
-            logger.warning("Claude Desktop token refresh failed; retaining last good snapshot")
-        }
-
         tokenBuckets = TokenUsageBucket.combining(freshBuckets)
-
-        if let snapshot = snapshots.4 {
-            crossCheckClaudeSource(cc: snapshot.history)
-        }
-
-        // DeepSeek 独立行 = 跨工具按模型名归集的汇总（稀疏，保持旧口径）。
         deepSeekHistory = Self.mergeSparse([
             codexDeepSeekHistory,
             claudeDeepSeekHistory,
             desktopDeepSeekHistory,
             workbuddyDeepSeekHistory
         ])
-        saveTokenSnapshotIfNeeded()
-        logger.info(
-            "sources codex=\(Self.todayTotal(self.tokenHistory)) claude=\(Self.todayTotal(self.claudeHistory)) desktop=\(Self.todayTotal(self.claudeDesktopHistory)) workbuddy=\(Self.todayTotal(self.workBuddyHistory)) deepseek=\(Self.todayTotal(self.deepSeekHistory)) desktopStale=\(self.claudeDesktopStale)"
-        )
-        refreshTokenDerivedState()
     }
 
     private static func replaceBuckets(
@@ -442,6 +518,8 @@ final class QuotaStore {
             desktopDeepSeekHistory,
             workbuddyDeepSeekHistory
         ])
+        lastTokenUpdatedAt = snapshot.tokenUpdatedAt
+            ?? (try? tokenSnapshotURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
         lastSavedTokenSnapshot = snapshot
     }
 
@@ -458,7 +536,8 @@ final class QuotaStore {
             desktopDeepSeekHistory: desktopDeepSeekHistory,
             workbuddyDeepSeekHistory: workbuddyDeepSeekHistory,
             tokenBuckets: tokenBuckets,
-            claudeDesktopStale: claudeDesktopStale
+            claudeDesktopStale: claudeDesktopStale,
+            tokenUpdatedAt: lastTokenUpdatedAt
         )
         guard snapshot != lastSavedTokenSnapshot,
               let data = try? JSONEncoder().encode(snapshot) else { return }

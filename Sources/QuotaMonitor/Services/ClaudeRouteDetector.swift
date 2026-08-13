@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 
 /// Claude（Code）当前走哪条模型路由。
-enum ClaudeRoute: Sendable, Equatable {
+enum ClaudeRoute: String, Codable, Sendable, Equatable {
     /// Anthropic 官方（settings 里没有指向 DeepSeek 的模型/网关）。
     case official
     /// 通过 cc-switch 切到 DeepSeek（model 含 deepseek，或 ANTHROPIC_BASE_URL 指向 api.deepseek.com）。

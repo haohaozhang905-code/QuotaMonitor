@@ -47,8 +47,10 @@ enum PanelTheme {
     static let surface = dynamic("#FFFFFF", "#20262F")
     static let surface2 = dynamic("#F3F3F5", "#272E38")
     static let surface3 = dynamic("#E8E8EC", "#323B47")
-    static let border = dynamic("#DADADD", "#353E49")
-    static let borderStrong = dynamic("#C9C9CD", "#485361")
+    // 边界只负责轻微分层；卡片和窗口主体主要依靠表面色差建立层级。
+    static let border = dynamic("#E4E4E7", "#2C333C")
+    static let borderStrong = dynamic("#D5D5DA", "#3A444F")
+    static let separator = dynamic("#E9E9EC", "#29313A")
     static let text = dynamic("#19191C", "#E8EBF0")
     static let text2 = dynamic("#696971", "#97A0AC")
     static let text3 = dynamic("#9A9AA2", "#7B8593")

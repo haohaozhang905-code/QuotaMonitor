@@ -18,6 +18,7 @@
 "menu.updatedAt" = "%@ 更新";
 "menu.notUpdated" = "尚未更新";
 "menu.statusLoading" = "正在读取本地数据";
+"menu.statusProgress" = "正在更新本地数据 %d/%d";
 "menu.statusConnectedNoQuota" = "已连接，额度尚未读取";
 "menu.statusUnavailable" = "尚未连接可用数据源";
 "menu.statusStale" = "刷新失败，显示上次数据";
@@ -40,6 +41,7 @@
 "panel.model" = "当前模型";
 "panel.syncingTitle" = "正在同步 Codex 数据";
 "panel.syncingDetail" = "正在读取本地路由、额度和 token 用量。";
+"panel.statusProgress" = "正在更新 %d/%d 个来源";
 "panel.noDataTitle" = "Codex 数据尚未就绪";
 "panel.noDataDetail" = "请确认 Codex 已登录，并在 macOS 弹出提示时允许访问本地 Codex 数据。";
 "panel.retry" = "重新尝试";
@@ -133,6 +135,11 @@
 "settings.launchAtLogin.detail" = "开机后自动显示额度状态";
 "settings.refreshRate.detail" = "更新额度和 Token 数据";
 "settings.language.detail" = "选择界面显示语言";
+"settings.dockIcon" = "Dock 图标";
+"settings.dockIcon.detail" = "选择主窗口打开和关闭时的 Dock 显示方式";
+"settings.dockIcon.smart" = "智能";
+"settings.dockIcon.always" = "始终";
+"settings.dockIcon.never" = "从不";
 "settings.notConnected" = "未连接";
 "settings.oauthConnected" = "官方 OAuth · 已连接";
 "settings.deepSeekConnected" = "DeepSeek 路由 · 已连接";
@@ -157,7 +164,7 @@
 "overview.balanceNoReset" = "余额制，无重置时间";
 "overview.estimateNote" = "按近 7 日均耗估算";
 "overview.noResetData" = "暂无重置时间";
-"overview.resetAfter" = "%@ 后重置";
+"overview.resetAfter" = "%@后重置";
 "overview.healthy" = "正常";
 "overview.low" = "偏低";
 "overview.critical" = "不足";

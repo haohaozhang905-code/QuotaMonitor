@@ -1,7 +1,7 @@
 import Foundation
 
 /// Codex 当前走哪条模型路由。
-enum CodexRoute: Sendable, Equatable {
+enum CodexRoute: String, Codable, Sendable, Equatable {
     /// ChatGPT 官方额度（Keychain 或旧 auth.json 里有 OpenAI access token）。
     case official
     /// cc-switch 切到 DeepSeek（auth.json 只有 OPENAI_API_KEY，config.toml 指向 api.deepseek.com）。

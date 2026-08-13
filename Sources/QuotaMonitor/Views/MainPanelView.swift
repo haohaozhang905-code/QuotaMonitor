@@ -3,6 +3,7 @@ import SwiftUI
 
 extension Notification.Name {
     static let quotaMonitorOpenSettings = Notification.Name("QuotaMonitor.openSettings")
+    static let quotaMonitorToggleZoom = Notification.Name("QuotaMonitor.toggleZoom")
 }
 
 // MARK: - 余额状态
@@ -44,6 +45,11 @@ enum BalanceState {
         case .normal, .unknown: false
         }
     }
+}
+
+enum MainPanelLayout {
+    static let sidebarWidth: CGFloat = 210
+    static let sidebarLeadingInset: CGFloat = 16
 }
 
 private enum DashboardPage: String, CaseIterable {
@@ -127,29 +133,35 @@ private enum TokenChartDimension: String, CaseIterable, Identifiable {
 struct MainPanelView: View {
     let store: QuotaStore
     @Bindable var language: LanguageSettings
+    @Bindable var dockIconSettings: DockIconSettings
     @State private var loginItem = LoginItemManager()
     @State private var selectedPage: DashboardPage = .overview
     @State private var tokenPeriod: TokenPeriod = .sevenDays
     @State private var tokenChartDimension: TokenChartDimension = .platform
     @State private var hoveredPage: DashboardPage?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(spacing: 0) {
-            titlebar
-            if shouldShowEmptyState {
-                emptyState
-            } else {
-                panelBody
+        HStack(spacing: 0) {
+            sidebar
+            VStack(spacing: 0) {
+                titlebar
+                if shouldShowEmptyState {
+                    emptyState
+                } else {
+                    panelBody
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(PanelTheme.background)
         .frame(minWidth: 820, minHeight: 540)
-        // 统一使用系统 SF Mono 等宽设计，让整个仪表盘保持稳定的节奏与字宽。
-        .fontDesign(.monospaced)
         .ignoresSafeArea(.container, edges: .top)
         .onAppear { loginItem.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: .quotaMonitorOpenSettings)) { _ in
-            selectedPage = .settings
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                selectedPage = .settings
+            }
         }
     }
 
@@ -158,7 +170,8 @@ struct MainPanelView: View {
             Text(QuotaMonitorIdentity.displayName)
                 .font(.system(size: 12.5, weight: .semibold))
                 .foregroundStyle(PanelTheme.text2)
-                .offset(y: -2)
+                // 标题栏属于右侧内容列，但标题视觉中心要落在整个窗口中心。
+                .offset(x: -MainPanelLayout.sidebarWidth / 2, y: -2)
             HStack {
                 Spacer()
                 TitlebarStatusView(store: store, language: language)
@@ -169,32 +182,32 @@ struct MainPanelView: View {
         .background(PanelTheme.background.opacity(0.96))
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(PanelTheme.border)
-                .frame(height: 1)
+                .fill(PanelTheme.separator)
+                .frame(height: 0.5)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            NotificationCenter.default.post(name: .quotaMonitorToggleZoom, object: nil)
         }
     }
 
     private var panelBody: some View {
-        HStack(spacing: 0) {
-            sidebar
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        if let message = store.errorMessageKey.map({ language.text($0) }) {
-                            errorBanner(message: message)
-                        }
-                        pageContent
-                    }
-                    .padding(.horizontal, 22)
-                    .padding(.top, 18)
-                    .padding(.bottom, 24)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if let message = store.errorMessageKey.map({ language.text($0) }) {
+                    errorBanner(message: message)
                 }
-                // 保留滚动能力，但不显示系统滚动条；主面板的内容边界由卡片和留白表达。
-                .scrollIndicators(.never)
-                .id(selectedPage)
+                pageContent
+                    .id(selectedPage)
+                    .transition(pageTransition)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(.horizontal, 22)
+            .padding(.top, 18)
+            .padding(.bottom, 24)
         }
+        // 保留滚动能力，但不显示系统滚动条；主面板的内容边界由卡片和留白表达。
+        .scrollIndicators(.never)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var shouldShowEmptyState: Bool {
@@ -204,30 +217,36 @@ struct MainPanelView: View {
         }
     }
 
+    private var pageTransition: AnyTransition {
+        reduceMotion ? .identity : .opacity.combined(with: .offset(x: 5))
+    }
+
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 9) {
+            Color.clear
+                .frame(height: 38)
+                .accessibilityHidden(true)
+
+            HStack(spacing: 10) {
                 Image(nsImage: MenuBarQuotaGlyph.image)
                     .renderingMode(.original)
                     .resizable()
-                    .frame(width: 19, height: 19)
-                    .padding(4.5)
-                    .background(PanelTheme.deepseekSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .frame(width: 22, height: 22)
+                    .padding(5)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 Text(QuotaMonitorIdentity.displayName)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 15.5, weight: .semibold))
                     .foregroundStyle(PanelTheme.text)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 18)
+            .padding(.horizontal, MainPanelLayout.sidebarLeadingInset)
+            .padding(.top, 10)
             .padding(.bottom, 14)
 
             VStack(spacing: 3) {
                 ForEach(DashboardPage.allCases, id: \.self) { page in
                     Button {
                         guard selectedPage != page else { return }
-                        var transaction = Transaction()
-                        transaction.animation = nil
-                        withTransaction(transaction) {
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
                             selectedPage = page
                         }
                     } label: {
@@ -260,7 +279,7 @@ struct MainPanelView: View {
 
             Spacer(minLength: 0)
         }
-        .frame(width: 198)
+        .frame(width: MainPanelLayout.sidebarWidth)
         .background(PanelTheme.sidebar)
     }
 
@@ -366,7 +385,8 @@ struct MainPanelView: View {
         guard let today = store.todayTokenUsage?.total,
               let yesterday = store.yesterdayTokenUsage?.total,
               let percent = DailyTokenUsage.trendPercent(today: today, yesterday: yesterday) else { return nil }
-        return String(format: language.text("overview.delta"), percent >= 0 ? "↑" : "↓", abs(percent))
+        let key = percent >= 0 ? "menu.vsYesterdayUp" : "menu.vsYesterdayDown"
+        return language.text(key, String(format: "%.1f", abs(percent)))
     }
 
     private var relativeDeltaColor: Color {
@@ -553,14 +573,14 @@ struct MainPanelView: View {
                     .padding(.top, 10)
                     if index == 0 {
                         Rectangle()
-                            .fill(PanelTheme.border)
+                            .fill(PanelTheme.separator)
                             .frame(width: 1, height: 57)
                             .padding(.horizontal, 13)
                     }
                 }
             }
             .overlay(alignment: .top) {
-                Rectangle().fill(PanelTheme.border).frame(height: 1).padding(.top, 0)
+                Rectangle().fill(PanelTheme.separator).frame(height: 0.5).padding(.top, 0)
             }
         }
         .frame(maxWidth: .infinity)
@@ -613,7 +633,8 @@ struct MainPanelView: View {
             Sparkline(
                 values: overviewRows.map { Double($0.total) },
                 labels: overviewRows.map(\.label),
-                color: PanelTheme.codex
+                color: PanelTheme.codex,
+                valueLabel: language.text("panel.totalTokens")
             )
                 .frame(height: 154)
                 .padding(.top, 2)
@@ -753,7 +774,7 @@ struct MainPanelView: View {
             metricCell(language.text("tokens.topModel"), dashboard.models.first?.model ?? "--", large: false)
         }
         .background(PanelTheme.surface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(PanelTheme.border, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(PanelTheme.border, lineWidth: 0.5))
     }
 
     private func metricCell(_ label: String, _ value: String, large: Bool) -> some View {
@@ -772,7 +793,7 @@ struct MainPanelView: View {
         .padding(.horizontal, 15)
         .padding(.vertical, 14)
         .overlay(alignment: .trailing) {
-            Rectangle().fill(PanelTheme.border).frame(width: 1, height: 38)
+            Rectangle().fill(PanelTheme.separator).frame(width: 0.5, height: 38)
         }
     }
 
@@ -1054,7 +1075,24 @@ struct MainPanelView: View {
                         ))
                     }
                     settingsRow(title: language.text("settings.language"), detail: language.text("settings.language.detail")) {
-                        CustomSegmented(selection: $language.language)
+                        PanelSegmentedControl(
+                            options: AppLanguage.allCases,
+                            selection: $language.language
+                        ) { value in
+                            value == .simplifiedChinese ? "简体中文" : "English"
+                        }
+                    }
+                    settingsRow(title: language.text("settings.dockIcon"), detail: language.text("settings.dockIcon.detail")) {
+                        PanelSegmentedControl(
+                            options: DockIconMode.allCases,
+                            selection: $dockIconSettings.mode
+                        ) { mode in
+                            switch mode {
+                            case .smart: language.text("settings.dockIcon.smart")
+                            case .always: language.text("settings.dockIcon.always")
+                            case .never: language.text("settings.dockIcon.never")
+                            }
+                        }
                     }
                 }
             }
@@ -1067,7 +1105,7 @@ struct MainPanelView: View {
             content()
         }
         .background(PanelTheme.surface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(PanelTheme.border, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(PanelTheme.border, lineWidth: 0.5))
         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
     }
 
@@ -1088,7 +1126,7 @@ struct MainPanelView: View {
         .padding(.vertical, 8)
         .frame(minHeight: 48)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(PanelTheme.border).frame(height: 1).padding(.horizontal, 15)
+            Rectangle().fill(PanelTheme.separator).frame(height: 0.5).padding(.horizontal, 15)
         }
     }
 
@@ -1120,35 +1158,18 @@ struct MainPanelView: View {
 
     private func chartAxisIndices(for rows: [TokenChartRow]) -> [Int] {
         guard !rows.isEmpty else { return [] }
-        guard rows.count > 5 else { return Array(rows.indices) }
+        guard rows.count > 7 else { return Array(rows.indices) }
         let last = rows.count - 1
         return [0, last / 4, last / 2, last * 3 / 4, last]
     }
 
     private var tokenChartDimensionPicker: some View {
-        HStack(spacing: 2) {
-            ForEach(TokenChartDimension.allCases) { dimension in
-                Button {
-                    guard tokenChartDimension != dimension else { return }
-                    var transaction = Transaction()
-                    transaction.animation = nil
-                    withTransaction(transaction) {
-                        tokenChartDimension = dimension
-                    }
-                } label: {
-                    Text(language.text(dimension.localizationKey))
-                        .font(.system(size: 9.5, weight: tokenChartDimension == dimension ? .semibold : .regular))
-                        .foregroundStyle(tokenChartDimension == dimension ? PanelTheme.text : PanelTheme.text2)
-                        .padding(.horizontal, 7)
-                        .frame(height: 20)
-                        .background(tokenChartDimension == dimension ? PanelTheme.surface3 : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            }
+        PanelSegmentedControl(
+            options: TokenChartDimension.allCases,
+            selection: $tokenChartDimension
+        ) { dimension in
+            language.text(dimension.localizationKey)
         }
-        .padding(2)
-        .background(PanelTheme.surface2, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(PanelTheme.border, lineWidth: 1))
     }
 
     private func tokenChartSnapshot() -> TokenChartSnapshot {
@@ -1378,37 +1399,14 @@ struct MainPanelView: View {
     }
 
     private var tokenPeriodPicker: some View {
-        HStack(spacing: 2) {
-            ForEach(TokenPeriod.allCases) { period in
-                let isAvailable = tokenPeriodIsAvailable(period)
-                Button {
-                    guard isAvailable else { return }
-                    guard tokenPeriod != period else { return }
-                    var transaction = Transaction()
-                    transaction.animation = nil
-                    withTransaction(transaction) {
-                        tokenPeriod = period
-                    }
-                } label: {
-                    Text(language.text(period.localizationKey))
-                        .font(.system(size: 11, weight: tokenPeriod == period ? .semibold : .regular))
-                        .fontDesign(.monospaced)
-                        .foregroundStyle(
-                            isAvailable
-                                ? (tokenPeriod == period ? PanelTheme.text : PanelTheme.text2)
-                                : PanelTheme.text3
-                        )
-                        .frame(width: 58, height: 22)
-                        .background(tokenPeriod == period ? PanelTheme.surface : .clear, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(!isAvailable)
-                .help(isAvailable ? "" : language.text("panel.insufficientHistory"))
-            }
+        PanelSegmentedControl(
+            options: TokenPeriod.allCases,
+            selection: $tokenPeriod,
+            isEnabled: tokenPeriodIsAvailable,
+            disabledHelp: { _ in language.text("panel.insufficientHistory") }
+        ) { period in
+            language.text(period.localizationKey)
         }
-        .padding(2)
-        .background(PanelTheme.surface2, in: Capsule())
-        .overlay(Capsule().stroke(PanelTheme.border, lineWidth: 1))
     }
 
     private func tokenPeriodIsAvailable(_ period: TokenPeriod) -> Bool {
@@ -1429,31 +1427,88 @@ struct MainPanelView: View {
     }
 
     private var emptyState: some View {
-        HStack(spacing: 0) {
-            sidebar
-            VStack(spacing: 12) {
-                Image(systemName: store.isRefreshing ? "arrow.triangle.2.circlepath" : "bolt.shield")
-                    .font(.system(size: 30, weight: .medium))
-                    .foregroundStyle(PanelTheme.codex)
-                Text(store.isRefreshing ? language.text("panel.syncingTitle") : language.text("panel.noDataTitle"))
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(PanelTheme.text)
-                Text(store.isRefreshing ? language.text("panel.syncingDetail") : language.text("panel.noDataDetail"))
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(PanelTheme.text2)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 430)
-                if !store.isRefreshing {
+        Group {
+            if store.isRefreshing || store.isRefreshingTokenSources {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(language.text("panel.syncingTitle"))
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundStyle(PanelTheme.text)
+                            Text(loadingProgressText)
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(PanelTheme.text2)
+                        }
+                        Spacer()
+                        if let progress = store.localTokenRefreshProgress {
+                            Text("\(Int(progress.fraction * 100))%")
+                                .font(.system(size: 12, weight: .semibold))
+                                .fontDesign(.monospaced)
+                                .foregroundStyle(PanelTheme.codex)
+                        }
+                    }
+                    ProgressView(value: store.localTokenRefreshProgress?.fraction ?? 0.05)
+                        .tint(PanelTheme.codex)
+
+                    HStack(spacing: 12) {
+                        loadingPlaceholder(height: 92)
+                        loadingPlaceholder(height: 92)
+                        loadingPlaceholder(height: 92)
+                    }
+                    loadingPlaceholder(height: 190)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 22)
+                .padding(.top, 22)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(PanelTheme.background)
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "bolt.shield")
+                        .font(.system(size: 30, weight: .medium))
+                        .foregroundStyle(PanelTheme.codex)
+                    Text(language.text("panel.noDataTitle"))
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(PanelTheme.text)
+                    Text(language.text("panel.noDataDetail"))
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(PanelTheme.text2)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 430)
                     Button(language.text("panel.retry")) {
-                        Task { await store.refresh() }
+                        Task { await store.refreshAll() }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(PanelTheme.codex)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(PanelTheme.background)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(PanelTheme.background)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var loadingProgressText: String {
+        guard let progress = store.localTokenRefreshProgress else {
+            return language.text("panel.syncingDetail")
+        }
+        return language.text(
+            "panel.statusProgress",
+            progress.completedSources,
+            progress.totalSources
+        )
+    }
+
+    private func loadingPlaceholder(height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 11, style: .continuous)
+            .fill(PanelTheme.surface)
+            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height)
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .stroke(PanelTheme.border, lineWidth: 0.5)
+            )
+            .opacity(reduceMotion ? 0.72 : 0.88)
     }
 
     private func errorBanner(message: String) -> some View {
@@ -1581,7 +1636,7 @@ struct MainPanelView: View {
         .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .topLeading)
         .background(PanelTheme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(PanelTheme.border, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(PanelTheme.border, lineWidth: 0.5))
     }
 }
 
@@ -1591,59 +1646,140 @@ struct TitlebarStatusView: View {
     let store: QuotaStore
     let language: LanguageSettings
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+
+    private var isUpdating: Bool {
+        store.isRefreshing || store.isRefreshingTokenSources
+    }
+
     var body: some View {
         HStack(spacing: 5) {
             Circle()
-                .fill(PanelTheme.ok)
+                .fill(statusColor)
                 .frame(width: 7, height: 7)
+                .opacity(isUpdating && pulse ? 0.4 : 1)
             Text(statusText)
                 .font(.system(size: 11, weight: .medium))
-                .fontDesign(.monospaced)
                 .foregroundStyle(PanelTheme.text2)
                 .lineLimit(1)
         }
         .frame(height: 24)
         .padding(.horizontal, 6)
+        .onAppear { updatePulse() }
+        .onChange(of: isUpdating) { _, _ in updatePulse() }
+    }
+
+    private var statusColor: Color {
+        if isUpdating { return PanelTheme.codex }
+        return switch store.presentationSnapshot.availability {
+        case .ready: PanelTheme.ok
+        case .stale, .connectedOnly: PanelTheme.warn
+        case .loading: PanelTheme.codex
+        case .unavailable, .error: PanelTheme.danger
+        }
     }
 
     private var statusText: String {
-        guard let date = store.lastUpdated else {
+        if let progress = store.localTokenRefreshProgress {
+            return language.text(
+                "panel.statusProgress",
+                progress.completedSources,
+                progress.totalSources
+            )
+        }
+        if isUpdating {
+            return language.text("panel.syncingTitle")
+        }
+        guard let date = store.latestUpdatedAt else {
             return language.text("panel.updated", "--:--")
         }
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return language.text("panel.updated", formatter.string(from: date))
     }
+
+    private func updatePulse() {
+        pulse = false
+        guard isUpdating, !reduceMotion else { return }
+        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+            pulse = true
+        }
+    }
 }
 
 // MARK: - 控件
 
-private struct CustomSegmented: View {
-    @Binding var selection: AppLanguage
+private enum PanelSegmentedMetrics {
+    static let segmentWidth: CGFloat = 60
+    static let height: CGFloat = 26
+    static let cornerRadius: CGFloat = 6
+}
+
+private struct PanelSegmentedControl<Option: Hashable>: View {
+
+    let options: [Option]
+    @Binding var selection: Option
+    let isEnabled: (Option) -> Bool
+    let disabledHelp: ((Option) -> String)?
+    let label: (Option) -> String
+
+    @Namespace private var selectionIndicator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(
+        options: [Option],
+        selection: Binding<Option>,
+        isEnabled: @escaping (Option) -> Bool = { _ in true },
+        disabledHelp: ((Option) -> String)? = nil,
+        label: @escaping (Option) -> String
+    ) {
+        self.options = options
+        _selection = selection
+        self.isEnabled = isEnabled
+        self.disabledHelp = disabledHelp
+        self.label = label
+    }
 
     var body: some View {
         HStack(spacing: 2) {
-            segment(language: .simplifiedChinese, label: "简体中文")
-            segment(language: .english, label: "English")
+            ForEach(options, id: \.self) { option in
+                let enabled = isEnabled(option)
+                Button {
+                    guard enabled, selection != option else { return }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.14)) {
+                        selection = option
+                    }
+                } label: {
+                    ZStack {
+                        if selection == option {
+                            RoundedRectangle(cornerRadius: PanelSegmentedMetrics.cornerRadius, style: .continuous)
+                                .fill(PanelTheme.surface)
+                                .frame(width: PanelSegmentedMetrics.segmentWidth, height: PanelSegmentedMetrics.height)
+                                .shadow(color: PanelTheme.shadowSmall, radius: 2, y: 1)
+                                .matchedGeometryEffect(id: "selection", in: selectionIndicator)
+                        }
+                        Text(label(option))
+                            .font(.system(size: 11, weight: selection == option ? .semibold : .regular))
+                            .foregroundStyle(
+                                enabled
+                                    ? (selection == option ? PanelTheme.text : PanelTheme.text2)
+                                    : PanelTheme.text3
+                            )
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .frame(width: PanelSegmentedMetrics.segmentWidth, height: PanelSegmentedMetrics.height)
+                    .contentShape(RoundedRectangle(cornerRadius: PanelSegmentedMetrics.cornerRadius, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(!enabled)
+                .help(enabled ? "" : (disabledHelp?(option) ?? ""))
+            }
         }
-        .padding(3)
-        .background(PanelTheme.surface3)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    private func segment(language value: AppLanguage, label: String) -> some View {
-        Text(label)
-            .font(.system(size: 11.5, weight: .semibold))
-            .foregroundStyle(selection == value ? PanelTheme.text : PanelTheme.text2)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 4)
-            .background(
-                selection == value ? PanelTheme.surface : Color.clear,
-                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-            )
-            .shadow(color: selection == value ? PanelTheme.shadowSmall : .clear, radius: 2, y: 1)
-            .contentShape(Rectangle())
-            .onTapGesture { selection = value }
+        .padding(2)
+        .background(PanelTheme.surface2, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(PanelTheme.border, lineWidth: 0.5))
     }
 }
 
@@ -1717,7 +1853,7 @@ private struct ChartTooltip: View {
             }
             if !items.isEmpty {
                 Rectangle()
-                    .fill(PanelTheme.border)
+                    .fill(PanelTheme.separator)
                     .frame(height: 1)
                 VStack(spacing: 4) {
                     ForEach(items) { item in
@@ -1753,7 +1889,7 @@ private struct ChartTooltip: View {
             }
         }
         .background(PanelTheme.surface3, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(PanelTheme.borderStrong, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(PanelTheme.borderStrong, lineWidth: 0.75))
         .shadow(color: PanelTheme.shadow, radius: 10, y: 4)
         .allowsHitTesting(false)
     }
@@ -1765,6 +1901,7 @@ private struct Sparkline: View {
     let values: [Double]
     let labels: [String]
     let color: Color
+    let valueLabel: String
     @State private var hoveredIndex: Int?
     @State private var tooltipSize = CGSize(width: 128, height: 46)
 
@@ -1792,32 +1929,42 @@ private struct Sparkline: View {
                         path.move(to: CGPoint(x: leadingInset, y: y))
                         path.addLine(to: CGPoint(x: leadingInset + plotSize.width, y: y))
                     }
-                    .stroke(PanelTheme.grid, lineWidth: 1)
+                    .stroke(PanelTheme.grid, style: StrokeStyle(lineWidth: 1, dash: index == 3 ? [] : [4, 4]))
                     Text(QuotaFormatters.tokensCN(tickValue))
-                        .font(.system(size: 8))
+                        .font(.system(size: 8.5))
                         .fontDesign(.monospaced)
                         .foregroundStyle(PanelTheme.text3)
                         .lineLimit(1)
                         .frame(width: leadingInset - 7, alignment: .trailing)
                         .position(x: (leadingInset - 7) / 2, y: y)
                 }
+                if let hoveredIndex, points.indices.contains(hoveredIndex) {
+                    let point = points[hoveredIndex]
+                    let slotWidth = plotSize.width / CGFloat(max(values.count, 1))
+                    let highlightX = max(leadingInset, point.x - slotWidth / 2)
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(PanelTheme.text.opacity(0.045))
+                        .frame(width: min(slotWidth, leadingInset + plotSize.width - highlightX), height: plotSize.height)
+                        .position(x: highlightX + min(slotWidth, leadingInset + plotSize.width - highlightX) / 2, y: topInset + plotSize.height / 2)
+                }
                 if points.count > 1 {
                     smoothPath(points, closeToBottom: topInset + plotSize.height)
                         .fill(color.opacity(0.12))
                     smoothPath(points)
                         .stroke(color, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                    ForEach(Array(points.enumerated()), id: \.offset) { _, point in
+                    ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                        let emphasized = hoveredIndex == nil || hoveredIndex == index
                         Circle()
                             .fill(PanelTheme.surface)
-                            .overlay(Circle().stroke(color, lineWidth: 2))
-                            .frame(width: 7, height: 7)
+                            .overlay(Circle().stroke(color.opacity(emphasized ? 1 : 0.42), lineWidth: hoveredIndex == index ? 2.5 : 2))
+                            .frame(width: hoveredIndex == index ? 9 : 7, height: hoveredIndex == index ? 9 : 7)
                             .position(point)
                     }
                 }
                 ForEach(axisIndices, id: \.self) { index in
                     if labels.indices.contains(index), points.indices.contains(index) {
                         Text(labels[index])
-                            .font(.system(size: 8))
+                            .font(.system(size: 8.5))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text3)
                             .fixedSize()
@@ -1832,7 +1979,7 @@ private struct Sparkline: View {
                     ChartTooltip(
                         title: labels[hoveredIndex],
                         value: QuotaFormatters.tokensCN(Int(values[hoveredIndex])),
-                        valueLabel: "Token"
+                        valueLabel: valueLabel
                     )
                     .position(
                         x: ChartTooltipPlacement.x(
@@ -1882,7 +2029,7 @@ private struct Sparkline: View {
 
     private var axisIndices: [Int] {
         guard !values.isEmpty else { return [] }
-        guard values.count > 4 else { return Array(values.indices) }
+        guard values.count > 7 else { return Array(values.indices) }
         let last = values.count - 1
         return [0, last / 3, last * 2 / 3, last]
     }
@@ -2005,6 +2152,7 @@ private struct StackedBarChart: View {
                     Text("0")
                 }
                 .font(.system(size: 8.5))
+                .fontDesign(.monospaced)
                 .foregroundStyle(PanelTheme.text3)
                 .frame(width: 32, height: plotHeight, alignment: .topTrailing)
                 .position(x: 16, y: plotTopInset + plotHeight / 2)

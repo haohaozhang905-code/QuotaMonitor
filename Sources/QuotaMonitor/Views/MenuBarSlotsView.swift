@@ -14,10 +14,14 @@ struct MenuBarSlotsView: View {
     let claudeRemaining: Double?
     let balanceAmount: Double?
     let balanceCurrency: String?
+    var isLoading = false
+    var loadingFrame = 0
 
     var body: some View {
         HStack(spacing: 7) {
-            if codexRoute == .deepseek, claudeRoute == .deepseek {
+            if isLoading {
+                MenuBarLoadingGlyph(phase: loadingFrame)
+            } else if codexRoute == .deepseek, claudeRoute == .deepseek {
                 slot(icon: .deepSeek, value: balanceText, routed: false)
             } else {
                 if codexRoute != .unknown {

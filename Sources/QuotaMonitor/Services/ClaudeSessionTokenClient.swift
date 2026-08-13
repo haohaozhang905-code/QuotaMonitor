@@ -17,6 +17,7 @@ actor ClaudeSessionTokenClient {
         let totalsByDay: [String: TokenTotals]
         let deepSeekByDay: [String: TokenTotals]
         let modelByDay: [String: TokenTotals]
+        let processedByteCount: Int?
 
         func matches(mtime candidateMtime: Date, fileSize candidateSize: Int) -> Bool {
             fileSize == candidateSize
@@ -87,12 +88,29 @@ actor ClaudeSessionTokenClient {
                 continue
             }
             let modelByDay: [String: TokenTotals]
-            if let cached = cache[url], cached.matches(mtime: mtime, fileSize: fileSize) {
+            let cached = cache[url]
+            if let cached, cached.matches(mtime: mtime, fileSize: fileSize) {
                 newCache[url] = cached
                 modelByDay = cached.modelByDay
             } else {
-                guard let parsed = parseFile(url, fallbackDay: Self.dayKey(for: mtime)) else {
+                let canContinue = cached?.processedByteCount == cached?.fileSize
+                    && fileSize > (cached?.fileSize ?? 0)
+                    && JSONLReader.isLineBoundary(at: cached?.fileSize ?? 0, in: url)
+                let startingAt = canContinue ? UInt64(cached?.fileSize ?? 0) : 0
+                let seed = canContinue ? cached : nil
+                guard let parsed = parseFile(
+                    url,
+                    fallbackDay: Self.dayKey(for: mtime),
+                    startingAt: startingAt,
+                    seed: seed
+                ) else {
                     guard let cached = cache[url] else { continue }
+                    newCache[url] = cached
+                    modelByDay = cached.modelByDay
+                    for bucket in Self.makeBuckets(from: modelByDay) { buckets.append(bucket) }
+                    continue
+                }
+                if parsed.modelByDay.isEmpty, let cached {
                     newCache[url] = cached
                     modelByDay = cached.modelByDay
                     for bucket in Self.makeBuckets(from: modelByDay) { buckets.append(bucket) }
@@ -103,7 +121,8 @@ actor ClaudeSessionTokenClient {
                     fileSize: fileSize,
                     totalsByDay: parsed.totalsByDay,
                     deepSeekByDay: parsed.deepSeekByDay,
-                    modelByDay: parsed.modelByDay
+                    modelByDay: parsed.modelByDay,
+                    processedByteCount: fileSize
                 )
                 newCache[url] = entry
                 modelByDay = entry.modelByDay
@@ -159,12 +178,17 @@ actor ClaudeSessionTokenClient {
         try? data.write(to: persistentCacheURL, options: .atomic)
     }
 
-    private func parseFile(_ url: URL, fallbackDay: String) -> (totalsByDay: [String: TokenTotals], deepSeekByDay: [String: TokenTotals], modelByDay: [String: TokenTotals])? {
-        var totalsByDay: [String: TokenTotals] = [:]
-        var deepSeekByDay: [String: TokenTotals] = [:]
-        var modelByDay: [String: TokenTotals] = [:]
+    private func parseFile(
+        _ url: URL,
+        fallbackDay: String,
+        startingAt: UInt64,
+        seed: FileCache?
+    ) -> (totalsByDay: [String: TokenTotals], deepSeekByDay: [String: TokenTotals], modelByDay: [String: TokenTotals])? {
+        var totalsByDay = seed?.totalsByDay ?? [:]
+        var deepSeekByDay = seed?.deepSeekByDay ?? [:]
+        var modelByDay = seed?.modelByDay ?? [:]
 
-        let didRead = JSONLReader.forEachLine(at: url) { data in
+        let didRead = JSONLReader.forEachLine(at: url, startingAt: startingAt) { data in
             autoreleasepool {
                 guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let usage = Self.extractUsage(obj) else { return }
@@ -181,7 +205,7 @@ actor ClaudeSessionTokenClient {
             }
         }
 
-        guard didRead, !totalsByDay.isEmpty else { return nil }
+        guard didRead else { return nil }
         return (totalsByDay, deepSeekByDay, modelByDay)
     }
 

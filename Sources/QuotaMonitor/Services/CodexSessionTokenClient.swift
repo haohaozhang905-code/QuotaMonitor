@@ -16,6 +16,10 @@ actor CodexSessionTokenClient {
         let totalsByDay: [String: TokenTotals]
         let deepSeekByDay: [String: TokenTotals]
         let modelByDay: [String: TokenTotals]
+        let processedByteCount: Int?
+        let lastTotals: TokenTotals?
+        let lastDayKey: String?
+        let currentModel: String?
 
         func matches(mtime candidateMtime: Date, fileSize candidateSize: Int) -> Bool {
             fileSize == candidateSize
@@ -92,15 +96,32 @@ actor CodexSessionTokenClient {
                     continue
                 }
                 let parsed: [String: TokenTotals]
-                if let cached = cache[url], cached.matches(mtime: mtime, fileSize: fileSize) {
+                let cached = cache[url]
+                if let cached, cached.matches(mtime: mtime, fileSize: fileSize) {
                     newCache[url] = cached
                     parsed = cached.modelByDay
                 } else {
-                    guard let result = parseFile(url, fallbackDay: Self.dayComponents(from: url)) else {
+                    let canContinue = cached?.processedByteCount == cached?.fileSize
+                        && fileSize > (cached?.fileSize ?? 0)
+                        && JSONLReader.isLineBoundary(at: cached?.fileSize ?? 0, in: url)
+                    let startingAt = canContinue ? UInt64(cached?.fileSize ?? 0) : 0
+                    let seed = canContinue ? cached : nil
+                    guard let result = parseFile(
+                        url,
+                        fallbackDay: Self.dayComponents(from: url),
+                        startingAt: startingAt,
+                        seed: seed
+                    ) else {
                         // 活跃日志可能在写入边界暂时无法解析；保留上一份文件汇总。
                         guard let cached = cache[url] else { continue }
                         newCache[url] = cached
                         buckets.append(contentsOf: Self.makeBuckets(from: cached.modelByDay))
+                        continue
+                    }
+                    if result.modelByDay.isEmpty, let cached {
+                        newCache[url] = cached
+                        parsed = cached.modelByDay
+                        buckets.append(contentsOf: Self.makeBuckets(from: parsed))
                         continue
                     }
                     let entry = CachedUsage(
@@ -108,7 +129,11 @@ actor CodexSessionTokenClient {
                         fileSize: fileSize,
                         totalsByDay: result.totalsByDay,
                         deepSeekByDay: result.deepSeekByDay,
-                        modelByDay: result.modelByDay
+                        modelByDay: result.modelByDay,
+                        processedByteCount: fileSize,
+                        lastTotals: result.lastTotals,
+                        lastDayKey: result.lastDayKey,
+                        currentModel: result.currentModel
                     )
                     newCache[url] = entry
                     parsed = entry.modelByDay
@@ -167,21 +192,32 @@ actor CodexSessionTokenClient {
         try? data.write(to: persistentCacheURL, options: .atomic)
     }
 
-    /// 逐行取累计量差值得到单次请求增量，按行 timestamp 本地日归日、按行模型归 DeepSeek。
+    private struct ParsedFile {
+        let totalsByDay: [String: TokenTotals]
+        let deepSeekByDay: [String: TokenTotals]
+        let modelByDay: [String: TokenTotals]
+        let lastTotals: TokenTotals?
+        let lastDayKey: String?
+        let currentModel: String?
+    }
+
+    /// 逐行取累计量差值得到单次请求增量。活跃日志只从上次字节游标继续读取。
     private func parseFile(
         _ url: URL,
-        fallbackDay: Date?
-    ) -> (totalsByDay: [String: TokenTotals], deepSeekByDay: [String: TokenTotals], modelByDay: [String: TokenTotals])? {
-        var lastTotals: TokenTotals?
-        var lastDayKey: String?
-        // 模型出现在 payload.state.model（状态行），需跨行跟踪当前生效模型。
-        var currentModel: String?
+        fallbackDay: Date?,
+        startingAt: UInt64,
+        seed: CachedUsage?
+    ) -> ParsedFile? {
+        var lastTotals = seed?.lastTotals
+        var lastDayKey = seed?.lastDayKey
+        // 模型出现在 payload.state.model（状态行），增量读取时延续上次模型上下文。
+        var currentModel = seed?.currentModel
         let fallbackDayKey = fallbackDay.map { DailyTokenUsage.dayKey(for: $0) }
-        var totalsByDay: [String: TokenTotals] = [:]
-        var deepSeekByDay: [String: TokenTotals] = [:]
-        var modelByDay: [String: TokenTotals] = [:]
+        var totalsByDay = seed?.totalsByDay ?? [:]
+        var deepSeekByDay = seed?.deepSeekByDay ?? [:]
+        var modelByDay = seed?.modelByDay ?? [:]
 
-        let didRead = JSONLReader.forEachLine(at: url) { data in
+        let didRead = JSONLReader.forEachLine(at: url, startingAt: startingAt) { data in
             autoreleasepool {
                 guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
                 if let model = Self.extractModel(obj) {
@@ -221,8 +257,15 @@ actor CodexSessionTokenClient {
             }
         }
 
-        guard didRead, !totalsByDay.isEmpty else { return nil }
-        return (totalsByDay, deepSeekByDay, modelByDay)
+        guard didRead else { return nil }
+        return ParsedFile(
+            totalsByDay: totalsByDay,
+            deepSeekByDay: deepSeekByDay,
+            modelByDay: modelByDay,
+            lastTotals: lastTotals,
+            lastDayKey: lastDayKey,
+            currentModel: currentModel
+        )
     }
 
     private static func extractModel(_ obj: [String: Any]) -> String? {

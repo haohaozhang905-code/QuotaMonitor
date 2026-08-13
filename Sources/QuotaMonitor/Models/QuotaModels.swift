@@ -21,7 +21,7 @@ struct UsageResponse: Decodable, Sendable {
     let providers: [ProviderUsage]
 }
 
-struct ProviderUsage: Decodable, Identifiable, Sendable {
+struct ProviderUsage: Codable, Equatable, Identifiable, Sendable {
     let providerId: String
     let displayName: String
     let plan: String?
@@ -90,7 +90,7 @@ struct ProviderUsage: Decodable, Identifiable, Sendable {
 
 }
 
-struct UsageLine: Decodable, Identifiable, Sendable {
+struct UsageLine: Codable, Equatable, Identifiable, Sendable {
     let type: String
     let label: String
     let used: Double?
