@@ -75,6 +75,28 @@ struct QuotaModelsTests {
         #expect(snapshot.topModels().last?.key == .otherModels)
     }
 
+    @Test func dashboardBreakdownsUseFourPlusOtherForPlatformsAndModels() {
+        let now = Date(timeIntervalSince1970: 1_786_400_000)
+        let platforms: [TokenPlatform] = [.codex, .claude, .workbuddy, .kimi]
+        var buckets = platforms.enumerated().map { index, platform in
+            Self.bucket(day: now, platform: platform, client: .desktop, model: "model-\(index)", total: 100 - index * 10)
+        }
+        buckets.append(Self.bucket(day: now, platform: .codex, client: .cli, model: "model-4", total: 50))
+        buckets.append(Self.bucket(day: now, platform: .codex, client: .plugin, model: "model-5", total: 40))
+
+        let dashboard = QuotaPresentationSnapshot.makeTokenDashboard(
+            period: .all,
+            totalHistory: [],
+            buckets: buckets,
+            now: now
+        )
+
+        #expect(dashboard.platform.count == 5)
+        #expect(dashboard.platform.last?.key == .otherPlatforms)
+        #expect(dashboard.models.count == 5)
+        #expect(dashboard.models.last?.key == .otherModels)
+    }
+
     @Test func presentationSnapshotDistinguishesConnectedOnlyFromUnavailable() {
         let connected = QuotaPresentationSnapshot.make(
             providers: [], updatedAt: nil, errorMessageKey: nil, isRefreshing: false,

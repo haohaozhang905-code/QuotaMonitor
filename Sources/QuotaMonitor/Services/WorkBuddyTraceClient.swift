@@ -1,6 +1,6 @@
 import Foundation
 
-/// 从 WorkBuddy 本地 trace 文件解析按天 token 用量。
+/// 从 WorkBuddy 本地 trace 文件解析 token 用量；历史总量按天汇总，模型桶保留到小时。
 ///
 /// 数据来源：`~/.workbuddy/traces/<pid>/trace_*.json`，每个工作流一个文件。
 /// 文件很大（含完整对话）。旧版本的头部 `trace` 对象带汇总；新版本把
@@ -151,7 +151,7 @@ actor WorkBuddyTraceClient {
             guard parts.count == 2 else { return nil }
             let model = TokenModelName.canonical(parts[1])
             return TokenUsageBucket(
-                bucketStart: day(from: parts[0]),
+                bucketStart: TokenUsageBucket.date(fromBucketKey: parts[0]) ?? day(from: parts[0]),
                 platform: .workbuddy,
                 client: .desktop,
                 model: model,
@@ -167,7 +167,7 @@ actor WorkBuddyTraceClient {
         guard let persistentCacheURL,
               let data = try? Data(contentsOf: persistentCacheURL),
               let persisted = try? JSONDecoder().decode(PersistedCache.self, from: data),
-              persisted.version == 1,
+              persisted.version == 2,
               persisted.rootPath == root.standardizedFileURL.path else { return }
         cache = Dictionary(uniqueKeysWithValues: persisted.entries.map {
             (URL(fileURLWithPath: $0.key), $0.value)
@@ -177,7 +177,7 @@ actor WorkBuddyTraceClient {
     private func savePersistentCache() {
         guard let persistentCacheURL else { return }
         let payload = PersistedCache(
-            version: 1,
+            version: 2,
             rootPath: root.standardizedFileURL.path,
             entries: Dictionary(uniqueKeysWithValues: cache.map { ($0.key.path, $0.value) })
         )
@@ -196,7 +196,8 @@ actor WorkBuddyTraceClient {
               let traceData = traceJSON.data(using: .utf8),
               let summary = try? Self.traceDecoder().decode(TraceSummary.self, from: traceData) else { return nil }
 
-        let dayKey = Self.dayKey(for: summary.startedAt)
+            let dayKey = Self.dayKey(for: summary.startedAt)
+            let bucketKey = TokenUsageBucket.bucketKey(for: summary.startedAt)
         if summary.totalTokens > 0 {
             var totals = TokenTotals()
             totals.input = summary.modelInfo?.totalInputTokens
@@ -208,7 +209,7 @@ actor WorkBuddyTraceClient {
             return (
                 [dayKey: totals],
                 isDeepSeek ? [dayKey: totals] : [:],
-                ["\(dayKey)\u{1F}\(model)": totals]
+                ["\(bucketKey)\u{1F}\(model)": totals]
             )
         }
 
@@ -317,7 +318,8 @@ actor WorkBuddyTraceClient {
             let dayKey = usage.date.map(Self.dayKey(for:)) ?? fallbackDay
             let model = usage.model.isEmpty ? "unknown" : usage.model
             totalsByDay[dayKey, default: TokenTotals()] = totalsByDay[dayKey, default: TokenTotals()].adding(usage.totals)
-            let modelKey = "\(dayKey)\u{1F}\(model)"
+            let bucketKey = usage.date.map(TokenUsageBucket.bucketKey(for:)) ?? dayKey
+            let modelKey = "\(bucketKey)\u{1F}\(model)"
             modelByDay[modelKey, default: TokenTotals()] = modelByDay[modelKey, default: TokenTotals()].adding(usage.totals)
             if model.lowercased().contains("deepseek") {
                 deepSeekByDay[dayKey, default: TokenTotals()] = deepSeekByDay[dayKey, default: TokenTotals()].adding(usage.totals)

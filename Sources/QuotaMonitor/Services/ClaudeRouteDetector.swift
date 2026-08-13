@@ -21,6 +21,10 @@ struct ClaudeRouteSnapshot: Sendable, Equatable {
 
     var usesDeepSeek: Bool { code == .deepseek || desktop == .deepseek }
 
+    /// 对用户展示时，任一 Claude 通道使用 DeepSeek 都明确标记为
+    /// DeepSeek 路由，避免被笼统的“混合路由”掩盖。
+    var displayRoute: ClaudeRoute { usesDeepSeek ? .deepseek : summary }
+
     var summary: ClaudeRoute {
         if code == desktop { return code }
         if code == .unknown { return desktop }

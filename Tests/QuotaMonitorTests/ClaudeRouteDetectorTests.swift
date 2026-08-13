@@ -4,6 +4,17 @@ import XCTest
 @testable import QuotaMonitor
 
 final class ClaudeRouteDetectorTests: XCTestCase {
+    func testDisplayRoutePrefersDeepSeekForMixedClaudeChannels() {
+        XCTAssertEqual(
+            ClaudeRouteSnapshot(code: .other, desktop: .deepseek).displayRoute,
+            .deepseek
+        )
+        XCTAssertEqual(
+            ClaudeRouteSnapshot(code: .official, desktop: .other).displayRoute,
+            .mixed
+        )
+    }
+
     private func makeDB(withRows rows: [(appType: String, name: String, category: String, config: String, current: Bool)]) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ccswitch-test-\(UUID().uuidString).db")

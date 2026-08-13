@@ -172,12 +172,14 @@
 "overview.noQuotaSources" = "未检测到可用额度来源，Token 统计仍可用";
 "overview.last7Title" = "近 7 日 Token";
 "overview.last7Note" = "近 7 日";
+"overview.todayHourlyTitle" = "今日分时 Token";
+"overview.todayHourlyNote" = "24 小时";
 "overview.platform" = "平台";
 "overview.model" = "模型";
 "overview.noData" = "暂无数据";
 "tokens.total" = "总 TOKEN";
 "tokens.average" = "日均 TOKEN";
-"tokens.peak" = "峰值日";
+"tokens.peak" = "峰值日Token";
 "tokens.topPlatform" = "主要平台";
 "tokens.topModel" = "主要模型";
 "tokens.trendTitle" = "Token 趋势";
@@ -186,6 +188,7 @@
 "tokens.platformUsage" = "平台用量";
 "tokens.modelUsage" = "模型用量";
 "tokens.otherModel" = "其他模型";
+"tokens.otherPlatform" = "其他平台";
 "tokens.yearTitle" = "365 天 Token 用量";
 "tokens.yearDetail" = "每天一个方格，颜色越深表示用量越高";
 "tokens.less" = "少";

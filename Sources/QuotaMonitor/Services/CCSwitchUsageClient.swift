@@ -47,8 +47,12 @@ actor CCSwitchUsageClient {
             totals.cacheWriteInput = row.cacheCreationTokens
             totals.output = row.outputTokens
             let model = TokenModelName.canonical(row.model)
+            let createdAt = Date(timeIntervalSince1970: Double(row.createdAt))
+            let hour = Calendar.current.date(
+                from: Calendar.current.dateComponents([.year, .month, .day, .hour], from: createdAt)
+            ) ?? createdAt
             return TokenUsageBucket(
-                bucketStart: Calendar.current.startOfDay(for: Date(timeIntervalSince1970: Double(row.createdAt))),
+                bucketStart: hour,
                 platform: .claude,
                 client: client,
                 model: model,
@@ -75,7 +79,7 @@ actor CCSwitchUsageClient {
         defer { sqlite3_close(db) }
         sqlite3_busy_timeout(db, 2_000)
 
-        // 直接在 SQLite 层按日和模型聚合，避免把完整请求历史加载进内存，
+        // 直接在 SQLite 层按小时和模型聚合，避免把完整请求历史加载进内存，
         // 也消除旧版 500,000 行静默截断造成的不确定结果。
         let sql = """
         SELECT model,
@@ -84,7 +88,7 @@ actor CCSwitchUsageClient {
                MIN(created_at)
         FROM proxy_request_logs
         WHERE app_type = ?1
-        GROUP BY model, date(created_at, 'unixepoch', 'localtime')
+        GROUP BY model, strftime('%Y-%m-%d-%H', created_at, 'unixepoch', 'localtime')
         ORDER BY MIN(created_at) ASC, model ASC
         """
         var statement: OpaquePointer?

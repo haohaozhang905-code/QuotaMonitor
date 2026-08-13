@@ -172,12 +172,14 @@
 "overview.noQuotaSources" = "No quota sources detected. Token usage history remains available.";
 "overview.last7Title" = "Last 7 days tokens";
 "overview.last7Note" = "Last 7 days";
+"overview.todayHourlyTitle" = "Today's hourly tokens";
+"overview.todayHourlyNote" = "24 hours";
 "overview.platform" = "Platform";
 "overview.model" = "Model";
 "overview.noData" = "No data yet";
 "tokens.total" = "TOTAL TOKENS";
 "tokens.average" = "DAILY AVERAGE";
-"tokens.peak" = "PEAK DAY";
+"tokens.peak" = "PEAK DAY TOKENS";
 "tokens.topPlatform" = "TOP PLATFORM";
 "tokens.topModel" = "TOP MODEL";
 "tokens.trendTitle" = "Token trend";
@@ -186,6 +188,7 @@
 "tokens.platformUsage" = "Platform usage";
 "tokens.modelUsage" = "Model usage";
 "tokens.otherModel" = "Other models";
+"tokens.otherPlatform" = "Other platforms";
 "tokens.yearTitle" = "365-day token usage";
 "tokens.yearDetail" = "One square per day; darker means higher usage";
 "tokens.less" = "Less";

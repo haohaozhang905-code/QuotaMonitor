@@ -134,6 +134,12 @@ final class QuotaStore {
         ClaudeRouteSnapshot(code: claudeRoute, desktop: claudeDesktopRoute).summary
     }
 
+    /// 对用户展示的 Claude 路由：只要任一 Claude 通道使用 DeepSeek，
+    /// 下拉框、菜单栏与主面板统一显示 DeepSeek 路由。
+    var claudeDisplayRoute: ClaudeRoute {
+        ClaudeRouteSnapshot(code: claudeRoute, desktop: claudeDesktopRoute).displayRoute
+    }
+
     /// 全部工具的按天合计。来源保留完整可用历史，视图层再按今日/7 日/30 日取窗口。
     var totalTokenHistory: [DailyTokenUsage] {
         Self.combineByDay([tokenHistory, claudeHistory, claudeDesktopHistory, workBuddyHistory])
@@ -173,7 +179,7 @@ final class QuotaStore {
             presentation: presentationSnapshot,
             providers: providers,
             codexRoute: codexRoute,
-            claudeRoute: claudeUsesDeepSeek ? .deepseek : claudeRouteSummary,
+            claudeRoute: claudeDisplayRoute,
             deepSeekBalance: deepSeekBalance,
             deepSeekCurrency: deepSeekCurrency,
             deepSeekDays: deepSeekDays

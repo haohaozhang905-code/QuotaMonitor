@@ -25,6 +25,7 @@ enum UsageBreakdownKey: Hashable, Sendable {
     case platformClient(platform: TokenPlatform, client: TokenClient)
     case model(String)
     case otherModels
+    case otherPlatforms
 }
 
 extension UsageBreakdownKey {
@@ -36,6 +37,8 @@ extension UsageBreakdownKey {
             return "model|\(model)"
         case .otherModels:
             return "model|other"
+        case .otherPlatforms:
+            return "platform|other"
         }
     }
 
@@ -49,6 +52,7 @@ extension UsageBreakdownKey {
             }
         case let .model(model): model
         case .otherModels: other
+        case .otherPlatforms: other
         }
     }
 }
@@ -59,6 +63,22 @@ struct UsageBreakdownSnapshot: Identifiable, Equatable, Sendable {
     let share: Double
 
     var id: String { key.stableID }
+}
+
+extension Array where Element == UsageBreakdownSnapshot {
+    /// Keep dashboard lists comparable: four ranked entries plus one tail row.
+    func topFourPlusOther(limit: Int = 4, otherKey: UsageBreakdownKey) -> [UsageBreakdownSnapshot] {
+        guard limit > 0, count > limit else { return self }
+        let top = Array(prefix(limit))
+        let otherTotal = dropFirst(limit).reduce(0) { $0 + $1.total }
+        guard otherTotal > 0 else { return top }
+        let total = reduce(0) { $0 + $1.total }
+        return top + [UsageBreakdownSnapshot(
+            key: otherKey,
+            total: otherTotal,
+            share: total > 0 ? Double(otherTotal) / Double(total) : 0
+        )]
+    }
 }
 
 struct HistoryAvailability: Equatable, Sendable {
@@ -144,16 +164,11 @@ struct QuotaPresentationSnapshot: Equatable, Sendable {
 
     /// 下拉框展示今日 Top N 模型并合并其余项，确保平台与模型使用同一个“今日”时间窗口。
     func topModels(limit: Int = 3) -> [UsageBreakdownSnapshot] {
-        guard limit >= 0, modelToday.count > limit else { return modelToday }
-        let top = Array(modelToday.prefix(limit))
-        let otherTotal = modelToday.dropFirst(limit).reduce(0) { $0 + $1.total }
-        guard otherTotal > 0 else { return top }
-        let total = modelToday.reduce(0) { $0 + $1.total }
-        return top + [UsageBreakdownSnapshot(
-            key: .otherModels,
-            total: otherTotal,
-            share: total > 0 ? Double(otherTotal) / Double(total) : 0
-        )]
+        modelToday.topFourPlusOther(limit: limit, otherKey: .otherModels)
+    }
+
+    func topPlatforms(limit: Int = 4) -> [UsageBreakdownSnapshot] {
+        platformToday.topFourPlusOther(limit: limit, otherKey: .otherPlatforms)
     }
 
     static func make(
@@ -260,12 +275,12 @@ struct QuotaPresentationSnapshot: Equatable, Sendable {
                 buckets: buckets,
                 startingAt: start,
                 key: { .platformClient(platform: $0.platform, client: $0.client) }
-            ),
+            ).topFourPlusOther(limit: 4, otherKey: .otherPlatforms),
             models: breakdown(
                 buckets: buckets,
                 startingAt: start,
                 key: { .model(TokenModelName.canonical($0.model)) }
-            )
+            ).topFourPlusOther(limit: 4, otherKey: .otherModels)
         )
     }
 

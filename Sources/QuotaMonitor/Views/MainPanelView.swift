@@ -217,6 +217,18 @@ struct MainPanelView: View {
         }
     }
 
+    private static let applicationIcon: NSImage = {
+        let source = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+        let target = NSImage(size: NSSize(width: 32, height: 32))
+        if let retinaRepresentation = source.representations.first(where: {
+            $0.pixelsWide >= 64 && $0.pixelsHigh >= 64 && abs($0.size.width - 32) < 0.5
+        }) {
+            // 只保留 2x 图层，避免 SwiftUI Image(nsImage:) 在多 representation 中拿到 1x 图层。
+            target.addRepresentation(retinaRepresentation)
+        }
+        return target.representations.isEmpty ? source : target
+    }()
+
     private var pageTransition: AnyTransition {
         reduceMotion ? .identity : .opacity.combined(with: .offset(x: 5))
     }
@@ -228,12 +240,10 @@ struct MainPanelView: View {
                 .accessibilityHidden(true)
 
             HStack(spacing: 10) {
-                Image(nsImage: MenuBarQuotaGlyph.image)
-                    .renderingMode(.original)
-                    .resizable()
-                    .frame(width: 22, height: 22)
-                    .padding(5)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                // 直接使用 Finder/Dock 为应用包返回的图标，保留其 32pt/64px Retina representation。
+                Image(nsImage: Self.applicationIcon)
+                    .interpolation(.high)
+                    .frame(width: 32, height: 32)
                 Text(QuotaMonitorIdentity.displayName)
                     .font(.system(size: 15.5, weight: .semibold))
                     .foregroundStyle(PanelTheme.text)
@@ -432,7 +442,7 @@ struct MainPanelView: View {
                 state: codexOverviewState
             ))
         }
-        if store.claudeRouteSummary != .unknown {
+        if store.claudeDisplayRoute != .unknown {
             items.append(.init(
                 platform: .claude,
                 icon: .claude,
@@ -459,13 +469,13 @@ struct MainPanelView: View {
     private var codexOverviewRoute: String {
         switch store.codexRoute {
         case .deepseek: language.text("panel.deepSeekRouteTag")
-        case .official: language.text("overview.officialConnected")
+        case .official: codexProvider?.plan ?? language.text("panel.official")
         case .unknown: language.text("settings.notConnected")
         }
     }
 
     private var claudeOverviewRoute: String {
-        switch store.claudeRouteSummary {
+        switch store.claudeDisplayRoute {
         case .deepseek: language.text("panel.deepSeekRouteTag")
         case .official: "Pro"
         case .other: language.text("panel.routeOther")
@@ -587,14 +597,12 @@ struct MainPanelView: View {
     }
 
     private var overviewBottomGrid: some View {
-        HStack(alignment: .top, spacing: 14) {
-            overviewTrendCard
-                .frame(maxWidth: .infinity)
-            VStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 14) {
+            overviewHourlyTokenCard
+            HStack(alignment: .top, spacing: 14) {
                 overviewListCard(title: language.text("overview.platform"), values: platformSummaries)
                 overviewListCard(title: language.text("overview.model"), values: modelSummaries)
             }
-            .frame(maxWidth: .infinity)
         }
     }
 
@@ -614,37 +622,54 @@ struct MainPanelView: View {
         }
     }
 
-    private var overviewTrendCard: some View {
-        panelCard(height: 274) {
+    private var overviewHourlyTokenCard: some View {
+        let chart = hourlyTokenChartSnapshot()
+        let axisIndices = hourlyChartAxisIndices
+        // Let the card size itself from the plot and tick labels so
+        // the bottom axis is never clipped by a fixed outer height.
+        return panelCard {
             HStack {
-                Text(language.text("overview.last7Title"))
+                Text(language.text("overview.todayHourlyTitle"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(PanelTheme.text)
                 Spacer()
-                Text(language.text("overview.last7Note"))
+                Text(language.text("overview.todayHourlyNote"))
                     .font(.system(size: 10, weight: .regular))
                     .foregroundStyle(PanelTheme.text3)
             }
-            Text(QuotaFormatters.tokensCN(overviewRows.reduce(0) { $0 + $1.total }))
-                .font(.system(size: 28, weight: .semibold))
-                .fontDesign(.monospaced)
-                .foregroundStyle(PanelTheme.text)
-                .padding(.top, 5)
-            Sparkline(
-                values: overviewRows.map { Double($0.total) },
-                labels: overviewRows.map(\.label),
-                color: PanelTheme.codex,
-                valueLabel: language.text("panel.totalTokens")
+            StackedBarChart(
+                rows: chart.rows,
+                todayLabel: language.text("panel.today"),
+                tokenLabel: language.text("panel.totalTokens")
             )
-                .frame(height: 154)
-                .padding(.top, 2)
+                .frame(height: 92)
+                .padding(.top, 4)
+            GeometryReader { proxy in
+                let plotWidth = max(proxy.size.width - 44, 1)
+                ZStack(alignment: .topLeading) {
+                    ForEach(axisIndices, id: \.self) { index in
+                        let row = chart.rows[index]
+                        let x = 40 + (CGFloat(index) + 0.5) / CGFloat(max(chart.rows.count, 1)) * plotWidth
+                        Text(row.label)
+                            .font(.system(size: 8, weight: .regular))
+                            .fontDesign(.monospaced)
+                            .foregroundStyle(PanelTheme.text3)
+                            .fixedSize()
+                            .position(x: x, y: 5)
+                    }
+                }
+            }
+            .frame(height: 10)
         }
     }
 
     private var platformSummaries: [BreakdownItem] {
-        store.presentationSnapshot.platformToday.map { row in
+        store.presentationSnapshot.topPlatforms(limit: 4).map { row in
             BreakdownItem(
-                name: row.key.displayName(claudeCode: language.text("panel.claudeCode")),
+                name: row.key.displayName(
+                    claudeCode: language.text("panel.claudeCode"),
+                    other: language.text("tokens.otherPlatform")
+                ),
                 value: row.total,
                 share: row.share,
                 color: breakdownColor(for: row.key)
@@ -653,11 +678,11 @@ struct MainPanelView: View {
     }
 
     private var modelSummaries: [BreakdownItem] {
-        let rows = Array(store.presentationSnapshot.modelToday.prefix(3))
+        let rows = store.presentationSnapshot.topModels(limit: 4)
         let colors = modelColors(for: rows)
         return rows.map { row in
             BreakdownItem(
-                name: row.key.displayName(),
+                name: row.key.displayName(other: language.text("tokens.otherModel")),
                 value: row.total,
                 share: row.share,
                 color: colors[row.id] ?? PanelTheme.modelFallback
@@ -687,7 +712,7 @@ struct MainPanelView: View {
             case (.kimi, _): PanelTheme.text2
             }
         case let .model(model): PanelTheme.modelColor(for: model)
-        case .otherModels: PanelTheme.modelFallback
+        case .otherModels, .otherPlatforms: PanelTheme.modelFallback
         }
     }
 
@@ -697,7 +722,11 @@ struct MainPanelView: View {
     }
 
     private func overviewListCard(title: String, values: [BreakdownItem]) -> some View {
-        panelCard(height: 130) {
+        let rowHeight: CGFloat = 17
+        let rowSpacing: CGFloat = 5
+
+        // Keep overview and dashboard breakdown cards on the same compact grid.
+        return panelCard(height: 170) {
             HStack {
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
@@ -707,7 +736,7 @@ struct MainPanelView: View {
                     .font(.system(size: 10, weight: .regular))
                     .foregroundStyle(PanelTheme.text3)
             }
-            VStack(spacing: 10) {
+            VStack(spacing: rowSpacing) {
                 ForEach(values) { item in
                     HStack(spacing: 8) {
                         HStack(spacing: 7) {
@@ -730,14 +759,16 @@ struct MainPanelView: View {
                             .foregroundStyle(PanelTheme.text3)
                             .frame(width: 40, alignment: .trailing)
                     }
+                    .frame(height: rowHeight)
                 }
                 if values.isEmpty {
                     Text(language.text("overview.noData"))
                         .font(.system(size: 10.5))
                         .foregroundStyle(PanelTheme.text3)
+                        .frame(height: rowHeight, alignment: .leading)
                 }
             }
-            .padding(.top, 5)
+            .padding(.top, 3)
         }
     }
 
@@ -800,16 +831,15 @@ struct MainPanelView: View {
     private func tokenChartCard() -> some View {
         let chart = tokenChartSnapshot()
         let axisIndices = chartAxisIndices(for: chart.rows)
-        return panelCard {
+        return panelCard(spacing: 6, topPadding: 10, bottomPadding: 8) {
+            // Keep the title and the segmented control on one visual centerline.
+            // The whole header starts slightly higher because the control is
+            // taller than the title, keeping the title's visible glyphs aligned
+            // with the 16pt title inset used by the other cards.
             HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(language.text(tokenChartDimension == .platform ? "panel.tokenTrendPlatformTitle" : "panel.tokenTrendModelTitle"))
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(PanelTheme.text)
-                    Text(language.text(tokenChartDimension == .platform ? "panel.chartNote" : "panel.modelChartNote"))
-                        .font(.system(size: 9.5, weight: .regular))
-                        .foregroundStyle(PanelTheme.text3)
-                }
+                Text(language.text(tokenChartDimension == .platform ? "panel.tokenTrendPlatformTitle" : "panel.tokenTrendModelTitle"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(PanelTheme.text)
                 Spacer(minLength: 6)
                 tokenChartDimensionPicker
                 Text(language.text("tokens.peakValue", QuotaFormatters.tokensCN(chart.rows.map { $0.total }.max() ?? 0)))
@@ -823,7 +853,7 @@ struct MainPanelView: View {
                 tokenLabel: language.text("panel.totalTokens")
             )
                 .frame(height: 140)
-                .padding(.top, 7)
+                .padding(.top, 1)
             GeometryReader { proxy in
                 let plotWidth = max(proxy.size.width - 44, 1)
                 ZStack(alignment: .topLeading) {
@@ -841,16 +871,21 @@ struct MainPanelView: View {
                 }
             }
             .frame(height: 10)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
-                    ForEach(chart.legend) { item in
-                        legendItem(item.color, item.name)
+            GeometryReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(chart.legend) { item in
+                            legendItem(item.color, item.name)
+                        }
                     }
+                    .padding(.horizontal, 2)
+                    .frame(minWidth: max(proxy.size.width - 4, 0), alignment: .center)
                 }
-                .padding(.horizontal, 2)
             }
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.top, 4)
+            .frame(height: 18)
+            // Leave a clear breathing space between the x-axis tick labels
+            // and the secondary legend row.
+            .padding(.top, 5)
             if chart.legend.isEmpty {
                 Text(language.text("panel.modelNoData"))
                     .font(.system(size: 10.5))
@@ -868,15 +903,14 @@ struct MainPanelView: View {
     }
 
     private func modelRankingItems(from rows: [ModelRow]) -> [BreakdownItem] {
-        let topRows = Array(rows.prefix(4))
-        let colors = categoryColors(for: topRows.map { row in
+        let colors = categoryColors(for: rows.map { row in
             TokenChartCategory(
                 id: "model|\(row.model)",
                 name: row.model,
                 preferredPaletteIndex: stablePaletteIndex(for: row.model)
             )
         })
-        let top = topRows.map {
+        return rows.map {
             BreakdownItem(
                 name: $0.model,
                 value: $0.total,
@@ -884,24 +918,15 @@ struct MainPanelView: View {
                 color: colors["model|\($0.model)"] ?? PanelTheme.modelFallback
             )
         }
-        guard rows.count > 4 else { return top }
-        let otherTotal = rows.dropFirst(4).reduce(0) { $0 + $1.total }
-        let total = rows.reduce(0) { $0 + $1.total }
-        return top + [BreakdownItem(
-            name: language.text("tokens.otherModel"),
-            value: otherTotal,
-            share: total > 0 ? Double(otherTotal) / Double(total) : 0,
-            color: PanelTheme.modelFallback
-        )]
     }
 
     private func rankingCard(title: String, items: [BreakdownItem]) -> some View {
-        panelCard(height: 190) {
+        panelCard(height: 170) {
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(PanelTheme.text)
-            VStack(spacing: 12) {
-                ForEach(items.prefix(8)) { item in
+            VStack(spacing: 5) {
+                ForEach(items.prefix(5)) { item in
                     HStack(spacing: 8) {
                         Text(item.name)
                             .font(.system(size: 10.5))
@@ -1144,14 +1169,21 @@ struct MainPanelView: View {
             peak: presentation.summary.peak,
             platform: presentation.platform.map { row in
                 BreakdownItem(
-                    name: row.key.displayName(claudeCode: language.text("panel.claudeCode")),
+                    name: row.key.displayName(
+                        claudeCode: language.text("panel.claudeCode"),
+                        other: language.text("tokens.otherPlatform")
+                    ),
                     value: row.total,
                     share: row.share,
                     color: breakdownColor(for: row.key)
                 )
             },
             models: presentation.models.map { row in
-                ModelRow(model: row.key.displayName(), total: row.total, share: row.share)
+                ModelRow(
+                    model: row.key.displayName(other: language.text("tokens.otherModel")),
+                    total: row.total,
+                    share: row.share
+                )
             }
         )
     }
@@ -1172,6 +1204,41 @@ struct MainPanelView: View {
         }
     }
 
+    private var hourlyChartAxisIndices: [Int] {
+        [0, 3, 6, 9, 12, 15, 18, 21, 23]
+    }
+
+    private func hourlyTokenChartSnapshot() -> TokenChartSnapshot {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: .now)
+        let buckets = store.tokenBuckets.filter {
+            calendar.isDate($0.bucketStart, inSameDayAs: today) && $0.total > 0
+        }
+        var valuesByHour: [Int: Int] = [:]
+        for bucket in buckets {
+            let hour = calendar.component(.hour, from: bucket.bucketStart)
+            valuesByHour[hour, default: 0] += bucket.total
+        }
+        let rows = (0..<24).map { hour in
+            let value = valuesByHour[hour] ?? 0
+            let segments = value > 0
+                ? [TokenChartSegment(
+                    id: "hourly-total",
+                    name: language.text("panel.totalTokens"),
+                    value: value,
+                    color: PanelTheme.codex
+                )]
+                : []
+            return TokenChartRow(
+                id: "hour-\(hour)",
+                label: String(format: "%02d:00", hour),
+                isToday: false,
+                segments: segments
+            )
+        }
+        return TokenChartSnapshot(rows: rows, legend: [])
+    }
+
     private func tokenChartSnapshot() -> TokenChartSnapshot {
         let chartStart = tokenChartStartDate
         let dayCount = tokenChartDayCount(startingAt: chartStart)
@@ -1190,20 +1257,22 @@ struct MainPanelView: View {
             let category = chartCategory(for: bucket)
             totals[category.id, default: 0] += bucket.total
         }
-        let categoryLimit = 5
         let sortedCategoryIDs = totalsByCategory.sorted { lhs, rhs in
             if lhs.value != rhs.value { return lhs.value > rhs.value }
             return lhs.key < rhs.key
         }.map(\.key)
-        // 模型趋势必须保留每个模型；平台类别过多时才合并尾部平台。
-        let needsOther = tokenChartDimension == .platform && sortedCategoryIDs.count > categoryLimit
-        let topCategoryIDs = Set(sortedCategoryIDs.prefix(needsOther ? categoryLimit - 1 : categoryLimit))
+        // The trend chart's model view is meant to expose the complete model
+        // mix, so it must not inherit the dashboard's four-plus-other summary
+        // rule. Keep the compact grouping only for the platform view, where
+        // the number of tool sources is intentionally capped for readability.
+        let needsOther = tokenChartDimension == .platform && sortedCategoryIDs.count > 4
+        let topCategoryIDs = Set(sortedCategoryIDs.prefix(4))
         let chartCategoryIDs = needsOther ? topCategoryIDs : Set(sortedCategoryIDs)
         let visibleCategories = categories.values.filter { chartCategoryIDs.contains($0.id) }
         let otherCategory: TokenChartCategory? = needsOther
             ? TokenChartCategory(
                 id: TokenChartCategory.otherID,
-                name: language.text("tokens.otherModel"),
+                name: language.text(tokenChartDimension == .platform ? "tokens.otherPlatform" : "tokens.otherModel"),
                 preferredPaletteIndex: 4
             )
             : nil
@@ -1311,7 +1380,11 @@ struct MainPanelView: View {
     }
 
     private func chartCategory(for bucket: TokenUsageBucket) -> TokenChartCategory {
-        switch tokenChartDimension {
+        chartCategory(for: bucket, dimension: tokenChartDimension)
+    }
+
+    private func chartCategory(for bucket: TokenUsageBucket, dimension: TokenChartDimension) -> TokenChartCategory {
+        switch dimension {
         case .platform:
             let key = UsageBreakdownKey.platformClient(platform: bucket.platform, client: bucket.client)
             let paletteIndex: Int
@@ -1541,10 +1614,10 @@ struct MainPanelView: View {
         HStack(spacing: 5) {
             RoundedRectangle(cornerRadius: 2, style: .continuous)
                 .fill(color)
-                .frame(width: 9, height: 9)
+                .frame(width: 7, height: 7)
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(PanelTheme.text2)
+                .font(.system(size: 9.5, weight: .regular))
+                .foregroundStyle(PanelTheme.text3)
         }
     }
 
@@ -1628,11 +1701,19 @@ struct MainPanelView: View {
         }
     }
 
-    private func panelCard(height: CGFloat? = nil, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func panelCard(
+        height: CGFloat? = nil,
+        spacing: CGFloat = 12,
+        topPadding: CGFloat = 16,
+        bottomPadding: CGFloat = 16,
+        @ViewBuilder content: () -> some View
+    ) -> some View {
+        VStack(alignment: .leading, spacing: spacing) {
             content()
         }
-        .padding(16)
+        .padding(.top, topPadding)
+        .padding(.horizontal, 16)
+        .padding(.bottom, bottomPadding)
         .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .topLeading)
         .background(PanelTheme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1895,7 +1976,7 @@ private struct ChartTooltip: View {
     }
 }
 
-// MARK: - 堆叠柱状图
+// MARK: - 折线图
 
 private struct Sparkline: View {
     let values: [Double]
@@ -1907,60 +1988,90 @@ private struct Sparkline: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let leadingInset: CGFloat = 44
-            let trailingInset: CGFloat = 8
-            let topInset: CGFloat = 7
-            let bottomInset: CGFloat = 22
-            let plotSize = CGSize(
-                width: max(proxy.size.width - leadingInset - trailingInset, 1),
-                height: max(proxy.size.height - topInset - bottomInset, 1)
-            )
-            let points = normalizedPoints(in: plotSize).map {
-                CGPoint(x: $0.x + leadingInset, y: $0.y + topInset)
-            }
             let peak = max(values.max() ?? 0, 1)
+            let plotTopInset: CGFloat = 15
+            let axisLabelOffset: CGFloat = 18
+            let plotBottomInset: CGFloat = axisLabelOffset + 10
+            let plotHeight = max(proxy.size.height - plotTopInset - plotBottomInset, 1)
+            let plotX: CGFloat = 40
+            let plotWidth = max(proxy.size.width - 44, 1)
+            let slotWidth = plotWidth / CGFloat(max(values.count, 1))
+            let points = values.enumerated().map { index, value in
+                CGPoint(
+                    x: plotX + (CGFloat(index) + 0.5) * slotWidth,
+                    y: plotTopInset + plotHeight - CGFloat(value / peak) * plotHeight
+                )
+            }
 
             ZStack(alignment: .topLeading) {
-                ForEach(0..<4, id: \.self) { index in
-                    let ratio = CGFloat(index) / 3
-                    let y = topInset + ratio * plotSize.height
-                    let tickValue = Int(peak * (1 - Double(index) / 3))
-                    Path { path in
-                        path.move(to: CGPoint(x: leadingInset, y: y))
-                        path.addLine(to: CGPoint(x: leadingInset + plotSize.width, y: y))
+                Canvas { context, _ in
+                    let plot = CGRect(x: plotX, y: plotTopInset, width: plotWidth, height: plotHeight)
+                    for line in 0...3 {
+                        let y = plot.minY + plot.height * CGFloat(line) / 3
+                        var path = Path()
+                        path.move(to: CGPoint(x: plot.minX, y: y))
+                        path.addLine(to: CGPoint(x: plot.maxX, y: y))
+                        context.stroke(
+                            path,
+                            with: .color(PanelTheme.grid),
+                            style: StrokeStyle(lineWidth: 1, dash: line == 3 ? [] : [4, 4])
+                        )
                     }
-                    .stroke(PanelTheme.grid, style: StrokeStyle(lineWidth: 1, dash: index == 3 ? [] : [4, 4]))
-                    Text(QuotaFormatters.tokensCN(tickValue))
-                        .font(.system(size: 8.5))
-                        .fontDesign(.monospaced)
-                        .foregroundStyle(PanelTheme.text3)
-                        .lineLimit(1)
-                        .frame(width: leadingInset - 7, alignment: .trailing)
-                        .position(x: (leadingInset - 7) / 2, y: y)
-                }
-                if let hoveredIndex, points.indices.contains(hoveredIndex) {
-                    let point = points[hoveredIndex]
-                    let slotWidth = plotSize.width / CGFloat(max(values.count, 1))
-                    let highlightX = max(leadingInset, point.x - slotWidth / 2)
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(PanelTheme.text.opacity(0.045))
-                        .frame(width: min(slotWidth, leadingInset + plotSize.width - highlightX), height: plotSize.height)
-                        .position(x: highlightX + min(slotWidth, leadingInset + plotSize.width - highlightX) / 2, y: topInset + plotSize.height / 2)
-                }
-                if points.count > 1 {
-                    smoothPath(points, closeToBottom: topInset + plotSize.height)
-                        .fill(color.opacity(0.12))
-                    smoothPath(points)
-                        .stroke(color, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                    ForEach(Array(points.enumerated()), id: \.offset) { index, point in
-                        let emphasized = hoveredIndex == nil || hoveredIndex == index
-                        Circle()
-                            .fill(PanelTheme.surface)
-                            .overlay(Circle().stroke(color.opacity(emphasized ? 1 : 0.42), lineWidth: hoveredIndex == index ? 2.5 : 2))
-                            .frame(width: hoveredIndex == index ? 9 : 7, height: hoveredIndex == index ? 9 : 7)
-                            .position(point)
+
+                    if let hoveredIndex, points.indices.contains(hoveredIndex) {
+                        let highlightRect = CGRect(
+                            x: plot.minX + CGFloat(hoveredIndex) * slotWidth + 2,
+                            y: plot.minY,
+                            width: max(slotWidth - 4, 1),
+                            height: plot.height
+                        )
+                        context.fill(
+                            Path(roundedRect: highlightRect, cornerRadius: 5),
+                            with: .color(PanelTheme.text.opacity(0.045))
+                        )
                     }
+
+                    guard points.count > 1 else { return }
+                    context.fill(
+                        smoothPath(points, closeToBottom: plot.maxY),
+                        with: .color(color.opacity(0.10))
+                    )
+                    context.stroke(
+                        smoothPath(points),
+                        with: .color(color),
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+                    )
                 }
+
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(QuotaFormatters.tokensCN(Int(peak)))
+                    Spacer()
+                    Text(QuotaFormatters.tokensCN(Int(peak * 2 / 3)))
+                    Spacer()
+                    Text(QuotaFormatters.tokensCN(Int(peak / 3)))
+                    Spacer()
+                    Text("0")
+                }
+                .font(.system(size: 8.5))
+                .fontDesign(.monospaced)
+                .foregroundStyle(PanelTheme.text3)
+                .frame(width: 32, height: plotHeight, alignment: .topTrailing)
+                .position(x: 16, y: plotTopInset + plotHeight / 2)
+
+                ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                    let emphasized = hoveredIndex == nil || hoveredIndex == index
+                    Circle()
+                        .fill(PanelTheme.surface)
+                        .overlay(
+                            Circle().stroke(
+                                color.opacity(emphasized ? 1 : 0.42),
+                                lineWidth: hoveredIndex == index ? 2.5 : 2
+                            )
+                        )
+                        .frame(width: hoveredIndex == index ? 9 : 7, height: hoveredIndex == index ? 9 : 7)
+                        .position(point)
+                }
+
                 ForEach(axisIndices, id: \.self) { index in
                     if labels.indices.contains(index), points.indices.contains(index) {
                         Text(labels[index])
@@ -1968,7 +2079,7 @@ private struct Sparkline: View {
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text3)
                             .fixedSize()
-                            .position(x: points[index].x, y: topInset + plotSize.height + 13)
+                            .position(x: points[index].x, y: plotTopInset + plotHeight + axisLabelOffset)
                     }
                 }
                 if let hoveredIndex,
@@ -1981,18 +2092,11 @@ private struct Sparkline: View {
                         value: QuotaFormatters.tokensCN(Int(values[hoveredIndex])),
                         valueLabel: valueLabel
                     )
-                    .position(
-                        x: ChartTooltipPlacement.x(
-                            anchorX: point.x,
-                            tooltipWidth: tooltipSize.width,
-                            containerWidth: proxy.size.width
-                        ),
-                        y: ChartTooltipPlacement.y(
-                            anchorY: point.y,
-                            tooltipHeight: tooltipSize.height,
-                            containerHeight: proxy.size.height
-                        )
-                    )
+                    .position(ChartTooltipPlacement.adjacentToBar(
+                        barRect: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8),
+                        tooltipSize: tooltipSize,
+                        containerSize: proxy.size
+                    ))
                 }
             }
             .contentShape(Rectangle())
@@ -2000,7 +2104,7 @@ private struct Sparkline: View {
             .onContinuousHover(coordinateSpace: .local) { phase in
                 switch phase {
                 case .active(let location):
-                    hoveredIndex = index(at: location, plotWidth: plotSize.width, leadingInset: leadingInset)
+                    hoveredIndex = index(at: location, plotX: plotX, plotWidth: plotWidth)
                 case .ended:
                     hoveredIndex = nil
                 @unknown default:
@@ -2010,21 +2114,10 @@ private struct Sparkline: View {
         }
     }
 
-    private func index(at location: CGPoint, plotWidth: CGFloat, leadingInset: CGFloat) -> Int? {
-        guard !values.isEmpty, plotWidth > 0 else { return nil }
-        let x = min(max(location.x - leadingInset, 0), plotWidth)
-        let ratio = x / plotWidth
-        return min(max(Int((ratio * CGFloat(max(values.count - 1, 0))).rounded()), 0), values.count - 1)
-    }
-
-    private func normalizedPoints(in size: CGSize) -> [CGPoint] {
-        guard !values.isEmpty else { return [] }
-        let maxValue = max(values.max() ?? 0, 1)
-        return values.enumerated().map { index, value in
-            let x = values.count == 1 ? size.width / 2 : CGFloat(index) / CGFloat(values.count - 1) * size.width
-            let y = size.height - CGFloat(value / maxValue) * size.height
-            return CGPoint(x: x, y: y)
-        }
+    private func index(at location: CGPoint, plotX: CGFloat, plotWidth: CGFloat) -> Int? {
+        guard !values.isEmpty, location.x >= plotX, location.x <= plotX + plotWidth else { return nil }
+        let slotWidth = plotWidth / CGFloat(values.count)
+        return min(max(Int((location.x - plotX) / slotWidth), 0), values.count - 1)
     }
 
     private var axisIndices: [Int] {

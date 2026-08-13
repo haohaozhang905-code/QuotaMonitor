@@ -1,6 +1,6 @@
 import Foundation
 
-/// 从本地 Claude Code 会话转录解析按天 token 用量。
+/// 从本地 Claude Code 会话转录解析 token 用量；历史总量按天汇总，模型桶保留到小时。
 ///
 /// 数据来源：`~/.claude/projects/**/*.jsonl`，逐行 JSON，assistant 消息的
 /// `message.usage` 含 input/cache_creation/cache_read/output 各 token 数，
@@ -142,7 +142,7 @@ actor ClaudeSessionTokenClient {
             guard parts.count == 2 else { return nil }
             let model = TokenModelName.canonical(parts[1])
             return TokenUsageBucket(
-                bucketStart: day(from: parts[0]),
+                bucketStart: TokenUsageBucket.date(fromBucketKey: parts[0]) ?? day(from: parts[0]),
                 platform: .claude,
                 client: .cli,
                 model: model,
@@ -158,7 +158,7 @@ actor ClaudeSessionTokenClient {
         guard let persistentCacheURL,
               let data = try? Data(contentsOf: persistentCacheURL),
               let persisted = try? JSONDecoder().decode(PersistedCache.self, from: data),
-              persisted.version == 1,
+              persisted.version == 2,
               persisted.rootPath == root.standardizedFileURL.path else { return }
         cache = Dictionary(uniqueKeysWithValues: persisted.entries.map {
             (URL(fileURLWithPath: $0.key), $0.value)
@@ -168,7 +168,7 @@ actor ClaudeSessionTokenClient {
     private func savePersistentCache() {
         guard let persistentCacheURL else { return }
         let payload = PersistedCache(
-            version: 1,
+            version: 2,
             rootPath: root.standardizedFileURL.path,
             entries: Dictionary(uniqueKeysWithValues: cache.map { ($0.key.path, $0.value) })
         )
@@ -194,10 +194,12 @@ actor ClaudeSessionTokenClient {
                       let usage = Self.extractUsage(obj) else { return }
 
                 let model = Self.extractModel(obj)
-                let dayKey = Self.timestamp(obj).map { Self.dayKey(for: $0) } ?? fallbackDay
+                let timestamp = Self.timestamp(obj)
+                let dayKey = timestamp.map { Self.dayKey(for: $0) } ?? fallbackDay
                 let isDeepSeek = (model ?? "").lowercased().contains("deepseek")
                 totalsByDay[dayKey, default: TokenTotals()] = totalsByDay[dayKey, default: TokenTotals()].adding(usage)
-                let modelKey = "\(dayKey)\u{1F}\((model?.isEmpty == false ? model! : "unknown"))"
+                let bucketKey = timestamp.map(TokenUsageBucket.bucketKey(for:)) ?? dayKey
+                let modelKey = "\(bucketKey)\u{1F}\((model?.isEmpty == false ? model! : "unknown"))"
                 modelByDay[modelKey, default: TokenTotals()] = modelByDay[modelKey, default: TokenTotals()].adding(usage)
                 if isDeepSeek {
                     deepSeekByDay[dayKey, default: TokenTotals()] = deepSeekByDay[dayKey, default: TokenTotals()].adding(usage)

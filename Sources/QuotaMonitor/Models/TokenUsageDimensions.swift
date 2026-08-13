@@ -76,6 +76,25 @@ struct TokenUsageBucket: Codable, Equatable, Identifiable, Sendable {
     }
 
     var total: Int { totals.input + totals.output }
+
+    /// Cache keys historically used a day-only string. New scans retain the
+    /// local hour so the overview can render a real 24-hour distribution while
+    /// still accepting old cached entries.
+    static func bucketKey(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd-HH"
+        return formatter.string(from: date)
+    }
+
+    static func date(fromBucketKey key: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = key.count > 10 ? "yyyy-MM-dd-HH" : "yyyy-MM-dd"
+        return formatter.date(from: key)
+    }
 }
 
 /// 单个本地来源一次扫描产生的完整结果。总量、DeepSeek 子集和模型桶共享同一批输入，

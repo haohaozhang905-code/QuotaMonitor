@@ -1,6 +1,6 @@
 import Foundation
 
-/// 从本地 Codex 会话日志解析按天 token 用量。
+/// 从本地 Codex 会话日志解析 token 用量；历史总量按天汇总，模型桶保留到小时。
 ///
 /// 数据来源：`~/.codex/sessions/<年>/<月>/<日>/*.jsonl` 与
 /// `~/.codex/archived_sessions/rollout-*.jsonl`（Codex 归档旧会话时移动至此）。
@@ -153,8 +153,9 @@ actor CodexSessionTokenClient {
             let parts = key.split(separator: "\u{1F}", maxSplits: 1).map(String.init)
             guard parts.count == 2 else { return nil }
             let model = TokenModelName.canonical(parts[1])
+            guard let bucketStart = TokenUsageBucket.date(fromBucketKey: parts[0]) else { return nil }
             return TokenUsageBucket(
-                bucketStart: day(from: parts[0]),
+                bucketStart: bucketStart,
                 platform: .codex,
                 client: .cli,
                 model: model,
@@ -172,7 +173,7 @@ actor CodexSessionTokenClient {
         guard let persistentCacheURL,
               let data = try? Data(contentsOf: persistentCacheURL),
               let persisted = try? JSONDecoder().decode(PersistedCache.self, from: data),
-              persisted.version == 1,
+              persisted.version == 2,
               persisted.rootPath == root.standardizedFileURL.path else { return }
         cache = Dictionary(uniqueKeysWithValues: persisted.entries.map {
             (URL(fileURLWithPath: $0.key), $0.value)
@@ -182,7 +183,7 @@ actor CodexSessionTokenClient {
     private func savePersistentCache() {
         guard let persistentCacheURL else { return }
         let payload = PersistedCache(
-            version: 1,
+            version: 2,
             rootPath: root.standardizedFileURL.path,
             entries: Dictionary(uniqueKeysWithValues: cache.map { ($0.key.path, $0.value) })
         )
@@ -235,13 +236,17 @@ actor CodexSessionTokenClient {
                 guard delta.hasAnyUsage else { return }
 
                 let dayKey: String
+                let bucketKey: String
                 if let raw = obj["timestamp"] as? String,
                    let date = Self.parseTimestamp(raw) {
                     dayKey = DailyTokenUsage.dayKey(for: date)
+                    bucketKey = TokenUsageBucket.bucketKey(for: date)
                 } else if let lastDayKey {
                     dayKey = lastDayKey
+                    bucketKey = lastDayKey
                 } else if let fallbackDayKey {
                     dayKey = fallbackDayKey
+                    bucketKey = fallbackDayKey
                 } else {
                     return
                 }
@@ -249,7 +254,7 @@ actor CodexSessionTokenClient {
 
                 totalsByDay[dayKey, default: TokenTotals()] = totalsByDay[dayKey, default: TokenTotals()].adding(delta)
                 let model = currentModel ?? ""
-                let modelKey = "\(dayKey)\u{1F}\(model.isEmpty ? "unknown" : model)"
+                let modelKey = "\(bucketKey)\u{1F}\(model.isEmpty ? "unknown" : model)"
                 modelByDay[modelKey, default: TokenTotals()] = modelByDay[modelKey, default: TokenTotals()].adding(delta)
                 if model.lowercased().contains("deepseek") {
                     deepSeekByDay[dayKey, default: TokenTotals()] = deepSeekByDay[dayKey, default: TokenTotals()].adding(delta)

@@ -308,7 +308,9 @@ struct DropdownPopoverView: View {
                 }
             }
             .scrollIndicators(.never)
-            .frame(maxHeight: 520)
+            // MenuBarExtra(.window) 没有旧 NSPanel 的显式 contentSize；
+            // ScrollView 必须提供最小高度，否则系统会按零高度收缩，只剩操作区。
+            .frame(minHeight: 300, maxHeight: 520)
 
             DropdownHairline()
                 .padding(.horizontal, DropdownLayout.horizontalPadding)

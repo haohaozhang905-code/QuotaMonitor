@@ -57,8 +57,9 @@ enum PanelTheme {
     static let codex = dynamic("#5B6F8D", "#6C82A3")
     static let codexDeep = dynamic("#4C607D", "#8296B5")
     static let codexSoft = dynamic("#E7EBF1", "#28323E")
-    static let claude = dynamic("#A8745D", "#B88972")
-    static let claudeDeep = dynamic("#8F624F", "#C39A86")
+    // Claude 官方品牌橙；图标在深浅色外观中均保持品牌原色。
+    static let claude = Color(hex: "#D97757")
+    static let claudeDeep = dynamic("#B85C3B", "#E68A6D")
     static let claudeSoft = dynamic("#F3E8E3", "#382D2A")
     static let claudeCode = dynamic("#77678B", "#8C7BA3")
     static let claudeCodeSoft = dynamic("#ECE8EF", "#302B38")
