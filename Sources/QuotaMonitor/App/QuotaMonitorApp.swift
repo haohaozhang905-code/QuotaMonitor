@@ -104,8 +104,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.isBordered = false
             button.showsBorderOnlyWhileMouseInside = false
             if let cell = button.cell as? NSButtonCell {
-                cell.highlightsBy = NSCell.StyleMask(rawValue: 8)
-                cell.showsStateBy = []
+                let nativeHighlightMask = NSCell.StyleMask(rawValue: 8)
+                cell.highlightsBy = nativeHighlightMask
+                // 状态栏浮层打开后保持系统 selected 容器，直到浮层关闭。
+                cell.showsStateBy = nativeHighlightMask
             }
             button.target = self
             button.action = #selector(statusItemClicked)
@@ -344,8 +346,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setStatusItemHighlighted(_ highlighted: Bool) {
         guard let button = statusItem?.button else { return }
-        // NSButton.highlight(_:) 使用系统自己的状态栏高亮绘制，
-        // 包括当前 macOS 的 hover/pressed 容器形状和材质。
+        // pressed 负责按下瞬间，state 负责浮层打开后的持续 selected 容器。
+        // 两者都交给 NSStatusBarButton/AppKit 绘制，不生成自定义背景。
+        button.state = highlighted ? .on : .off
         button.highlight(highlighted)
     }
 
