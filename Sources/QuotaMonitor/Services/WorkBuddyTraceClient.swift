@@ -107,6 +107,7 @@ actor WorkBuddyTraceClient {
             throw TokenSourceReadError.unreadableRoot(root)
         }
         for case let url as URL in enumerator where url.lastPathComponent.hasPrefix("trace_") && url.pathExtension == "json" {
+            try Task.checkCancellation()
             guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
                   let mtime = values.contentModificationDate,
                   let fileSize = values.fileSize else {
@@ -312,6 +313,7 @@ actor WorkBuddyTraceClient {
             var waitingForMoreData = false
 
             while let marker = Self.findUsageMarker(in: bytes, from: cursor) {
+                if Task.isCancelled { return [] }
                 let absoluteOffset = bufferStart + marker
                 cursor = marker + 1
                 if absoluteOffset <= lastMarkerOffset { continue }
@@ -383,6 +385,7 @@ actor WorkBuddyTraceClient {
         var scanner = GenerationUsageScanner(initialOffset: startingAt)
         var usages: [GenerationUsage] = []
         while true {
+            guard !Task.isCancelled else { return nil }
             guard let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty else { break }
             usages.append(contentsOf: scanner.consume(chunk))
         }

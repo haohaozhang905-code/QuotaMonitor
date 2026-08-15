@@ -78,6 +78,7 @@ actor ClaudeSessionTokenClient {
         }
 
         for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            try Task.checkCancellation()
             guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
                   let mtime = values.contentModificationDate,
                   let fileSize = values.fileSize else {

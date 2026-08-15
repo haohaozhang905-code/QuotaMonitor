@@ -137,6 +137,7 @@ actor AdditionalLocalTokenClient {
         var visited: Set<String> = []
 
         for source in sources {
+            try Task.checkCancellation()
             for root in source.resolvedRoots(home: home, environment: environment) where FileManager.default.fileExists(atPath: root.path) {
                 guard let enumerator = FileManager.default.enumerator(
                     at: root,
@@ -144,6 +145,7 @@ actor AdditionalLocalTokenClient {
                     options: [.skipsHiddenFiles]
                 ) else { continue }
                 for case let url as URL in enumerator {
+                    try Task.checkCancellation()
                     let ext = url.pathExtension.lowercased()
                     let cacheKey = Self.cacheKey(url: url, source: source)
                     guard ["json", "jsonl", "log", "db", "sqlite", "sqlite3"].contains(ext), visited.insert(cacheKey).inserted else { continue }

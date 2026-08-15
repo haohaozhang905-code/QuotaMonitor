@@ -1718,9 +1718,6 @@ struct TitlebarStatusView: View {
     let store: QuotaStore
     let language: LanguageSettings
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulse = false
-
     private var isUpdating: Bool {
         store.isRefreshing || store.isRefreshingTokenSources
     }
@@ -1730,7 +1727,6 @@ struct TitlebarStatusView: View {
             Circle()
                 .fill(statusColor)
                 .frame(width: 7, height: 7)
-                .opacity(isUpdating && pulse ? 0.4 : 1)
             Text(statusText)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(PanelTheme.text2)
@@ -1738,8 +1734,6 @@ struct TitlebarStatusView: View {
         }
         .frame(height: 24)
         .padding(.horizontal, 6)
-        .onAppear { updatePulse() }
-        .onChange(of: isUpdating) { _, _ in updatePulse() }
     }
 
     private var statusColor: Color {
@@ -1771,13 +1765,6 @@ struct TitlebarStatusView: View {
         return language.text("panel.updated", formatter.string(from: date))
     }
 
-    private func updatePulse() {
-        pulse = false
-        guard isUpdating, !reduceMotion else { return }
-        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-            pulse = true
-        }
-    }
 }
 
 // MARK: - 控件

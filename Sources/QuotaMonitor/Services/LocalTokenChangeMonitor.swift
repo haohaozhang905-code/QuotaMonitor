@@ -39,10 +39,9 @@ final class LocalTokenChangeMonitor: @unchecked Sendable {
             &context,
             watchedPaths as CFArray,
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            0.5,
+            5.0,
             FSEventStreamCreateFlags(
-                kFSEventStreamCreateFlagFileEvents
-                    | kFSEventStreamCreateFlagNoDefer
+                kFSEventStreamCreateFlagIgnoreSelf
             )
         ) else { return }
 

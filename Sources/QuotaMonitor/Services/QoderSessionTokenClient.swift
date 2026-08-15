@@ -69,6 +69,7 @@ actor QoderSessionTokenClient {
                 options: [.skipsHiddenFiles]
             ) else { continue }
             for case let url as URL in enumerator where url.pathExtension.lowercased() == "jsonl" {
+                try Task.checkCancellation()
                 guard visited.insert(url).inserted,
                       let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
                       let mtime = values.contentModificationDate,

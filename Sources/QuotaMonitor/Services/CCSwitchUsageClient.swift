@@ -100,6 +100,7 @@ actor CCSwitchUsageClient {
 
         var rows: [Row] = []
         while true {
+            guard !Task.isCancelled else { return nil }
             let step = sqlite3_step(statement)
             if step == SQLITE_ROW {
                 let model = sqlite3_column_text(statement, 0).map { String(cString: $0) } ?? TokenModelName.unknown
