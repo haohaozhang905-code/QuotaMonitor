@@ -9,7 +9,9 @@ struct QuotaModelsTests {
             Self.bucket(day: day, platform: .codex, client: .cli, model: "auto", total: 20),
             Self.bucket(day: day, platform: .codex, client: .cli, model: " UNKNOWN ", total: 30),
             Self.bucket(day: day, platform: .codex, client: .cli, model: "", total: 40),
-            Self.bucket(day: day, platform: .codex, client: .cli, model: "gpt-5.6-sol", total: 50)
+            Self.bucket(day: day, platform: .codex, client: .cli, model: "gpt-5.6-sol", total: 50),
+            Self.bucket(day: day, platform: .codex, client: .cli, model: "DeepSeek V4 flash", total: 30),
+            Self.bucket(day: day, platform: .codex, client: .cli, model: "deepseek v4 flash", total: 20)
         ]
 
         let combined = TokenUsageBucket.combining(buckets)
@@ -27,11 +29,13 @@ struct QuotaModelsTests {
 
         #expect(TokenModelName.canonical(" AUTO ") == "unknown")
         #expect(TokenModelName.canonical("unknown") == "unknown")
+        #expect(TokenModelName.canonical(" DeepSeek V4 flash ") == "deepseek v4 flash")
         #expect(TokenModelName.canonical(" gpt-5.6-sol ") == "gpt-5.6-sol")
-        #expect(combined.count == 2)
+        #expect(combined.count == 3)
         #expect(combined.first { $0.model == "unknown" }?.total == 90)
         #expect(combined.first { $0.model == "gpt-5.6-sol" }?.total == 50)
-        #expect(presentation.modelToday.count == 2)
+        #expect(combined.first { $0.model == "deepseek v4 flash" }?.total == 50)
+        #expect(presentation.modelToday.count == 3)
         #expect(presentation.modelToday.first { $0.key == .model("unknown") }?.total == 90)
     }
 

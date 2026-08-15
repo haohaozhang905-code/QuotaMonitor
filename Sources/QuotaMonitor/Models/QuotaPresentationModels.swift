@@ -48,6 +48,7 @@ extension UsageBreakdownKey {
             switch (platform, client) {
             case (.codex, _): platform.displayName
             case (.claude, .cli): claudeCode
+            case (_, .estimated): "\(platform.displayName)（估算）"
             default: platform.displayName
             }
         case let .model(model): model

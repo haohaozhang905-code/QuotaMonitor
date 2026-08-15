@@ -145,7 +145,7 @@
 "settings.deepSeekConnected" = "DeepSeek 路由 · 已连接";
 "settings.manage" = "管理连接　›";
 "settings.tokenLogs" = "Token 日志";
-"settings.tokenLogs.detail" = "Codex、Claude、WorkBuddy、Kimi";
+"settings.tokenLogs.detail" = "Codex、Claude、WorkBuddy、Kimi、Trae Work、千问办公";
 "settings.sourceCount" = "%@ 个来源";
 "sidebar.connectionHealthy" = "数据源正常";
 "sidebar.connectionDetail" = "本地数据源已连接";

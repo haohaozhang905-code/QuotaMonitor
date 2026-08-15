@@ -4,7 +4,7 @@ set -euo pipefail
 MODE="${1:-run}"
 APP_NAME="QuotaMonitor"
 BINARY_NAME="QuotaMonitor"
-BUNDLE_ID="com.cmsjcm.QuotaMonitor"
+BUNDLE_ID="com.cmsjcm.QuotaMonitorStatus"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_BUNDLE="/Applications/$APP_NAME.app"
 APP_MACOS="$APP_BUNDLE/Contents/MacOS"

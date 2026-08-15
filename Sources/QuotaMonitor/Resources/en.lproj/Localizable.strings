@@ -145,7 +145,7 @@
 "settings.deepSeekConnected" = "DeepSeek route · Connected";
 "settings.manage" = "Manage connection　›";
 "settings.tokenLogs" = "Token logs";
-"settings.tokenLogs.detail" = "Codex, Claude, WorkBuddy, Kimi";
+"settings.tokenLogs.detail" = "Codex, Claude, WorkBuddy, Kimi, Trae Work, Qwen Office";
 "settings.sourceCount" = "%@ sources";
 "sidebar.connectionHealthy" = "Data source ready";
 "sidebar.connectionDetail" = "Local data source connected";

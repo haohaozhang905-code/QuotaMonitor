@@ -14,6 +14,8 @@ enum TokenPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
     case antigravity
     case cline
     case qwen
+    case qwenWork
+    case traeWork
     case grok
     case copilot
     case pi
@@ -44,6 +46,8 @@ extension TokenPlatform {
         case .antigravity: "Antigravity"
         case .cline: "Cline"
         case .qwen: "Qwen CLI"
+        case .qwenWork: "千问办公"
+        case .traeWork: "Trae Work"
         case .grok: "Grok Build"
         case .copilot: "GitHub Copilot"
         case .pi: "Pi"
@@ -63,6 +67,7 @@ extension TokenPlatform {
 enum TokenClient: String, CaseIterable, Codable, Identifiable, Sendable {
     case cli
     case desktop
+    case estimated
     case plugin
     case unknown
 
@@ -80,15 +85,16 @@ enum TokenProvider: String, CaseIterable, Codable, Identifiable, Sendable {
 enum TokenModelName {
     static let unknown = "unknown"
 
-    /// 模型维度只保留可识别的实际模型名。日志里的空值、auto 和 unknown
-    /// 都表示没有可靠模型归属，因此统一进入同一个 unknown 桶。
+    /// 模型维度统一使用小写，避免同一模型只因大小写不同被拆成多个桶。
+    /// 日志里的空值、auto 和 unknown 都表示没有可靠模型归属，因此统一进入同一个 unknown 桶。
     static func canonical(_ rawValue: String?) -> String {
         let trimmed = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        switch trimmed.lowercased() {
+        let normalized = trimmed.lowercased()
+        switch normalized {
         case "", "auto", unknown:
             return unknown
         default:
-            return trimmed
+            return normalized
         }
     }
 }
