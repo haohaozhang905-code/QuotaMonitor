@@ -321,6 +321,40 @@ struct WorkBuddyTraceClientTests {
         #expect(buckets.first?.model == "hy3")
     }
 
+    @Test func appendsWorkBuddyGenerationUsageWithoutDoubleCounting() async throws {
+        let root = try Fixtures.makeTempDir("workbuddy-generation-append")
+        defer { Fixtures.remove(root) }
+
+        let day = Fixtures.noon(yesterdayOffset: 0)
+        let created = Int(day.timeIntervalSince1970)
+        func response(id: String, input: Int, output: Int) throws -> String {
+            let object: [String: Any] = [
+                "id": id,
+                "created": created,
+                "model": "hy3",
+                "usage": [
+                    "prompt_tokens": input,
+                    "completion_tokens": output,
+                    "total_tokens": input + output
+                ]
+            ]
+            let data = try JSONSerialization.data(withJSONObject: object)
+            return String(decoding: data, as: UTF8.self).replacingOccurrences(of: "\"", with: "\\\"")
+        }
+
+        let first = try response(id: "g1", input: 120, output: 30)
+        let second = try response(id: "g2", input: 200, output: 40)
+        let prefix = "{\"trace\":{\"startedAt\":\"\(Fixtures.iso(day))\",\"totalTokens\":0},\"spans\":[{\"name\":\"generation\",\"type\":\"generation\",\"toolOutput\":\"["
+        let file = root.appendingPathComponent("trace_append.json")
+        try (prefix + first + "]}]}" ).write(to: file, atomically: true, encoding: .utf8)
+
+        let client = WorkBuddyTraceClient(root: root)
+        #expect(await client.fetch().first?.total == 150)
+
+        try (prefix + first + "," + second + "]}]}" ).write(to: file, atomically: true, encoding: .utf8)
+        #expect(await client.fetch().first?.total == 390)
+    }
+
     @Test func waitsForCompleteGenerationUsageAcrossReadChunks() async throws {
         let root = try Fixtures.makeTempDir("workbuddy-generation-boundary")
         defer { Fixtures.remove(root) }
@@ -462,6 +496,32 @@ struct AdditionalLocalTokenClientTests {
         #expect(try await client.fetchSnapshots() == snapshots)
     }
 
+    @Test func appendsOnlyNewGenericJSONLLines() async throws {
+        let root = try Fixtures.makeTempDir("additional-append")
+        defer { Fixtures.remove(root) }
+        let day = Fixtures.iso(Fixtures.noon(yesterdayOffset: 0))
+        let directory = root.appendingPathComponent("openclaw", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("session.jsonl")
+        let first = #"{"timestamp":"\#(day)","model":"gpt-5.6-sol","usage":{"prompt_tokens":10,"completion_tokens":2}}"#
+        let second = #"{"timestamp":"\#(day)","model":"gpt-5.6-sol","usage":{"prompt_tokens":20,"completion_tokens":3}}"#
+        try (first + "\n").write(to: file, atomically: true, encoding: .utf8)
+
+        let source = LocalToolTokenSource(
+            platform: .openclaw,
+            roots: ["openclaw"],
+            overrideEnvironment: ""
+        )
+        let client = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:])
+        #expect(try await client.fetchSnapshots().first?.history.first?.total == 12)
+
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((second + "\n").utf8))
+        try handle.close()
+        #expect(try await client.fetchSnapshots().first?.history.first?.total == 35)
+    }
+
     private func createUsageDB(at url: URL, day: Date) throws {
         var db: OpaquePointer?
         guard sqlite3_open(url.path, &db) == SQLITE_OK, let db else { throw TestError.dbOpenFailed }
@@ -511,6 +571,86 @@ struct KimiDesktopTokenClientTests {
     }
 }
 
+struct QwenWorkTokenClientTests {
+    @Test func countsModelResponsesWithoutRepeatingTurnSummary() async throws {
+        let root = try Fixtures.makeTempDir("qwen-work")
+        defer { Fixtures.remove(root) }
+        let day = Fixtures.noon(yesterdayOffset: 0)
+        let sessions = root.appendingPathComponent(".qwenworkcn/logs/sessions/project/session", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        let timestamp = Fixtures.iso(day)
+        let lines = [
+            #"{"ts":"\#(timestamp)","type":"model.response.completed","data":{"model":"qwork-lite","input_tokens":100,"output_tokens":20,"cache_read_input_tokens":30}}"#,
+            #"{"ts":"\#(timestamp)","type":"turn.finished","data":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":30}}"#
+        ]
+        try lines.joined(separator: "\n").write(to: sessions.appendingPathComponent("segment.jsonl"), atomically: true, encoding: .utf8)
+
+        let source = LocalToolTokenSource(
+            platform: .qwenWork,
+            roots: [".qwenworkcn/logs/sessions"],
+            overrideEnvironment: "",
+            format: .qwenWork,
+            client: .desktop
+        )
+        let client = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:])
+        let snapshot = try await client.fetchSnapshots().first
+
+        #expect(snapshot?.history.first?.total == 150)
+        #expect(snapshot?.history.first?.cachedInput == 30)
+        #expect(snapshot?.buckets.first?.model == "qwork-lite")
+    }
+
+}
+
+struct TraeWorkTokenSourceTests {
+    @Test func countsOnlyExplicitFeeUsageAndIgnoresNullMetadata() async throws {
+        let root = try Fixtures.makeTempDir("trae-work")
+        defer { Fixtures.remove(root) }
+        let logs = root.appendingPathComponent("Library/Application Support/TRAE SOLO CN/logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let lines = [
+            #"2026-08-14 [info] metadata {"fee_usage":null,"model_info":{"prompt_max_tokens":168000}}"#,
+            #"2026-08-14 [info] metadata {"model":"DeepSeek-V4-Flash","fee_usage":{"input_tokens":40,"output_tokens":8}}"#
+        ]
+        try lines.joined(separator: "\n").write(to: logs.appendingPathComponent("renderer.log"), atomically: true, encoding: .utf8)
+
+        let source = LocalToolTokenSource(
+            platform: .traeWork,
+            roots: ["Library/Application Support/TRAE SOLO CN/logs"],
+            overrideEnvironment: "",
+            format: .traeWork,
+            client: .desktop
+        )
+        let client = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:])
+        let snapshot = try await client.fetchSnapshots().first
+
+        #expect(snapshot?.history.first?.total == 48)
+        #expect(snapshot?.buckets.first?.model == "deepseek-v4-flash")
+    }
+
+    @Test func ignoresMetadataWithoutFeeUsage() async throws {
+        let root = try Fixtures.makeTempDir("trae-work-estimate")
+        defer { Fixtures.remove(root) }
+        let logs = root.appendingPathComponent("Library/Application Support/TRAE SOLO CN/logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let day = Fixtures.noon(yesterdayOffset: 0)
+        let line = #"2026-08-14T18:44:18.566+08:00 [info] [trae-chat-core] [MetadataHandler] received metadata {"message_id":"m1","created_at":\#(Int(day.timeIntervalSince1970)),"user_message_context":{"model_info":{"model_name":"DeepSeek-V4-Flash"},"query":"[{\"type\":\"text\",\"data\":{\"content\":\"请分析这份报告\"}}]"}}"#
+        try line.write(to: logs.appendingPathComponent("renderer.log"), atomically: true, encoding: .utf8)
+
+        let source = LocalToolTokenSource(
+            platform: .traeWork,
+            roots: ["Library/Application Support/TRAE SOLO CN/logs"],
+            overrideEnvironment: "",
+            format: .traeWork,
+            client: .desktop
+        )
+        let client = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:])
+        let snapshot = try await client.fetchSnapshots().first
+
+        #expect(snapshot == nil)
+    }
+}
+
 struct QoderSessionTokenClientTests {
     @Test func readsCanonicalEventsAndDeduplicatesDesktopMessageCopies() async throws {
         let root = try Fixtures.makeTempDir("qoder")
@@ -537,5 +677,25 @@ struct QoderSessionTokenClientTests {
         #expect(snapshot.history.first?.total == 195)
         #expect(snapshot.buckets.filter { $0.client == .desktop }.count == 1)
         #expect(snapshot.buckets.contains { $0.model == "qoder-max" && $0.client == .cli })
+    }
+
+    @Test func appendsOnlyNewQoderJSONLLines() async throws {
+        let root = try Fixtures.makeTempDir("qoder-append")
+        defer { Fixtures.remove(root) }
+        let day = Fixtures.iso(Fixtures.noon(yesterdayOffset: 0))
+        let file = root.appendingPathComponent(".qoder/logs/sessions/history.jsonl")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let first = #"{"type":"model.response.completed","request_id":"r1","ts":"\#(day)","data":{"model":"qoder-max","input_tokens":10,"output_tokens":2}}"#
+        let second = #"{"type":"model.response.completed","request_id":"r2","ts":"\#(day)","data":{"model":"qoder-max","input_tokens":20,"output_tokens":3}}"#
+        try (first + "\n").write(to: file, atomically: true, encoding: .utf8)
+
+        let client = QoderSessionTokenClient(home: root)
+        #expect(try await client.fetchSnapshot().history.first?.total == 12)
+
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((second + "\n").utf8))
+        try handle.close()
+        #expect(try await client.fetchSnapshot().history.first?.total == 35)
     }
 }

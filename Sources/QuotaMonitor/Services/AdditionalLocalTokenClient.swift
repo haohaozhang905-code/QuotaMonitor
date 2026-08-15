@@ -8,6 +8,10 @@ struct LocalToolTokenSource: Hashable, Sendable {
         case generic
         /// Kimi Desktop 的 wire.jsonl 同时记录步骤结束与 usage.record；仅后者是一条可计费请求。
         case kimiWire
+        /// 千问办公同时写入 model.response.completed 与 turn.finished；前者是一条模型请求，后者是回合汇总。
+        case qwenWork
+        /// Trae Work 的 renderer.log 在 JSON 前带有日志前缀，仅解析含有明确 fee_usage 的行。
+        case traeWork
     }
 
     let platform: TokenPlatform
@@ -60,6 +64,20 @@ struct LocalToolTokenSource: Hashable, Sendable {
             client: .desktop
         ),
         .init(platform: .qwen, roots: [".qwen/projects"], overrideEnvironment: "QUOTAMONITOR_QWEN_HOME"),
+        .init(
+            platform: .qwenWork,
+            roots: [".qwenworkcn/logs/sessions"],
+            overrideEnvironment: "QUOTAMONITOR_QWEN_WORK_HOME",
+            format: .qwenWork,
+            client: .desktop
+        ),
+        .init(
+            platform: .traeWork,
+            roots: ["Library/Application Support/TRAE SOLO CN/logs"],
+            overrideEnvironment: "QUOTAMONITOR_TRAE_WORK_HOME",
+            format: .traeWork,
+            client: .desktop
+        ),
         .init(platform: .grok, roots: [".grok/sessions", ".grok/logs"], overrideEnvironment: "GROK_HOME"),
         .init(platform: .copilot, roots: [".copilot", "Library/Application Support/Code/User/globalStorage/github.copilot-chat"], overrideEnvironment: "QUOTAMONITOR_COPILOT_HOME"),
         .init(platform: .pi, roots: [".pi/agent/sessions", ".omp/agent/sessions"], overrideEnvironment: "QUOTAMONITOR_PI_HOME"),
@@ -81,6 +99,7 @@ actor AdditionalLocalTokenClient {
         let mtime: Date
         let fileSize: Int
         let buckets: [TokenUsageBucket]
+        let processedByteCount: Int?
 
         func matches(mtime candidate: Date, fileSize size: Int) -> Bool {
             fileSize == size && abs(mtime.timeIntervalSinceReferenceDate - candidate.timeIntervalSinceReferenceDate) < 0.001
@@ -96,7 +115,7 @@ actor AdditionalLocalTokenClient {
     private let home: URL
     private let environment: [String: String]
     private let persistentCacheURL: URL?
-    private var cache: [URL: FileCache] = [:]
+    private var cache: [String: FileCache] = [:]
     private var didLoadCache = false
 
     init(
@@ -113,11 +132,12 @@ actor AdditionalLocalTokenClient {
 
     func fetchSnapshots() throws -> [TokenSourceSnapshot] {
         loadPersistentCacheIfNeeded()
-        var freshCache: [URL: FileCache] = [:]
+        var freshCache: [String: FileCache] = [:]
         var bucketsByPlatform: [TokenPlatform: [TokenUsageBucket]] = [:]
-        var visited: Set<URL> = []
+        var visited: Set<String> = []
 
         for source in sources {
+            try Task.checkCancellation()
             for root in source.resolvedRoots(home: home, environment: environment) where FileManager.default.fileExists(atPath: root.path) {
                 guard let enumerator = FileManager.default.enumerator(
                     at: root,
@@ -125,26 +145,47 @@ actor AdditionalLocalTokenClient {
                     options: [.skipsHiddenFiles]
                 ) else { continue }
                 for case let url as URL in enumerator {
+                    try Task.checkCancellation()
                     let ext = url.pathExtension.lowercased()
-                    guard ["json", "jsonl", "log", "db", "sqlite", "sqlite3"].contains(ext), visited.insert(url).inserted else { continue }
+                    let cacheKey = Self.cacheKey(url: url, source: source)
+                    guard ["json", "jsonl", "log", "db", "sqlite", "sqlite3"].contains(ext), visited.insert(cacheKey).inserted else { continue }
                     guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
                           let mtime = values.contentModificationDate,
                           let size = values.fileSize else { continue }
+                    let cached = cache[cacheKey]
                     let buckets: [TokenUsageBucket]
-                    if let cached = cache[url], cached.matches(mtime: mtime, fileSize: size) {
+                    if let cached = cache[cacheKey], cached.matches(mtime: mtime, fileSize: size) {
                         buckets = cached.buckets
                     } else {
-                        guard let parsed = Self.parse(url: url, source: source, fallbackDate: mtime) else {
-                            if let cached = cache[url] {
-                                freshCache[url] = cached
+                        let isLineFile = ["jsonl", "log"].contains(ext)
+                        let canContinue = isLineFile
+                            && cached?.processedByteCount == cached?.fileSize
+                            && size > (cached?.fileSize ?? 0)
+                            && JSONLReader.isLineBoundary(at: cached?.fileSize ?? 0, in: url)
+                        let startingAt = canContinue ? cached?.fileSize ?? 0 : 0
+                        guard let parsed = Self.parse(
+                            url: url,
+                            source: source,
+                            fallbackDate: mtime,
+                            startingAt: startingAt
+                        ) else {
+                            if let cached = cache[cacheKey] {
+                                freshCache[cacheKey] = cached
                                 bucketsByPlatform[source.platform, default: []].append(contentsOf: cached.buckets)
                             }
                             continue
                         }
-                        buckets = parsed
+                        buckets = canContinue
+                            ? TokenUsageBucket.combining((cached?.buckets ?? []) + parsed)
+                            : parsed
                     }
-                    let entry = FileCache(mtime: mtime, fileSize: size, buckets: buckets)
-                    freshCache[url] = entry
+                    let entry = FileCache(
+                        mtime: mtime,
+                        fileSize: size,
+                        buckets: buckets,
+                        processedByteCount: size
+                    )
+                    freshCache[cacheKey] = entry
                     bucketsByPlatform[source.platform, default: []].append(contentsOf: buckets)
                 }
             }
@@ -164,26 +205,37 @@ actor AdditionalLocalTokenClient {
         guard let persistentCacheURL,
               let data = try? Data(contentsOf: persistentCacheURL),
               let payload = try? JSONDecoder().decode(PersistedCache.self, from: data),
-              payload.version == 1 else { return }
-        cache = Dictionary(uniqueKeysWithValues: payload.entries.map { (URL(fileURLWithPath: $0.key), $0.value) })
+              payload.version == 3 else { return }
+        cache = payload.entries
     }
 
     private func savePersistentCache() {
         guard let persistentCacheURL,
-              let data = try? JSONEncoder().encode(PersistedCache(version: 1, entries: Dictionary(uniqueKeysWithValues: cache.map { ($0.key.path, $0.value) }))) else { return }
+              let data = try? JSONEncoder().encode(PersistedCache(version: 3, entries: cache)) else { return }
         try? FileManager.default.createDirectory(at: persistentCacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: persistentCacheURL, options: .atomic)
     }
 
-    private static func parse(url: URL, source: LocalToolTokenSource, fallbackDate: Date) -> [TokenUsageBucket]? {
+    private static func parse(
+        url: URL,
+        source: LocalToolTokenSource,
+        fallbackDate: Date,
+        startingAt: Int
+    ) -> [TokenUsageBucket]? {
         if source.format == .kimiWire {
-            return parseKimiWire(url: url, source: source, fallbackDate: fallbackDate)
+            return parseKimiWire(url: url, source: source, fallbackDate: fallbackDate, startingAt: startingAt)
+        }
+        if source.format == .qwenWork {
+            return parseQwenWork(url: url, source: source, fallbackDate: fallbackDate, startingAt: startingAt)
+        }
+        if source.format == .traeWork {
+            return parseTraeWork(url: url, source: source, fallbackDate: fallbackDate, startingAt: startingAt)
         }
         switch url.pathExtension.lowercased() {
         case "db", "sqlite", "sqlite3": return parseSQLite(url: url, source: source, fallbackDate: fallbackDate)
         case "jsonl", "log":
             var parsedBuckets: [TokenUsageBucket] = []
-            let didRead = JSONLReader.forEachLine(at: url) { data in
+            let didRead = JSONLReader.forEachLine(at: url, startingAt: UInt64(startingAt)) { data in
                 guard let value = try? JSONSerialization.jsonObject(with: data) else { return }
                 parsedBuckets.append(contentsOf: buckets(in: value, source: source, fallbackDate: fallbackDate))
             }
@@ -207,12 +259,12 @@ actor AdditionalLocalTokenClient {
             guard let object = value as? [String: Any] else { return }
             let model = string(in: object, keys: ["model", "model_name", "modelName", "model_id", "modelId"]) ?? inheritedModel
             let date = date(in: object) ?? inheritedDate
-            if let usage = object["usage"] ?? object["token_usage"] ?? object["tokenUsage"], let totals = totals(in: usage) {
+            if let usage = object["usage"] ?? object["token_usage"] ?? object["tokenUsage"] ?? object["fee_usage"], let totals = totals(in: usage) {
                 append(totals: totals, model: model, date: date ?? fallbackDate)
             } else if let totals = totals(in: object) {
                 append(totals: totals, model: model, date: date ?? fallbackDate)
             }
-            for (key, child) in object where key != "usage" && key != "token_usage" && key != "tokenUsage" {
+            for (key, child) in object where key != "usage" && key != "token_usage" && key != "tokenUsage" && key != "fee_usage" {
                 scan(child, model: model, date: date, depth: depth + 1)
             }
         }
@@ -251,10 +303,15 @@ actor AdditionalLocalTokenClient {
 
     /// Kimi Desktop / Kimi Code 的一个回合有 `step.end` 与 `usage.record` 两类使用量事件；
     /// 前者是前者的镜像，故只读取 `usage.record`，避免每个回合重复统计。
-    private static func parseKimiWire(url: URL, source: LocalToolTokenSource, fallbackDate: Date) -> [TokenUsageBucket]? {
+    private static func parseKimiWire(
+        url: URL,
+        source: LocalToolTokenSource,
+        fallbackDate: Date,
+        startingAt: Int
+    ) -> [TokenUsageBucket]? {
         guard url.pathExtension.lowercased() == "jsonl" else { return [] }
         var buckets: [TokenUsageBucket] = []
-        let didRead = JSONLReader.forEachLine(at: url) { data in
+        let didRead = JSONLReader.forEachLine(at: url, startingAt: UInt64(startingAt)) { data in
             guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   object["type"] as? String == "usage.record",
                   let usage = object["usage"] as? [String: Any] else { return }
@@ -284,6 +341,74 @@ actor AdditionalLocalTokenClient {
         return TokenUsageBucket.combining(buckets)
     }
 
+    /// 千问办公的 session segment 同时保存每个模型请求和一个回合汇总。
+    /// 只读取 model.response.completed，避免把 turn.finished 再加一遍。
+    private static func parseQwenWork(
+        url: URL,
+        source: LocalToolTokenSource,
+        fallbackDate: Date,
+        startingAt: Int
+    ) -> [TokenUsageBucket]? {
+        guard url.pathExtension.lowercased() == "jsonl" else { return [] }
+        var buckets: [TokenUsageBucket] = []
+        let didRead = JSONLReader.forEachLine(at: url, startingAt: UInt64(startingAt)) { data in
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["type"] as? String == "model.response.completed",
+                  let usage = object["data"] as? [String: Any],
+                  let totals = totals(in: usage) else { return }
+            // qwork 的 input_tokens 不含 cache_read/cache_creation，统一口径时把缓存并入 input。
+            var normalizedTotals = totals
+            normalizedTotals.input += totals.cachedInput + totals.cacheWriteInput
+            let model = TokenModelName.canonical(string(in: usage, keys: ["model"]) ?? string(in: object, keys: ["model"]))
+            let date = date(in: object) ?? fallbackDate
+            let hour = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day, .hour], from: date)) ?? date
+            buckets.append(TokenUsageBucket(
+                bucketStart: hour,
+                platform: source.platform,
+                client: source.client,
+                model: model,
+                provider: model.lowercased().contains("deepseek") ? .deepseek : .official,
+                totals: normalizedTotals
+            ))
+        }
+        guard didRead else { return nil }
+        return TokenUsageBucket.combining(buckets)
+    }
+
+    /// Trae Work 的 renderer.log 形如 `ISO 时间 [级别] ... {JSON}`，
+    /// 只读取明确含有 fee_usage 的记录，避免把 prompt_max_tokens 等上限字段误当成消耗。
+    private static func parseTraeWork(
+        url: URL,
+        source: LocalToolTokenSource,
+        fallbackDate: Date,
+        startingAt: Int
+    ) -> [TokenUsageBucket]? {
+        guard url.pathExtension.lowercased() == "log" else { return [] }
+        var parsedBuckets: [TokenUsageBucket] = []
+        let didRead = JSONLReader.forEachLine(at: url, startingAt: UInt64(startingAt)) { data in
+            guard let line = String(data: data, encoding: .utf8), line.contains("\"fee_usage\""),
+                  let start = line.firstIndex(of: "{"),
+                  let jsonData = String(line[start...]).data(using: .utf8),
+                  let value = try? JSONSerialization.jsonObject(with: jsonData) else { return }
+            let lineDate = traeLogDate(from: line) ?? fallbackDate
+            parsedBuckets.append(contentsOf: buckets(in: value, source: source, fallbackDate: lineDate))
+        }
+        guard didRead else { return nil }
+        return TokenUsageBucket.combining(parsedBuckets)
+    }
+
+    private static func traeLogDate(from line: String) -> Date? {
+        guard let separator = line.range(of: " [") else { return nil }
+        let raw = String(line[..<separator.lowerBound])
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: raw)
+    }
+
+    private static func cacheKey(url: URL, source: LocalToolTokenSource) -> String {
+        "\(url.path)|\(source.platform.rawValue)|\(source.format.rawValue)|\(source.client.rawValue)"
+    }
+
     private static func number(in object: [String: Any], keys: [String]) -> Int {
         for key in keys {
             if let number = object[key] as? NSNumber { return number.intValue }
@@ -297,7 +422,7 @@ actor AdditionalLocalTokenClient {
     }
 
     private static func date(in object: [String: Any]) -> Date? {
-        for key in ["timestamp", "created_at", "createdAt", "created", "time", "updated_at"] {
+        for key in ["timestamp", "created_at", "createdAt", "created", "time", "ts", "updated_at"] {
             if let value = object[key] as? NSNumber {
                 let seconds = value.doubleValue > 100_000_000_000 ? value.doubleValue / 1_000 : value.doubleValue
                 return Date(timeIntervalSince1970: seconds)

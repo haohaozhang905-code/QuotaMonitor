@@ -10,12 +10,21 @@ import Foundation
 /// 统一口径：total = totalInputTokens + totalOutputTokens（input 已含缓存），
 /// cached 单独列示，与 Codex 会话口径一致。
 actor WorkBuddyTraceClient {
+    private struct GenerationUsageRecord: Codable, Equatable {
+        let offset: Int
+        let date: Date?
+        let model: String
+        let totals: TokenTotals
+    }
+
     private struct FileCache: Codable, Equatable {
         let mtime: Date
         let fileSize: Int
         let totalsByDay: [String: TokenTotals]
         let deepSeekByDay: [String: TokenTotals]
         let modelByDay: [String: TokenTotals]
+        let processedByteCount: Int?
+        let generationUsages: [GenerationUsageRecord]?
 
         func matches(mtime candidateMtime: Date, fileSize candidateSize: Int) -> Bool {
             fileSize == candidateSize
@@ -53,6 +62,7 @@ actor WorkBuddyTraceClient {
     private var cache: [URL: FileCache] = [:]
     private var didLoadPersistentCache = false
     private let headerReadLimit = 64 * 1024
+    private let generationOverlap = 1024 * 1024
     private let root: URL
     private let persistentCacheURL: URL?
 
@@ -97,6 +107,7 @@ actor WorkBuddyTraceClient {
             throw TokenSourceReadError.unreadableRoot(root)
         }
         for case let url as URL in enumerator where url.lastPathComponent.hasPrefix("trace_") && url.pathExtension == "json" {
+            try Task.checkCancellation()
             guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
                   let mtime = values.contentModificationDate,
                   let fileSize = values.fileSize else {
@@ -110,14 +121,12 @@ actor WorkBuddyTraceClient {
             if let cached = cache[url], cached.matches(mtime: mtime, fileSize: fileSize) {
                 newCache[url] = cached
                 modelByDay = cached.modelByDay
-            } else if let parsed = parseFile(url) {
-                let entry = FileCache(
-                    mtime: mtime,
-                    fileSize: fileSize,
-                    totalsByDay: parsed.totalsByDay,
-                    deepSeekByDay: parsed.deepSeekByDay,
-                    modelByDay: parsed.modelByDay
-                )
+            } else if let entry = parseFile(
+                url,
+                mtime: mtime,
+                fileSize: fileSize,
+                cached: cache[url]
+            ) {
                 newCache[url] = entry
                 modelByDay = entry.modelByDay
             } else if let cached = cache[url] {
@@ -131,7 +140,9 @@ actor WorkBuddyTraceClient {
                     fileSize: fileSize,
                     totalsByDay: [:],
                     deepSeekByDay: [:],
-                    modelByDay: [:]
+                    modelByDay: [:],
+                    processedByteCount: fileSize,
+                    generationUsages: []
                 )
                 newCache[url] = entry
                 modelByDay = [:]
@@ -187,7 +198,12 @@ actor WorkBuddyTraceClient {
         try? data.write(to: persistentCacheURL, options: .atomic)
     }
 
-    private func parseFile(_ url: URL) -> (totalsByDay: [String: TokenTotals], deepSeekByDay: [String: TokenTotals], modelByDay: [String: TokenTotals])? {
+    private func parseFile(
+        _ url: URL,
+        mtime: Date,
+        fileSize: Int,
+        cached: FileCache?
+    ) -> FileCache? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         guard let data = try? handle.read(upToCount: headerReadLimit),
@@ -206,22 +222,71 @@ actor WorkBuddyTraceClient {
             totals.cachedInput = summary.modelInfo?.totalCachedTokens ?? 0
             let model = summary.modelInfo?.models?.joined(separator: " + ") ?? "unknown"
             let isDeepSeek = model.lowercased().contains("deepseek")
-            return (
-                [dayKey: totals],
-                isDeepSeek ? [dayKey: totals] : [:],
-                ["\(bucketKey)\u{1F}\(model)": totals]
+            return FileCache(
+                mtime: mtime,
+                fileSize: fileSize,
+                totalsByDay: [dayKey: totals],
+                deepSeekByDay: isDeepSeek ? [dayKey: totals] : [:],
+                modelByDay: ["\(bucketKey)\u{1F}\(model)": totals],
+                processedByteCount: fileSize,
+                generationUsages: nil
             )
         }
 
         // 新版 WorkBuddy 的 trace.totalTokens 可能为 0，实际 usage 在 generation span 的
         // toolOutput 字符串里；用定向分块扫描，避免把完整对话 JSON 一次性读入内存。
-        return Self.parseGenerationUsages(
+        let canContinue = cached?.generationUsages != nil
+            && cached?.processedByteCount == cached?.fileSize
+            && fileSize > (cached?.fileSize ?? 0)
+        let startingAt = canContinue
+            ? max(0, (cached?.fileSize ?? 0) - generationOverlap)
+            : 0
+        guard let parsedUsages = Self.parseGenerationUsages(
             at: url,
-            fallbackDay: dayKey
+            startingAt: startingAt
+        ) else { return nil }
+
+        var usagesByOffset = Dictionary(
+            uniqueKeysWithValues: (canContinue ? cached?.generationUsages ?? [] : []).map {
+                ($0.offset, $0)
+            }
+        )
+        for usage in parsedUsages {
+            usagesByOffset[usage.offset] = GenerationUsageRecord(
+                offset: usage.offset,
+                date: usage.date,
+                model: usage.model,
+                totals: usage.totals
+            )
+        }
+        let usages = usagesByOffset.values.sorted { $0.offset < $1.offset }
+        var totalsByDay: [String: TokenTotals] = [:]
+        var deepSeekByDay: [String: TokenTotals] = [:]
+        var modelByDay: [String: TokenTotals] = [:]
+        for usage in usages {
+            let usageDay = usage.date.map(Self.dayKey(for:)) ?? dayKey
+            let model = usage.model.isEmpty ? "unknown" : usage.model
+            totalsByDay[usageDay, default: TokenTotals()] = totalsByDay[usageDay, default: TokenTotals()].adding(usage.totals)
+            let usageBucket = usage.date.map(TokenUsageBucket.bucketKey(for:)) ?? usageDay
+            let modelKey = "\(usageBucket)\u{1F}\(model)"
+            modelByDay[modelKey, default: TokenTotals()] = modelByDay[modelKey, default: TokenTotals()].adding(usage.totals)
+            if model.lowercased().contains("deepseek") {
+                deepSeekByDay[usageDay, default: TokenTotals()] = deepSeekByDay[usageDay, default: TokenTotals()].adding(usage.totals)
+            }
+        }
+        return FileCache(
+            mtime: mtime,
+            fileSize: fileSize,
+            totalsByDay: totalsByDay,
+            deepSeekByDay: deepSeekByDay,
+            modelByDay: modelByDay,
+            processedByteCount: fileSize,
+            generationUsages: usages
         )
     }
 
     private struct GenerationUsage {
+        let offset: Int
         let date: Date?
         let model: String
         let totals: TokenTotals
@@ -229,38 +294,58 @@ actor WorkBuddyTraceClient {
 
     private struct GenerationUsageScanner {
         private var buffer = Data()
-        private var bufferStart = 0
+        private var bufferStart: Int
         private var lastMarkerOffset = -1
+        private var nextSearchOffset = 0
         // model/created 位于响应头，usage 位于响应尾。保留有限的大窗口以覆盖长回复，
         // 同时仍避免把数百 MB trace 一次性载入内存。
         private let contextLimit = 512 * 1024
 
+        init(initialOffset: Int = 0) {
+            bufferStart = initialOffset
+        }
+
         mutating func consume(_ chunk: Data, final: Bool = false) -> [GenerationUsage] {
             buffer.append(chunk)
-            let bytes = Array(buffer)
+            let bytes = buffer
             var found: [GenerationUsage] = []
-            var cursor = max(0, lastMarkerOffset - bufferStart - 16)
+            var cursor = max(0, nextSearchOffset - bufferStart)
+            var waitingForMoreData = false
 
             while let marker = Self.findUsageMarker(in: bytes, from: cursor) {
+                if Task.isCancelled { return [] }
                 let absoluteOffset = bufferStart + marker
                 cursor = marker + 1
                 if absoluteOffset <= lastMarkerOffset { continue }
 
                 let start = max(0, marker - contextLimit)
                 let end = min(bytes.count, marker + contextLimit)
-                let context = Data(bytes[start..<end])
+                let context = bytes.subdata(in: start..<end)
                 guard let usage = WorkBuddyTraceClient.parseGenerationUsage(
                     context: context,
                     usageMarkerOffset: marker - start,
+                    markerOffset: absoluteOffset,
                     isFinal: final || end < bytes.count
                 ) else {
                     // The usage object may be split at the current chunk boundary. Keep it
                     // for the next pass; non-usage matches are skipped by the marker shape.
-                    if !final { break }
+                    if !final && end == bytes.count {
+                        nextSearchOffset = absoluteOffset
+                        waitingForMoreData = true
+                        break
+                    }
+                    nextSearchOffset = absoluteOffset + 1
                     continue
                 }
                 found.append(usage)
                 lastMarkerOffset = absoluteOffset
+                nextSearchOffset = absoluteOffset + 1
+            }
+
+            if !waitingForMoreData {
+                // Preserve only enough overlap for a marker split across two chunks;
+                // do not rescan the entire rolling buffer on every read.
+                nextSearchOffset = max(nextSearchOffset, bufferStart + max(0, bytes.count - 16))
             }
 
             // Keep enough overlap for a marker and its surrounding model/created fields.
@@ -273,23 +358,17 @@ actor WorkBuddyTraceClient {
             return found
         }
 
-        private static func findUsageMarker(in bytes: [UInt8], from start: Int) -> Int? {
-            let markers: [[UInt8]] = [
-                Array("\"usage\":{".utf8),
-                Array("\\\"usage\\\":{".utf8)
+        private static func findUsageMarker(in bytes: Data, from start: Int) -> Int? {
+            let markers: [Data] = [
+                Data("\"usage\":{".utf8),
+                Data("\\\"usage\\\":{".utf8)
             ]
             var best: Int?
             for marker in markers {
                 let lowerBound = max(0, start)
-                let upperBound = bytes.count - marker.count
-                guard marker.count <= bytes.count, lowerBound <= upperBound else { continue }
-                for index in lowerBound...upperBound {
-                    if Array(bytes[index..<(index + marker.count)]) == marker,
-                       best == nil || index < best! {
-                        best = index
-                        break
-                    }
-                }
+                guard marker.count <= bytes.count, lowerBound <= bytes.count - marker.count else { continue }
+                guard let range = bytes.range(of: marker, options: [], in: lowerBound..<bytes.count) else { continue }
+                if best == nil || range.lowerBound < best! { best = range.lowerBound }
             }
             return best
         }
@@ -297,52 +376,38 @@ actor WorkBuddyTraceClient {
 
     private static func parseGenerationUsages(
         at url: URL,
-        fallbackDay: String
-    ) -> (totalsByDay: [String: TokenTotals], deepSeekByDay: [String: TokenTotals], modelByDay: [String: TokenTotals])? {
+        startingAt: Int
+    ) -> [GenerationUsage]? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
 
-        var scanner = GenerationUsageScanner()
+        guard (try? handle.seek(toOffset: UInt64(startingAt))) != nil else { return nil }
+        var scanner = GenerationUsageScanner(initialOffset: startingAt)
         var usages: [GenerationUsage] = []
         while true {
+            guard !Task.isCancelled else { return nil }
             guard let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty else { break }
             usages.append(contentsOf: scanner.consume(chunk))
         }
         usages.append(contentsOf: scanner.consume(Data(), final: true))
-        guard !usages.isEmpty else { return nil }
-
-        var totalsByDay: [String: TokenTotals] = [:]
-        var deepSeekByDay: [String: TokenTotals] = [:]
-        var modelByDay: [String: TokenTotals] = [:]
-        for usage in usages {
-            let dayKey = usage.date.map(Self.dayKey(for:)) ?? fallbackDay
-            let model = usage.model.isEmpty ? "unknown" : usage.model
-            totalsByDay[dayKey, default: TokenTotals()] = totalsByDay[dayKey, default: TokenTotals()].adding(usage.totals)
-            let bucketKey = usage.date.map(TokenUsageBucket.bucketKey(for:)) ?? dayKey
-            let modelKey = "\(bucketKey)\u{1F}\(model)"
-            modelByDay[modelKey, default: TokenTotals()] = modelByDay[modelKey, default: TokenTotals()].adding(usage.totals)
-            if model.lowercased().contains("deepseek") {
-                deepSeekByDay[dayKey, default: TokenTotals()] = deepSeekByDay[dayKey, default: TokenTotals()].adding(usage.totals)
-            }
-        }
-        return (totalsByDay, deepSeekByDay, modelByDay)
+        return usages
     }
 
     private static func parseGenerationUsage(
         context: Data,
         usageMarkerOffset: Int,
+        markerOffset: Int,
         isFinal: Bool
     ) -> GenerationUsage? {
-        let bytes = Array(context)
-        guard usageMarkerOffset >= 0, usageMarkerOffset < bytes.count else { return nil }
-        let prefix = String(decoding: Data(bytes[..<usageMarkerOffset]), as: UTF8.self)
+        guard usageMarkerOffset >= 0, usageMarkerOffset < context.count else { return nil }
+        let prefix = String(decoding: context.prefix(usageMarkerOffset), as: UTF8.self)
             .replacingOccurrences(of: "\\\"", with: "\"")
         guard let outputField = prefix.range(of: "\"toolOutput\"", options: .backwards) else { return nil }
         if let inputField = prefix.range(of: "\"toolInput\"", options: .backwards),
            inputField.lowerBound > outputField.lowerBound {
             return nil
         }
-        let trailingText = String(decoding: Data(bytes[usageMarkerOffset...]), as: UTF8.self)
+        let trailingText = String(decoding: context.dropFirst(usageMarkerOffset), as: UTF8.self)
             .replacingOccurrences(of: "\\\"", with: "\"")
         guard let usageText = balancedJSONObject(in: trailingText) else {
             // 当前 8 KB 上下文还没有覆盖完整 usage 对象时，等待下一块数据。
@@ -371,7 +436,7 @@ actor WorkBuddyTraceClient {
         totals.reasoning = integerValue(named: "reasoning_tokens", in: usageText) ?? 0
         let seconds = created > 10_000_000_000 ? Double(created) / 1000 : Double(created)
         let date = Date(timeIntervalSince1970: seconds)
-        return GenerationUsage(date: date, model: model, totals: totals)
+        return GenerationUsage(offset: markerOffset, date: date, model: model, totals: totals)
     }
 
     private static func balancedJSONObject(in text: String) -> String? {
@@ -404,19 +469,65 @@ actor WorkBuddyTraceClient {
     }
 
     private static func integerValue(named name: String, in text: String) -> Int? {
-        let pattern = "\\\"\(NSRegularExpression.escapedPattern(for: name))\\\"\\s*:\\s*(-?\\d+)"
-        guard let expression = try? NSRegularExpression(pattern: pattern),
-              let match = expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-              let range = Range(match.range(at: 1), in: text) else { return nil }
-        return Int(text[range])
+        guard let key = valueKey(named: name, in: text),
+              let valueStart = valueStart(after: key, in: text) else { return nil }
+        var index = valueStart
+        var sign = 1
+        if text[index] == "-" {
+            sign = -1
+            index = text.index(after: index)
+        }
+        let digitsStart = index
+        while index < text.endIndex, text[index].isNumber {
+            index = text.index(after: index)
+        }
+        guard index > digitsStart, let value = Int(text[digitsStart..<index]) else { return nil }
+        return sign * value
     }
 
     private static func stringValue(named name: String, in text: String) -> String? {
-        let pattern = "\\\"\(NSRegularExpression.escapedPattern(for: name))\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""
-        guard let expression = try? NSRegularExpression(pattern: pattern),
-              let match = expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-              let range = Range(match.range(at: 1), in: text) else { return nil }
-        return String(text[range])
+        guard let key = valueKey(named: name, in: text),
+              let valueStart = valueStart(after: key, in: text),
+              text[valueStart] == "\"" else { return nil }
+        var index = text.index(after: valueStart)
+        var escaped = false
+        var value = ""
+        while index < text.endIndex {
+            let character = text[index]
+            if escaped {
+                value.append(character)
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "\"" {
+                return value.isEmpty ? nil : value
+            } else {
+                value.append(character)
+            }
+            index = text.index(after: index)
+        }
+        return nil
+    }
+
+    private static func valueKey(named name: String, in text: String) -> Range<String.Index>? {
+        text.range(of: "\"\(name)\"")
+            ?? text.range(of: "\\\"\(name)\\\"")
+    }
+
+    private static func valueStart(
+        after key: Range<String.Index>,
+        in text: String
+    ) -> String.Index? {
+        var index = key.upperBound
+        while index < text.endIndex, text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+        guard index < text.endIndex, text[index] == ":" else { return nil }
+        index = text.index(after: index)
+        while index < text.endIndex, text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+        return index < text.endIndex ? index : nil
     }
 
     /// 从头部的 `"trace":{...}` 起始截取平衡的 JSON 对象（跳过字符串与转义）。

@@ -81,9 +81,9 @@ Codex 当前版本的认证信息通常保存在 macOS Keychain 中，旧版本�
 
 当前额外支持的本地用量来源包括：
 
-`OpenCode`、`Hermes Agent`、`OpenClaw`、`Cursor`、`Antigravity`、`Cline`、`Kimi CLI / Kimi Code / Kimi Desktop`、`Qwen CLI`、`Grok Build`、`GitHub Copilot`、`Pi / Oh My Pi`、`Zed`、`Kilo Code`、`MiMo Code`、`ZCode / GLM`、`Kiro`、`CodeBuddy`、`Proma` 和 `Reasonix`。
+`OpenCode`、`Hermes Agent`、`OpenClaw`、`Cursor`、`Antigravity`、`Cline`、`Kimi CLI / Kimi Code / Kimi Desktop`、`Qwen CLI`、`Trae Work`、`千问办公`、`Grok Build`、`GitHub Copilot`、`Pi / Oh My Pi`、`Zed`、`Kilo Code`、`MiMo Code`、`ZCode / GLM`、`Kiro`、`CodeBuddy`、`Proma` 和 `Reasonix`。
 
-只有本地记录中存在明确的 Token 字段时，QuotaMonitor 才会纳入统计。普通聊天文本、被粘贴到聊天中的 JSON，以及无法确认属于一次模型请求的数字，不会被当作 Token 用量。
+只有本地记录中存在明确 Token 字段时，QuotaMonitor 才会纳入统计。普通聊天文本、被粘贴到聊天中的 JSON、长度或上限字段，以及无法确认属于一次模型请求的数字，都不会被当作 Token 用量。
 
 部分工具可以通过环境变量指定自定义数据目录，例如：
 

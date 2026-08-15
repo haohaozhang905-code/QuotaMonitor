@@ -4,7 +4,10 @@ set -eo pipefail
 CONFIGURATION="${1:-debug}"
 APP_NAME="QuotaMonitor"
 BINARY_NAME="QuotaMonitor"
-BUNDLE_ID="com.cmsjcm.QuotaMonitor"
+# macOS 26 Control Center keeps a separate per-bundle menu-bar ledger. The
+# previous bundle identity was left permanently blocked on this machine, so
+# use a fresh identity while retaining the app's existing data directories.
+BUNDLE_ID="com.cmsjcm.QuotaMonitorStatus"
 VERSION="${QUOTAMONITOR_VERSION:-0.1.8}"
 BUILD_NUMBER="${QUOTAMONITOR_BUILD_NUMBER:-10}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

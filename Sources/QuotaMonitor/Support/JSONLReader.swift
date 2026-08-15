@@ -32,9 +32,11 @@ enum JSONLReader {
         var buffer = Data()
         do {
             while let chunk = try handle.read(upToCount: chunkSize), !chunk.isEmpty {
+                guard !Task.isCancelled else { return false }
                 buffer.append(chunk)
                 var lineStart = buffer.startIndex
                 while let newline = buffer[lineStart...].firstIndex(of: 0x0A) {
+                    guard !Task.isCancelled else { return false }
                     if newline > lineStart {
                         body(Data(buffer[lineStart..<newline]))
                     }

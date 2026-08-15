@@ -84,6 +84,12 @@ final class QuotaStore {
     private var lastSavedTokenSnapshot: TokenHistorySnapshot?
     private var tokenTask: Task<Void, Never>?
     private var tokenProgressRevealTask: Task<Void, Never>?
+    private var tokenChangeMonitor: LocalTokenChangeMonitor?
+    private var tokenChangeDebounceTask: Task<Void, Never>?
+
+    private static let quotaRefreshInterval: Duration = .seconds(60)
+    private static let tokenRefreshInterval: Duration = .seconds(5 * 60)
+    private static let tokenSourceTimeout: Duration = .seconds(15)
 
     init() {
         tokenSnapshotURL = Self.defaultTokenSnapshotURL()
@@ -203,11 +209,17 @@ final class QuotaStore {
     func start() async {
         // 快照已在 init 同步恢复；本地 token 与网络额度并行更新，互不阻塞首屏。
         tokenTask = Task { await monitorTokenSources() }
-        defer { tokenTask?.cancel() }
+        defer {
+            tokenTask?.cancel()
+            tokenChangeDebounceTask?.cancel()
+            tokenChangeMonitor?.stop()
+            tokenChangeMonitor = nil
+        }
         await refreshAll()
         hasCompletedInitialRefresh = true
+        startTokenChangeMonitor()
         while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(60))
+            try? await Task.sleep(for: Self.quotaRefreshInterval)
             await refresh()
         }
     }
@@ -378,12 +390,50 @@ final class QuotaStore {
 
     private func monitorTokenSources() async {
         while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(60))
+            try? await Task.sleep(for: Self.tokenRefreshInterval)
             await refreshTokenSources()
         }
     }
 
-    /// 拉取全部本地 token 来源并落盘快照；按设计稿约定每 60 秒刷新。
+    private func startTokenChangeMonitor() {
+        tokenChangeMonitor?.stop()
+        tokenChangeMonitor = LocalTokenChangeMonitor(paths: Self.defaultTokenWatchPaths()) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.scheduleTokenRefresh()
+            }
+        }
+        tokenChangeMonitor?.start()
+    }
+
+    /// 文件事件负责低频唤醒；5 分钟循环仍保留，覆盖文件系统事件丢失或应用休眠后的恢复。
+    private func scheduleTokenRefresh() {
+        tokenChangeDebounceTask?.cancel()
+        tokenChangeDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled, let self else { return }
+            await self.refreshTokenSources()
+        }
+    }
+
+    private static func defaultTokenWatchPaths() -> [URL] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        var paths = [
+            home.appendingPathComponent(".codex", isDirectory: true),
+            home.appendingPathComponent(".claude/projects", isDirectory: true),
+            home.appendingPathComponent(".workbuddy/traces", isDirectory: true),
+            home.appendingPathComponent(".qoder", isDirectory: true),
+            home.appendingPathComponent("Library/Application Support/Qoder/SharedClientCache/cli/projects", isDirectory: true),
+            home.appendingPathComponent(".cc-switch", isDirectory: true)
+        ]
+        let environment = ProcessInfo.processInfo.environment
+        paths.append(contentsOf: LocalToolTokenSource.additional.flatMap {
+            $0.resolvedRoots(home: home, environment: environment)
+        })
+        var seen = Set<String>()
+        return paths.filter { seen.insert($0.standardizedFileURL.path).inserted }
+    }
+
+    /// 拉取全部本地 token 来源并落盘快照；后台每 5 分钟刷新一次。
     ///
     /// 数据来源分工：Codex / Claude 命令行 / WorkBuddy 直接解析本地文件，
     /// 不依赖 cc-switch；Claude 桌面版唯一来源是 cc-switch 请求日志，
@@ -417,13 +467,41 @@ final class QuotaStore {
         var completed = 0
 
         await withTaskGroup(of: TokenRefreshResult.self) { group in
-            group.addTask { .codex(try? await codexClient.fetchSnapshot()) }
-            group.addTask { .claude(try? await claudeClient.fetchSnapshot()) }
-            group.addTask { .workBuddy(try? await workBuddyClient.fetchSnapshot()) }
-            group.addTask { .desktop(await ccSwitchClient.fetchSnapshot(appType: "claude-desktop")) }
-            group.addTask { .claudeCrossCheck(await ccSwitchClient.fetchSnapshot(appType: "claude", client: .cli)) }
-            group.addTask { .additional(try? await additionalClient.fetchSnapshots()) }
-            group.addTask { .qoder(try? await qoderClient.fetchSnapshot()) }
+            group.addTask(priority: .utility) {
+                .codex(await Self.withTimeout(Self.tokenSourceTimeout) {
+                    try? await codexClient.fetchSnapshot()
+                })
+            }
+            group.addTask(priority: .utility) {
+                .claude(await Self.withTimeout(Self.tokenSourceTimeout) {
+                    try? await claudeClient.fetchSnapshot()
+                })
+            }
+            group.addTask(priority: .utility) {
+                .workBuddy(await Self.withTimeout(Self.tokenSourceTimeout) {
+                    try? await workBuddyClient.fetchSnapshot()
+                })
+            }
+            group.addTask(priority: .utility) {
+                .desktop(await Self.withTimeout(Self.tokenSourceTimeout) {
+                    await ccSwitchClient.fetchSnapshot(appType: "claude-desktop")
+                })
+            }
+            group.addTask(priority: .utility) {
+                .claudeCrossCheck(await Self.withTimeout(Self.tokenSourceTimeout) {
+                    await ccSwitchClient.fetchSnapshot(appType: "claude", client: .cli)
+                })
+            }
+            group.addTask(priority: .utility) {
+                .additional(await Self.withTimeout(Self.tokenSourceTimeout) {
+                    try? await additionalClient.fetchSnapshots()
+                })
+            }
+            group.addTask(priority: .utility) {
+                .qoder(await Self.withTimeout(Self.tokenSourceTimeout) {
+                    try? await qoderClient.fetchSnapshot()
+                })
+            }
 
             for await result in group {
                 applyTokenRefreshResult(result)
@@ -444,6 +522,24 @@ final class QuotaStore {
             "sources codex=\(Self.todayTotal(self.tokenHistory)) claude=\(Self.todayTotal(self.claudeHistory)) desktop=\(Self.todayTotal(self.claudeDesktopHistory)) workbuddy=\(Self.todayTotal(self.workBuddyHistory)) additional=\(Self.todayTotal(self.totalTokenHistory) - Self.todayTotal(Self.combineByDay([self.tokenHistory, self.claudeHistory, self.claudeDesktopHistory, self.workBuddyHistory]))) deepseek=\(Self.todayTotal(self.deepSeekHistory)) desktopStale=\(self.claudeDesktopStale)"
         )
         refreshTokenDerivedState()
+    }
+
+    /// 防止单个损坏或超大的本地日志让整个刷新状态长期保持 active。
+    /// 各解析器同时检查取消状态，超时后会尽快释放其文件扫描循环。
+    private static func withTimeout<T: Sendable>(
+        _ timeout: Duration,
+        operation: @escaping @Sendable () async -> T?
+    ) async -> T? {
+        await withTaskGroup(of: T?.self) { group in
+            group.addTask { await operation() }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return nil
+            }
+            let result = await group.next() ?? nil
+            group.cancelAll()
+            return result
+        }
     }
 
     private func applyTokenRefreshResult(_ result: TokenRefreshResult) {

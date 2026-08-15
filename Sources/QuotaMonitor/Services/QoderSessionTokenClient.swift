@@ -26,6 +26,7 @@ actor QoderSessionTokenClient {
         let mtime: Date
         let fileSize: Int
         let records: [UsageRecord]
+        let processedByteCount: Int?
 
         func matches(mtime candidate: Date, fileSize size: Int) -> Bool {
             fileSize == size && abs(mtime.timeIntervalSinceReferenceDate - candidate.timeIntervalSinceReferenceDate) < 0.001
@@ -68,20 +69,42 @@ actor QoderSessionTokenClient {
                 options: [.skipsHiddenFiles]
             ) else { continue }
             for case let url as URL in enumerator where url.pathExtension.lowercased() == "jsonl" {
+                try Task.checkCancellation()
                 guard visited.insert(url).inserted,
                       let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
                       let mtime = values.contentModificationDate,
                       let fileSize = values.fileSize else { continue }
+                let cached = cache[url]
                 let entry: FileCache
                 if let cached = cache[url], cached.matches(mtime: mtime, fileSize: fileSize) {
                     entry = cached
-                } else if let parsed = Self.parse(url: url, format: root.format, client: root.client, fallbackDate: mtime) {
-                    entry = FileCache(mtime: mtime, fileSize: fileSize, records: parsed)
-                } else if let cached = cache[url] {
-                    // 正在写入的 JSONL 暂时不完整时，保留上一次正确的聚合值。
-                    entry = cached
                 } else {
-                    continue
+                    let canContinue = cached?.processedByteCount == cached?.fileSize
+                        && fileSize > (cached?.fileSize ?? 0)
+                        && JSONLReader.isLineBoundary(at: cached?.fileSize ?? 0, in: url)
+                    let startingAt = canContinue ? cached?.fileSize ?? 0 : 0
+                    guard let parsed = Self.parse(
+                        url: url,
+                        format: root.format,
+                        client: root.client,
+                        fallbackDate: mtime,
+                        startingAt: startingAt
+                    ) else {
+                        if let cached {
+                            newCache[url] = cached
+                            records.append(contentsOf: cached.records)
+                        }
+                        continue
+                    }
+                    let combinedRecords = canContinue
+                        ? (cached?.records ?? []) + parsed
+                        : parsed
+                    entry = FileCache(
+                        mtime: mtime,
+                        fileSize: fileSize,
+                        records: combinedRecords,
+                        processedByteCount: fileSize
+                    )
                 }
                 newCache[url] = entry
                 records.append(contentsOf: entry.records)
@@ -118,10 +141,11 @@ actor QoderSessionTokenClient {
         url: URL,
         format: Format,
         client: TokenClient,
-        fallbackDate: Date
+        fallbackDate: Date,
+        startingAt: Int
     ) -> [UsageRecord]? {
         var records: [UsageRecord] = []
-        let didRead = JSONLReader.forEachLine(at: url) { data in
+        let didRead = JSONLReader.forEachLine(at: url, startingAt: UInt64(startingAt)) { data in
             guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
             switch format {
             case .eventLog:

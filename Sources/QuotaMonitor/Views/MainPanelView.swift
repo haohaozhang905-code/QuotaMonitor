@@ -219,12 +219,15 @@ struct MainPanelView: View {
 
     private static let applicationIcon: NSImage = {
         let source = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
-        let target = NSImage(size: NSSize(width: 32, height: 32))
-        if let retinaRepresentation = source.representations.first(where: {
-            $0.pixelsWide >= 64 && $0.pixelsHigh >= 64 && abs($0.size.width - 32) < 0.5
-        }) {
-            // 只保留 2x 图层，避免 SwiftUI Image(nsImage:) 在多 representation 中拿到 1x 图层。
-            target.addRepresentation(retinaRepresentation)
+        let target = NSImage(size: NSSize(width: 64, height: 64))
+        let highResolutionRepresentation = source.representations
+            .filter { $0.pixelsWide >= 128 && $0.pixelsHigh >= 128 }
+            .min { lhs, rhs in
+                abs(lhs.pixelsWide - 128) < abs(rhs.pixelsWide - 128)
+            }
+        if let highResolutionRepresentation {
+            // 侧边栏现在是 64pt，需要至少 128px 的 2x 图层，避免把 32pt 图层插值放大。
+            target.addRepresentation(highResolutionRepresentation)
         }
         return target.representations.isEmpty ? source : target
     }()
@@ -240,10 +243,12 @@ struct MainPanelView: View {
                 .accessibilityHidden(true)
 
             HStack(spacing: 10) {
-                // 直接使用 Finder/Dock 为应用包返回的图标，保留其 32pt/64px Retina representation。
+                // 直接使用 Finder/Dock 为应用包返回的图标；侧边栏品牌图标按 64pt 展示。
                 Image(nsImage: Self.applicationIcon)
                     .interpolation(.high)
-                    .frame(width: 32, height: 32)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 64, height: 64)
                 Text(QuotaMonitorIdentity.displayName)
                     .font(.system(size: 15.5, weight: .semibold))
                     .foregroundStyle(PanelTheme.text)
@@ -854,6 +859,8 @@ struct MainPanelView: View {
             )
                 .frame(height: 140)
                 .padding(.top, 1)
+                // tooltip 会在趋势图边界外展开；提升整个图表容器，避免下面的图例覆盖浮层。
+                .zIndex(10)
             GeometryReader { proxy in
                 let plotWidth = max(proxy.size.width - 44, 1)
                 ZStack(alignment: .topLeading) {
@@ -1711,9 +1718,6 @@ struct TitlebarStatusView: View {
     let store: QuotaStore
     let language: LanguageSettings
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulse = false
-
     private var isUpdating: Bool {
         store.isRefreshing || store.isRefreshingTokenSources
     }
@@ -1723,7 +1727,6 @@ struct TitlebarStatusView: View {
             Circle()
                 .fill(statusColor)
                 .frame(width: 7, height: 7)
-                .opacity(isUpdating && pulse ? 0.4 : 1)
             Text(statusText)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(PanelTheme.text2)
@@ -1731,8 +1734,6 @@ struct TitlebarStatusView: View {
         }
         .frame(height: 24)
         .padding(.horizontal, 6)
-        .onAppear { updatePulse() }
-        .onChange(of: isUpdating) { _, _ in updatePulse() }
     }
 
     private var statusColor: Color {
@@ -1764,13 +1765,6 @@ struct TitlebarStatusView: View {
         return language.text("panel.updated", formatter.string(from: date))
     }
 
-    private func updatePulse() {
-        pulse = false
-        guard isUpdating, !reduceMotion else { return }
-        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-            pulse = true
-        }
-    }
 }
 
 // MARK: - 控件
@@ -1930,6 +1924,7 @@ private struct ChartTooltip: View {
                                 .font(.system(size: 9.5))
                                 .foregroundStyle(PanelTheme.text2)
                                 .lineLimit(1)
+                                .truncationMode(.middle)
                             Spacer(minLength: 6)
                             Text(item.value)
                                 .font(.system(size: 9.5))
@@ -1946,16 +1941,18 @@ private struct ChartTooltip: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        // 按内容自然收缩，避免 tooltip 变成一条横向色块。
-        .fixedSize(horizontal: true, vertical: false)
+        // 统一宽度上限，避免模型名或模型数量把浮层撑成横向色块。
+        .frame(minWidth: 128, maxWidth: 244, alignment: .leading)
         .background {
             GeometryReader { proxy in
                 Color.clear.preference(key: ChartTooltipSizePreferenceKey.self, value: proxy.size)
             }
         }
-        .background(PanelTheme.surface3, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(PanelTheme.borderStrong, lineWidth: 0.75))
-        .shadow(color: PanelTheme.shadow, radius: 10, y: 4)
+        // 使用完全不透明的面板底色，浮层经过图例或其他内容时不再透叠。
+        .background(PanelTheme.surface, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(PanelTheme.borderStrong, lineWidth: 0.9))
+        .shadow(color: Color.black.opacity(0.18), radius: 14, y: 6)
+        .zIndex(20)
         .allowsHitTesting(false)
     }
 }
@@ -2237,12 +2234,7 @@ private struct StackedBarChart: View {
                 if let hoveredIndex, rows.indices.contains(hoveredIndex) {
                     let row = rows[hoveredIndex]
                     let tooltipItems = row.segments.count > 1
-                        ? row.segments.sorted { lhs, rhs in
-                            if lhs.value != rhs.value { return lhs.value > rhs.value }
-                            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-                        }.map { segment in
-                            ChartTooltipItem(label: segment.name, value: QuotaFormatters.tokensCN(segment.value), color: segment.color)
-                        }
+                        ? compactTooltipItems(row.segments)
                         : []
                     let tooltipCenter = ChartTooltipPlacement.adjacentToBar(
                         barRect: barRects[hoveredIndex],
@@ -2271,6 +2263,31 @@ private struct StackedBarChart: View {
                 }
             }
         }
+    }
+
+    private func compactTooltipItems(
+        _ segments: [MainPanelView.TokenChartSegment]
+    ) -> [ChartTooltipItem] {
+        let sorted = segments.sorted { lhs, rhs in
+            if lhs.value != rhs.value { return lhs.value > rhs.value }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+        let maximumVisible = 10
+        let visibleLimit = sorted.count > maximumVisible ? maximumVisible - 1 : maximumVisible
+        let visible = Array(sorted.prefix(visibleLimit))
+        let remainder = sorted.dropFirst(visibleLimit)
+        var items = visible.map { segment in
+            ChartTooltipItem(label: segment.name, value: QuotaFormatters.tokensCN(segment.value), color: segment.color)
+        }
+        if !remainder.isEmpty {
+            let total = remainder.reduce(0) { $0 + $1.value }
+            items.append(ChartTooltipItem(
+                label: "others",
+                value: QuotaFormatters.tokensCN(total),
+                color: PanelTheme.modelFallback
+            ))
+        }
+        return items
     }
 
     private func index(at location: CGPoint, plotX: CGFloat, plotWidth: CGFloat) -> Int? {
