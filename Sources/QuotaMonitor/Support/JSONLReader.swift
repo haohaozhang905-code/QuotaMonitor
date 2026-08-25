@@ -19,6 +19,7 @@ enum JSONLReader {
         at url: URL,
         chunkSize: Int = 64 * 1024,
         startingAt: UInt64 = 0,
+        containingAnyOf markerSets: [[Data]] = [],
         _ body: (Data) -> Void
     ) -> Bool {
         guard chunkSize > 0, let handle = try? FileHandle(forReadingFrom: url) else { return false }
@@ -30,26 +31,45 @@ enum JSONLReader {
         }
 
         var buffer = Data()
+        // 记录当前未完成行已经检查到的位置。超长 JSON 单行跨越多个 chunk 时，
+        // 下一轮只检查新追加的字节，避免每个 chunk 都从行首重扫形成 O(n²)。
+        var newlineSearchOffset = 0
         do {
             while let chunk = try handle.read(upToCount: chunkSize), !chunk.isEmpty {
                 guard !Task.isCancelled else { return false }
                 buffer.append(chunk)
                 var lineStart = buffer.startIndex
-                while let newline = buffer[lineStart...].firstIndex(of: 0x0A) {
+                var newlineSearchStart = buffer.index(buffer.startIndex, offsetBy: newlineSearchOffset)
+                while let newline = buffer[newlineSearchStart...].firstIndex(of: 0x0A) {
                     guard !Task.isCancelled else { return false }
                     if newline > lineStart {
-                        body(Data(buffer[lineStart..<newline]))
+                        let line = buffer[lineStart..<newline]
+                        if Self.matches(line, markerSets: markerSets) {
+                            body(Data(line))
+                        }
                     }
                     lineStart = buffer.index(after: newline)
+                    newlineSearchStart = lineStart
                 }
                 if lineStart > buffer.startIndex {
                     buffer.removeSubrange(buffer.startIndex..<lineStart)
                 }
+                // 当前 buffer 剩余内容已经确认不含换行；下个 chunk 从旧末尾继续。
+                newlineSearchOffset = buffer.count
             }
-            if !buffer.isEmpty { body(buffer) }
+            if !buffer.isEmpty,
+               Self.matches(buffer[buffer.startIndex..<buffer.endIndex], markerSets: markerSets) {
+                body(buffer)
+            }
             return true
         } catch {
             return false
+        }
+    }
+
+    private static func matches(_ line: Data.SubSequence, markerSets: [[Data]]) -> Bool {
+        markerSets.isEmpty || markerSets.contains { markers in
+            markers.allSatisfy { line.range(of: $0) != nil }
         }
     }
 }

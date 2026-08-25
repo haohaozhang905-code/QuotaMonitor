@@ -126,6 +126,144 @@ struct ClaudeSessionTokenClientTests {
 // MARK: - Codex 会话解析（含归档目录）
 
 struct CodexSessionTokenClientTests {
+    @Test func excludesForkedHistoryAndCountsOnlyForkAdditions() async throws {
+        let root = try Fixtures.makeTempDir("codex-fork")
+        defer { Fixtures.remove(root) }
+
+        let parentDay = Fixtures.noon(yesterdayOffset: 1)
+        let forkDay = Fixtures.noon(yesterdayOffset: 0)
+        let sessions = root.appendingPathComponent("sessions/2026/08/17", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+
+        let parentID = "parent-session"
+        let childID = "child-session"
+        let parentMeta = #"{"timestamp":"\#(Fixtures.iso(parentDay))","type":"session_meta","payload":{"session_id":"\#(parentID)","id":"\#(parentID)","forked_from_id":null}}"#
+        let childMeta = #"{"timestamp":"\#(Fixtures.iso(forkDay))","type":"session_meta","payload":{"session_id":"\#(childID)","id":"\#(childID)","forked_from_id":"\#(parentID)"}}"#
+        let parentUsage1 = #"{"timestamp":"\#(Fixtures.iso(parentDay))","payload":{"info":{"model":"gpt-5.6-sol","total_token_usage":{"input_tokens":100,"output_tokens":10}}}}"#
+        let parentUsage2 = #"{"timestamp":"\#(Fixtures.iso(parentDay))","payload":{"info":{"model":"gpt-5.6-sol","total_token_usage":{"input_tokens":150,"output_tokens":20}}}}"#
+        let forkUsage1 = #"{"timestamp":"\#(Fixtures.iso(forkDay))","payload":{"info":{"model":"gpt-5.6-sol","total_token_usage":{"input_tokens":100,"output_tokens":10}}}}"#
+        let forkUsage2 = #"{"timestamp":"\#(Fixtures.iso(forkDay))","payload":{"info":{"model":"gpt-5.6-sol","total_token_usage":{"input_tokens":150,"output_tokens":20}}}}"#
+        let forkUsage3 = #"{"timestamp":"\#(Fixtures.iso(forkDay))","payload":{"info":{"model":"gpt-5.6-sol","total_token_usage":{"input_tokens":180,"output_tokens":25}}}}"#
+        let forkUsage4 = #"{"timestamp":"\#(Fixtures.iso(forkDay))","payload":{"info":{"model":"gpt-5.6-sol","total_token_usage":{"input_tokens":220,"output_tokens":30}}}}"#
+
+        try [parentMeta, parentUsage1, parentUsage2]
+            .joined(separator: "\n")
+            .write(to: sessions.appendingPathComponent("parent.jsonl"), atomically: true, encoding: .utf8)
+        // Codex fork 文件会保留复制进来的父 session_meta；首条 metadata 必须决定文件身份。
+        try [childMeta, parentMeta, forkUsage1, forkUsage2, forkUsage3]
+            .joined(separator: "\n")
+            .appending("\n")
+            .write(to: sessions.appendingPathComponent("child.jsonl"), atomically: true, encoding: .utf8)
+
+        let client = CodexSessionTokenClient(root: root)
+        let history = await client.fetch()
+
+        // 父会话 170，加上 fork 后新增的 35；继承的 170 不能再次计入。
+        #expect(history.first { $0.id == Fixtures.day(parentDay) }?.total == 170)
+        #expect(history.first { $0.id == Fixtures.day(forkDay) }?.total == 35)
+        #expect(history.reduce(0) { $0 + $1.total } == 205)
+
+        let childFile = sessions.appendingPathComponent("child.jsonl")
+        let handle = try FileHandle(forWritingTo: childFile)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((forkUsage4 + "\n").utf8))
+        try handle.close()
+
+        let refreshed = await client.fetch()
+        #expect(refreshed.first { $0.id == Fixtures.day(forkDay) }?.total == 80)
+        #expect(refreshed.reduce(0) { $0 + $1.total } == 250)
+    }
+
+    @Test func handlesChainedForksWithoutRepeatingAncestorHistory() async throws {
+        let root = try Fixtures.makeTempDir("codex-chained-fork")
+        defer { Fixtures.remove(root) }
+
+        let day = Fixtures.noon(yesterdayOffset: 0)
+        let sessions = root.appendingPathComponent("sessions/2026/08/17", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+
+        func meta(_ id: String, parent: String?) -> String {
+            let parentJSON = parent.map { "\"\($0)\"" } ?? "null"
+            return #"{"timestamp":"\#(Fixtures.iso(day))","type":"session_meta","payload":{"session_id":"\#(id)","id":"\#(id)","forked_from_id":\#(parentJSON)}}"#
+        }
+        func usage(_ input: Int, _ output: Int) -> String {
+            #"{"timestamp":"\#(Fixtures.iso(day))","payload":{"info":{"model":"gpt-5.6-sol","total_token_usage":{"input_tokens":\#(input),"output_tokens":\#(output)}}}}"#
+        }
+
+        let parentID = "chain-parent"
+        let childID = "chain-child"
+        let grandchildID = "chain-grandchild"
+        let u1 = usage(100, 10)
+        let u2 = usage(140, 15)
+        let u3 = usage(180, 20)
+        let u4 = usage(210, 25)
+        try [meta(parentID, parent: nil), u1, u2]
+            .joined(separator: "\n")
+            .write(to: sessions.appendingPathComponent("parent.jsonl"), atomically: true, encoding: .utf8)
+        try [meta(childID, parent: parentID), meta(parentID, parent: nil), u1, u2, u3]
+            .joined(separator: "\n")
+            .write(to: sessions.appendingPathComponent("child.jsonl"), atomically: true, encoding: .utf8)
+        try [meta(grandchildID, parent: childID), meta(childID, parent: parentID), u1, u2, u3, u4]
+            .joined(separator: "\n")
+            .write(to: sessions.appendingPathComponent("grandchild.jsonl"), atomically: true, encoding: .utf8)
+
+        let client = CodexSessionTokenClient(root: root)
+        let history = await client.fetch()
+        #expect(history.first?.total == 235)
+    }
+
+    @Test func usesPayloadIDForSubagentForks() async throws {
+        let root = try Fixtures.makeTempDir("codex-subagent-fork")
+        defer { Fixtures.remove(root) }
+
+        let sessions = root.appendingPathComponent("sessions/2026/08/17", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        let day = Fixtures.noon(yesterdayOffset: 0)
+
+        func usage(_ input: Int, _ output: Int) -> String {
+            #"{"timestamp":"\#(Fixtures.iso(day))","payload":{"info":{"model":"gpt-5.6-sol","total_token_usage":{"input_tokens":\#(input),"output_tokens":\#(output)}}}}"#
+        }
+        let parentID = "thread-parent"
+        let childID = "rollout-child"
+        let parentMeta = #"{"timestamp":"2026-08-17T08:00:00Z","type":"session_meta","payload":{"session_id":"\#(parentID)","id":"\#(parentID)"}}"#
+        let childMeta = #"{"timestamp":"2026-08-17T08:01:00Z","type":"session_meta","payload":{"session_id":"\#(parentID)","id":"\#(childID)","parent_thread_id":"\#(parentID)"}}"#
+
+        try [parentMeta, usage(100, 10)]
+            .joined(separator: "\n")
+            .appending("\n")
+            .write(to: sessions.appendingPathComponent("parent.jsonl"), atomically: true, encoding: .utf8)
+        try [childMeta, usage(100, 10), usage(140, 20)]
+            .joined(separator: "\n")
+            .appending("\n")
+            .write(to: sessions.appendingPathComponent("child.jsonl"), atomically: true, encoding: .utf8)
+
+        let client = CodexSessionTokenClient(root: root)
+        let history = await client.fetch()
+        #expect(history.first?.total == 160)
+    }
+
+    @Test func ignoresPreForkPersistentCacheVersion() async throws {
+        let root = try Fixtures.makeTempDir("codex-cache-version")
+        defer { Fixtures.remove(root) }
+
+        let sessions = root.appendingPathComponent("sessions/2026/08/17", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        let file = sessions.appendingPathComponent("rollout-cache-version.jsonl")
+        let line = #"{"timestamp":"2026-08-17T08:00:00Z","payload":{"info":{"model":"gpt-5.6-sol","total_token_usage":{"input_tokens":120,"output_tokens":30}}}}"#
+        try line.write(to: file, atomically: true, encoding: .utf8)
+        let cacheURL = root.appendingPathComponent("cache/codex.json")
+
+        let firstClient = CodexSessionTokenClient(root: root, persistentCacheURL: cacheURL)
+        #expect(await firstClient.fetch().first?.total == 150)
+        let oldVersionData = try Data(contentsOf: cacheURL)
+        let oldVersion = String(decoding: oldVersionData, as: UTF8.self)
+            .replacingOccurrences(of: "\"version\":5", with: "\"version\":4")
+        try oldVersion.write(to: cacheURL, atomically: true, encoding: .utf8)
+
+        let secondClient = CodexSessionTokenClient(root: root, persistentCacheURL: cacheURL)
+        #expect(await secondClient.fetch().first?.total == 150)
+    }
+
     @Test func readsArchivedSessionsWithFilenameDates() async throws {
         let root = try Fixtures.makeTempDir("codex")
         defer { Fixtures.remove(root) }
@@ -230,6 +368,26 @@ struct CodexSessionTokenClientTests {
 
         // 新累计值 170；增量游标会在旧 120 基础上只追加 50。
         #expect(await client.fetch().first?.total == 170)
+    }
+
+    @Test func prefersLastTokenUsageWhenCumulativeTotalDoesNotAdvance() async throws {
+        let root = try Fixtures.makeTempDir("codex-last-token-usage")
+        defer { Fixtures.remove(root) }
+
+        let sessions = root.appendingPathComponent("sessions/2026/08/13", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        let file = sessions.appendingPathComponent("rollout-last-token-usage.jsonl")
+        let first = #"{"timestamp":"2026-08-13T08:00:00Z","payload":{"info":{"total_token_usage":{"input_tokens":100,"output_tokens":10},"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}}"#
+        let compaction = #"{"timestamp":"2026-08-13T08:01:00Z","payload":{"info":{"total_token_usage":{"input_tokens":100,"output_tokens":10},"last_token_usage":{"input_tokens":0,"output_tokens":0,"total_tokens":25}}}}"#
+        let third = #"{"timestamp":"2026-08-13T08:02:00Z","payload":{"info":{"total_token_usage":{"input_tokens":140,"output_tokens":15},"last_token_usage":{"input_tokens":40,"output_tokens":5,"total_tokens":45}}}}"#
+        try [first, compaction, third].joined(separator: "\n").appending("\n")
+            .write(to: file, atomically: true, encoding: .utf8)
+
+        let client = CodexSessionTokenClient(root: root)
+        let usage = await client.fetch().first
+        #expect(usage?.input == 165)
+        #expect(usage?.output == 15)
+        #expect(usage?.total == 180)
     }
 
     private static func pathDay(_ date: Date) -> String {

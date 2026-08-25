@@ -464,4 +464,26 @@ struct QuotaModelsTests {
         #expect(success)
         #expect(lines == ["{\"a\":1}", "{\"b\":\"跨块内容\"}", "{\"c\":3}"])
     }
+
+    @Test func jsonlReaderFiltersLongLinesAcrossManyChunks() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("quotamonitor-jsonl-filter-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let irrelevant = #"{"message":"\#(String(repeating: "x", count: 256 * 1024))"}"#
+        let relevant = #"{"type":"event_msg","payload":{"total_token_usage":{"input_tokens":1}}}"#
+        try Data((irrelevant + "\n" + relevant + "\n").utf8).write(to: url)
+
+        var lines: [String] = []
+        let marker = Data(#""total_token_usage":{"#.utf8)
+        let success = JSONLReader.forEachLine(
+            at: url,
+            chunkSize: 127,
+            containingAnyOf: [[marker]]
+        ) {
+            lines.append(String(decoding: $0, as: UTF8.self))
+        }
+
+        #expect(success)
+        #expect(lines == [relevant])
+    }
 }

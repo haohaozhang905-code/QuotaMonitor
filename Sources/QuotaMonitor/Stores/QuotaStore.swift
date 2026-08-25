@@ -468,9 +468,9 @@ final class QuotaStore {
 
         await withTaskGroup(of: TokenRefreshResult.self) { group in
             group.addTask(priority: .utility) {
-                .codex(await Self.withTimeout(Self.tokenSourceTimeout) {
-                    try? await codexClient.fetchSnapshot()
-                })
+                // Codex 历史日志可能超过 GB 级；首次冷启动扫描交给解析器完成。
+                // CodexSessionTokenClient 在文件级检查取消，其他来源仍使用通用超时。
+                .codex(try? await codexClient.fetchSnapshot())
             }
             group.addTask(priority: .utility) {
                 .claude(await Self.withTimeout(Self.tokenSourceTimeout) {
@@ -620,7 +620,7 @@ final class QuotaStore {
         guard let tokenSnapshotURL,
               let data = try? Data(contentsOf: tokenSnapshotURL),
               let snapshot = try? JSONDecoder().decode(TokenHistorySnapshot.self, from: data),
-              snapshot.version == 1 else { return }
+              snapshot.version == 2 else { return }
 
         tokenHistory = snapshot.tokenHistory
         claudeHistory = snapshot.claudeHistory
@@ -641,7 +641,7 @@ final class QuotaStore {
     private func saveTokenSnapshotIfNeeded() {
         guard let tokenSnapshotURL else { return }
         let snapshot = TokenHistorySnapshot(
-            version: 1,
+            version: 2,
             tokenHistory: tokenHistory,
             claudeHistory: claudeHistory,
             claudeDesktopHistory: claudeDesktopHistory,
@@ -723,7 +723,7 @@ final class QuotaStore {
     private static func defaultTokenSnapshotURL() -> URL? {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("com.cmsjcm.QuotaMonitor", isDirectory: true)
-            .appendingPathComponent("token-history-snapshot-v1.json")
+            .appendingPathComponent("token-history-snapshot-v2.json")
     }
 
 }
