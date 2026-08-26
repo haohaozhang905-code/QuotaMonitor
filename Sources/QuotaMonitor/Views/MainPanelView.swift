@@ -1882,10 +1882,42 @@ private struct ChartTooltipSizePreferenceKey: PreferenceKey {
 }
 
 private enum ChartTooltipLayout {
-    // This is the hover tooltip for the chart data labels. Keep its actual
-    // width at 400pt so the label column receives the full intended space.
-    static let width: CGFloat = 400
-    static let initialSize = CGSize(width: width, height: 46)
+    // Keep the hover tooltip at least 140pt wide, expand it to fit the
+    // content up to 240pt, and truncate only labels that exceed that cap.
+    static let minimumWidth: CGFloat = 140
+    static let maximumWidth: CGFloat = 240
+    static let initialSize = CGSize(width: minimumWidth, height: 46)
+
+    static func resolvedWidth(
+        title: String,
+        value: String,
+        valueLabel: String?,
+        items: [ChartTooltipItem]
+    ) -> CGFloat {
+        let headerWidth = textWidth(title, font: .monospacedSystemFont(ofSize: 10, weight: .medium))
+            + 8
+            + 6
+            + textWidth(value, font: .monospacedSystemFont(ofSize: 11.5, weight: .semibold))
+
+        let detailWidth: CGFloat
+        if items.isEmpty {
+            detailWidth = valueLabel.map { textWidth($0, font: .systemFont(ofSize: 9)) } ?? 0
+        } else {
+            detailWidth = items.map { item in
+                6
+                    + 6
+                    + textWidth(item.label, font: .systemFont(ofSize: 9.5))
+                    + 6
+                    + textWidth(item.value, font: .monospacedSystemFont(ofSize: 9.5, weight: .regular))
+            }.max() ?? 0
+        }
+
+        return min(max(ceil(max(headerWidth, detailWidth) + 20), minimumWidth), maximumWidth)
+    }
+
+    private static func textWidth(_ value: String, font: NSFont) -> CGFloat {
+        ceil((value as NSString).size(withAttributes: [.font: font]).width)
+    }
 }
 
 private struct ChartTooltip: View {
@@ -1948,9 +1980,14 @@ private struct ChartTooltip: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        // hover 数据标签浮层固定 400pt；超长标签保持单行并在末尾省略。
+        // hover 数据标签浮层按内容在 140pt–240pt 之间动态调整；超长标签保持单行并在末尾省略。
         .frame(
-            width: ChartTooltipLayout.width,
+            width: ChartTooltipLayout.resolvedWidth(
+                title: title,
+                value: value,
+                valueLabel: valueLabel,
+                items: items
+            ),
             alignment: .leading
         )
         .background {
