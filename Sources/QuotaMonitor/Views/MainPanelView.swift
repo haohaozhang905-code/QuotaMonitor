@@ -858,7 +858,7 @@ struct MainPanelView: View {
                 todayLabel: language.text("panel.today"),
                 tokenLabel: language.text("panel.totalTokens"),
                 language: language.language,
-                showsSingleSegmentBreakdown: tokenChartDimension == .platform
+                showsSingleSegmentBreakdown: true
             )
                 .frame(height: 140)
                 .padding(.top, 1)
@@ -1881,42 +1881,38 @@ private struct ChartTooltipSizePreferenceKey: PreferenceKey {
     }
 }
 
-private enum ChartTooltipLayout {
-    // Keep the hover tooltip at least 140pt wide, expand it to fit the
-    // content up to 240pt, and truncate only labels that exceed that cap.
+private struct ChartTooltipLayout: Layout {
+    // Measure the rendered SwiftUI content instead of estimating text widths
+    // with AppKit fonts. This keeps the tooltip adaptive while ensuring that
+    // labels are truncated only when the real content exceeds the 350pt cap.
     static let minimumWidth: CGFloat = 140
-    static let maximumWidth: CGFloat = 240
+    static let maximumWidth: CGFloat = 350
     static let initialSize = CGSize(width: minimumWidth, height: 46)
 
-    static func resolvedWidth(
-        title: String,
-        value: String,
-        valueLabel: String?,
-        items: [ChartTooltipItem]
-    ) -> CGFloat {
-        let headerWidth = textWidth(title, font: .monospacedSystemFont(ofSize: 10, weight: .medium))
-            + 8
-            + 6
-            + textWidth(value, font: .monospacedSystemFont(ofSize: 11.5, weight: .semibold))
-
-        let detailWidth: CGFloat
-        if items.isEmpty {
-            detailWidth = valueLabel.map { textWidth($0, font: .systemFont(ofSize: 9)) } ?? 0
-        } else {
-            detailWidth = items.map { item in
-                6
-                    + 6
-                    + textWidth(item.label, font: .systemFont(ofSize: 9.5))
-                    + 6
-                    + textWidth(item.value, font: .monospacedSystemFont(ofSize: 9.5, weight: .regular))
-            }.max() ?? 0
-        }
-
-        return min(max(ceil(max(headerWidth, detailWidth) + 20), minimumWidth), maximumWidth)
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        guard let content = subviews.first else { return .zero }
+        let idealSize = content.sizeThatFits(.unspecified)
+        let width = min(max(ceil(idealSize.width), Self.minimumWidth), Self.maximumWidth)
+        let fittedSize = content.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        return CGSize(width: width, height: ceil(fittedSize.height))
     }
 
-    private static func textWidth(_ value: String, font: NSFont) -> CGFloat {
-        ceil((value as NSString).size(withAttributes: [.font: font]).width)
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard let content = subviews.first else { return }
+        content.place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height)
+        )
     }
 }
 
@@ -1934,62 +1930,55 @@ private struct ChartTooltip: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(title)
-                    .font(.system(size: 10, weight: .medium))
-                    .fontDesign(.monospaced)
-                    .foregroundStyle(PanelTheme.text2)
-                    .lineLimit(1)
-                Spacer(minLength: 6)
-                Text(value)
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .fontDesign(.monospaced)
-                    .foregroundStyle(PanelTheme.text)
-            }
-            if !items.isEmpty {
-                Rectangle()
-                    .fill(PanelTheme.separator)
-                    .frame(height: 1)
-                VStack(spacing: 4) {
-                    ForEach(items) { item in
-                        HStack(alignment: .top, spacing: 6) {
-                            Circle()
-                                .fill(item.color)
-                                .frame(width: 6, height: 6)
-                            Text(item.label)
-                                .font(.system(size: 9.5))
-                                .foregroundStyle(PanelTheme.text2)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .layoutPriority(1)
-                            Spacer(minLength: 4)
-                            Text(item.value)
-                                .font(.system(size: 9.5))
-                                .fontDesign(.monospaced)
-                                .foregroundStyle(PanelTheme.text)
-                                .fixedSize(horizontal: true, vertical: false)
+        ChartTooltipLayout {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(title)
+                        .font(.system(size: 10, weight: .medium))
+                        .fontDesign(.monospaced)
+                        .foregroundStyle(PanelTheme.text2)
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text(value)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .fontDesign(.monospaced)
+                        .foregroundStyle(PanelTheme.text)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                if !items.isEmpty {
+                    Rectangle()
+                        .fill(PanelTheme.separator)
+                        .frame(height: 1)
+                    VStack(spacing: 4) {
+                        ForEach(items) { item in
+                            HStack(alignment: .top, spacing: 6) {
+                                Circle()
+                                    .fill(item.color)
+                                    .frame(width: 6, height: 6)
+                                Text(item.label)
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(PanelTheme.text2)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .layoutPriority(1)
+                                Spacer(minLength: 4)
+                                Text(item.value)
+                                    .font(.system(size: 9.5))
+                                    .fontDesign(.monospaced)
+                                    .foregroundStyle(PanelTheme.text)
+                                    .fixedSize(horizontal: true, vertical: false)
+                            }
                         }
                     }
+                } else if let valueLabel {
+                    Text(valueLabel)
+                        .font(.system(size: 9))
+                        .foregroundStyle(PanelTheme.text3)
                 }
-            } else if let valueLabel {
-                Text(valueLabel)
-                    .font(.system(size: 9))
-                    .foregroundStyle(PanelTheme.text3)
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        // hover 数据标签浮层按内容在 140pt–240pt 之间动态调整；超长标签保持单行并在末尾省略。
-        .frame(
-            width: ChartTooltipLayout.resolvedWidth(
-                title: title,
-                value: value,
-                valueLabel: valueLabel,
-                items: items
-            ),
-            alignment: .leading
-        )
         .background {
             GeometryReader { proxy in
                 Color.clear.preference(key: ChartTooltipSizePreferenceKey.self, value: proxy.size)
@@ -2297,8 +2286,9 @@ private struct StackedBarChart: View {
 
                 if let hoveredIndex, rows.indices.contains(hoveredIndex) {
                     let row = rows[hoveredIndex]
-                    let tooltipItems = (row.segments.count > 1 || showsSingleSegmentBreakdown)
-                        ? compactTooltipItems(row.segments)
+                    let detailSegments = row.segments.filter { $0.name != tokenLabel }
+                    let tooltipItems = (detailSegments.count > 1 || showsSingleSegmentBreakdown)
+                        ? compactTooltipItems(detailSegments)
                         : []
                     let tooltipCenter = ChartTooltipPlacement.adjacentToBar(
                         barRect: barRects[hoveredIndex],
