@@ -28,6 +28,8 @@
 "menu.noUsage" = "暂无 Token 用量";
 "menu.deepSeekRoute" = "其中 DeepSeek 路由";
 "menu.daysShort" = "约 %@ 天";
+"menu.balance" = "余额";
+"menu.daysLeft" = "剩余天数";
 
 "panel.showDetails" = "展开每日明细";
 "panel.hideDetails" = "收起每日明细";
@@ -121,7 +123,7 @@
 "panel.claudeCode" = "Claude Code";
 "panel.weeklyLeft" = "本周剩余";
 "panel.resetsAt" = "%@ 重置";
-"panel.sessionLeft" = "5 小时额度";
+"panel.sessionLeft" = "5小时额度";
 "panel.resetCount" = "重置机会";
 "settings.language" = "显示语言";
 "settings.launchAtLogin" = "登录后自动启动";

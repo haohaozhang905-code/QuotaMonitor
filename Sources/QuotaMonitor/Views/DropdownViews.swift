@@ -156,6 +156,8 @@ struct DropdownQuotaLine: View {
                         Text(metric.label)
                             .font(.system(size: 10.5))
                             .foregroundStyle(PanelTheme.text2)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
                         Spacer(minLength: 4)
                         Text(metric.value)
                             .font(.system(size: 12, weight: .semibold))
@@ -168,7 +170,7 @@ struct DropdownQuotaLine: View {
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text2)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.82)
+                            .minimumScaleFactor(0.72)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -286,7 +288,7 @@ struct DropdownPopoverView: View {
                 ForEach(presentation.platformToday) { row in
                     DropdownCompactRow(
                         name: row.key.displayName(claudeCode: language.text("panel.claudeCode")),
-                        amount: QuotaFormatters.tokensCN(row.total),
+                        amount: QuotaFormatters.localizedTokens(row.total, language: language.language),
                         share: percentText(row.share)
                     )
                 }
@@ -298,7 +300,7 @@ struct DropdownPopoverView: View {
                 ForEach(presentation.topModels) { row in
                     DropdownCompactRow(
                         name: row.key.displayName(other: language.text("tokens.otherModel")),
-                        amount: QuotaFormatters.tokensCN(row.total),
+                        amount: QuotaFormatters.localizedTokens(row.total, language: language.language),
                         share: percentText(row.share)
                     )
                 }
@@ -339,7 +341,7 @@ struct DropdownPopoverView: View {
     private var heroValue: String {
         switch presentation.availability {
         case .ready, .stale:
-            QuotaFormatters.tokensCN(presentation.today.total)
+            QuotaFormatters.localizedTokens(presentation.today.total, language: language.language)
         case .loading, .connectedOnly, .unavailable, .error:
             "—"
         }
@@ -379,13 +381,16 @@ struct DropdownPopoverView: View {
         let icon = icon(for: item.platform)
         switch item.state {
         case let .official(plan, session, weekly):
+            let sessionLabel = item.platform == .codex
+                ? language.text("panel.sessionLeft")
+                : language.text("overview.sessionQuota")
             DropdownQuotaLine(
                 icon: icon,
                 title: item.platform.displayName,
                 route: plan ?? language.text("panel.official"),
                 metrics: [
-                    quotaMetric(label: language.text("overview.sessionQuota"), metric: session),
-                    quotaMetric(label: language.text("overview.weekQuota"), metric: weekly)
+                    quotaMetric(label: sessionLabel, metric: session),
+                    quotaMetric(label: language.text("panel.weeklyLeft"), metric: weekly)
                 ]
             )
         case let .sharedBalance(amount, currency, estimatedDays):
@@ -394,8 +399,8 @@ struct DropdownPopoverView: View {
                 title: item.platform.displayName,
                 route: language.text("panel.deepSeekRouteTag"),
                 metrics: [
-                    .init(label: language.text("overview.sharedBalance"), value: QuotaFormatters.money(amount, currency: currency), detail: ""),
-                    .init(label: language.text("overview.estimatedDays"), value: estimatedDays.map { language.text("panel.daysShortLabel", "\($0)") } ?? "—", detail: "")
+                    .init(label: language.text("menu.balance"), value: QuotaFormatters.money(amount, currency: currency), detail: ""),
+                    .init(label: language.text("menu.daysLeft"), value: estimatedDays.map { language.text("panel.daysShortLabel", "\($0)") } ?? "—", detail: "")
                 ]
             )
         case .connectedWithoutQuota:
@@ -417,7 +422,7 @@ struct DropdownPopoverView: View {
 
     private func quotaMetric(label: String, metric: DropdownQuotaMetricPresentation?) -> DropdownQuotaLine.Metric {
         let detail = metric?.resetsAt.map {
-            language.text("overview.resetAfter", QuotaFormatters.reset(language: language.language).string(from: $0))
+            QuotaFormatters.reset(language: language.language).string(from: $0)
         } ?? ""
         return .init(
             label: label,

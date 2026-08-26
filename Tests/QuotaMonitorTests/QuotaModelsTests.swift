@@ -3,6 +3,12 @@ import Testing
 @testable import QuotaMonitor
 
 struct QuotaModelsTests {
+    @Test func tokenFormatterUsesLanguageSpecificUnits() {
+        #expect(QuotaFormatters.localizedTokens(150_000_000, language: .english) == "150M")
+        #expect(QuotaFormatters.localizedTokens(27_280_000, language: .english) == "27.3M")
+        #expect(QuotaFormatters.localizedTokens(150_000_000, language: .simplifiedChinese) == "1.5亿")
+    }
+
     @Test func canonicalModelNamesMergeAutoAndUnknownBuckets() {
         let day = Date(timeIntervalSince1970: 1_786_400_000)
         let buckets = [

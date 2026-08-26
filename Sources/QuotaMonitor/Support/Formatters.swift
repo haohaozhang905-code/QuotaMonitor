@@ -30,9 +30,14 @@ enum QuotaFormatters {
     /// 把 token 数压缩成易读形式：1234 -> 1.2K，1234567 -> 1.2M。
     static func tokens(_ count: Int) -> String {
         let value = Double(count)
-        if value >= 1_000_000 { return String(format: "%.1fM", value / 1_000_000) }
-        if value >= 1_000 { return String(format: "%.0fK", value / 1_000) }
+        if value >= 1_000_000 { return trimmed(String(format: "%.1f", value / 1_000_000)) + "M" }
+        if value >= 1_000 { return trimmed(String(format: "%.1f", value / 1_000)) + "K" }
         return "\(count)"
+    }
+
+    /// 按界面语言格式化 token，英文使用 K/M，中文使用 万/亿。
+    static func localizedTokens(_ count: Int, language: AppLanguage) -> String {
+        language == .simplifiedChinese ? tokensCN(count) : tokens(count)
     }
 
     /// 千分位 + k：1234567 -> "1,235k"；小于 1000 直接显示数字。

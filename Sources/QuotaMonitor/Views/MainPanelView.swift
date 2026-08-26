@@ -335,7 +335,7 @@ struct MainPanelView: View {
                     Text(language.text("menu.todayTokensLabel"))
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(PanelTheme.text3)
-                    Text(QuotaFormatters.tokensCN(presentation.today.total))
+                    Text(QuotaFormatters.localizedTokens(presentation.today.total, language: language.language))
                         .font(.system(size: 34, weight: .bold))
                         .fontDesign(.monospaced)
                         .foregroundStyle(PanelTheme.text)
@@ -357,7 +357,7 @@ struct MainPanelView: View {
                 Spacer(minLength: 0)
             }
             HStack(spacing: 0) {
-                overviewHeroMetric(language.text("overview.last7Total"), QuotaFormatters.tokensCN(presentation.lastSevenDays.total))
+                overviewHeroMetric(language.text("overview.last7Total"), QuotaFormatters.localizedTokens(presentation.lastSevenDays.total, language: language.language))
                 overviewHeroMetric(language.text("overview.todayPeakShare"), todayPeakShare)
                 overviewHeroMetric(
                     language.text("overview.leadingModel"),
@@ -372,7 +372,7 @@ struct MainPanelView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         let updated = store.lastUpdated.map { formatter.string(from: $0) } ?? "--:--"
-        let yesterday = store.yesterdayTokenUsage.map { QuotaFormatters.tokensCN($0.total) } ?? "--"
+        let yesterday = store.yesterdayTokenUsage.map { QuotaFormatters.localizedTokens($0.total, language: language.language) } ?? "--"
         return language.text("overview.yesterdayUpdated", yesterday, updated)
     }
 
@@ -492,7 +492,7 @@ struct MainPanelView: View {
     private var codexOverviewFacts: [(String, String, String)] {
         if QuotaPresentationPolicy.mode(for: store.codexRoute) == .sharedBalance { return sharedOverviewFacts }
         return [
-            (language.text("overview.sessionQuota"), codexProvider?.session?.remainingPercent.map(QuotaFormatters.percent) ?? "--", codexResetText(codexProvider?.session)),
+            (language.text("panel.sessionLeft"), codexProvider?.session?.remainingPercent.map(QuotaFormatters.percent) ?? "--", codexResetText(codexProvider?.session)),
             (language.text("overview.weekQuota"), codexProvider?.weekly?.remainingPercent.map(QuotaFormatters.percent) ?? "--", codexResetText(codexProvider?.weekly))
         ]
     }
@@ -645,7 +645,8 @@ struct MainPanelView: View {
             StackedBarChart(
                 rows: chart.rows,
                 todayLabel: language.text("panel.today"),
-                tokenLabel: language.text("panel.totalTokens")
+                tokenLabel: language.text("panel.totalTokens"),
+                language: language.language
             )
                 .frame(height: 92)
                 .padding(.top, 4)
@@ -714,9 +715,9 @@ struct MainPanelView: View {
             case (.claude, .cli): PanelTheme.claudeCode
             case (.claude, _): PanelTheme.claude
             case (.workbuddy, _): PanelTheme.workbuddy
-            default: PanelTheme.modelColor(for: platform.rawValue)
+            default: stableCategoryColor(for: platform.rawValue)
             }
-        case let .model(model): PanelTheme.modelColor(for: model)
+        case let .model(model): stableCategoryColor(for: model)
         case .otherModels, .otherPlatforms: PanelTheme.modelFallback
         }
     }
@@ -754,7 +755,7 @@ struct MainPanelView: View {
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 4)
-                        Text(QuotaFormatters.tokensCN(item.value))
+                        Text(QuotaFormatters.localizedTokens(item.value, language: language.language))
                             .font(.system(size: 10, weight: .regular))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text2)
@@ -803,9 +804,9 @@ struct MainPanelView: View {
 
     private func tokenMetricStrip(_ dashboard: TokenDashboardSnapshot) -> some View {
         HStack(spacing: 0) {
-            metricCell(language.text("tokens.total"), QuotaFormatters.tokensCN(dashboard.total), large: true)
-            metricCell(language.text("tokens.average"), QuotaFormatters.tokensCN(dashboard.average), large: false)
-            metricCell(language.text("tokens.peak"), QuotaFormatters.tokensCN(dashboard.peak), large: false)
+            metricCell(language.text("tokens.total"), QuotaFormatters.localizedTokens(dashboard.total, language: language.language), large: true)
+            metricCell(language.text("tokens.average"), QuotaFormatters.localizedTokens(dashboard.average, language: language.language), large: false)
+            metricCell(language.text("tokens.peak"), QuotaFormatters.localizedTokens(dashboard.peak, language: language.language), large: false)
             metricCell(language.text("tokens.topPlatform"), dashboard.platform.first?.name ?? "--", large: false)
             metricCell(language.text("tokens.topModel"), dashboard.models.first?.model ?? "--", large: false)
         }
@@ -847,7 +848,7 @@ struct MainPanelView: View {
                     .foregroundStyle(PanelTheme.text)
                 Spacer(minLength: 6)
                 tokenChartDimensionPicker
-                Text(language.text("tokens.peakValue", QuotaFormatters.tokensCN(chart.rows.map { $0.total }.max() ?? 0)))
+                Text(language.text("tokens.peakValue", QuotaFormatters.localizedTokens(chart.rows.map { $0.total }.max() ?? 0, language: language.language)))
                     .font(.system(size: 10, weight: .regular))
                     .fontDesign(.monospaced)
                     .foregroundStyle(PanelTheme.text3)
@@ -855,7 +856,9 @@ struct MainPanelView: View {
             StackedBarChart(
                 rows: chart.rows,
                 todayLabel: language.text("panel.today"),
-                tokenLabel: language.text("panel.totalTokens")
+                tokenLabel: language.text("panel.totalTokens"),
+                language: language.language,
+                showsSingleSegmentBreakdown: tokenChartDimension == .platform
             )
                 .frame(height: 140)
                 .padding(.top, 1)
@@ -951,7 +954,7 @@ struct MainPanelView: View {
                                 }
                         }
                         .frame(height: 4)
-                        Text(QuotaFormatters.tokensCN(item.value))
+                        Text(QuotaFormatters.localizedTokens(item.value, language: language.language))
                             .font(.system(size: 9.5))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text2)
@@ -1029,7 +1032,8 @@ struct MainPanelView: View {
                     levels: snapshot.levels,
                     values: snapshot.values,
                     labels: snapshot.labels,
-                    leadingOffset: snapshot.leadingOffset
+                    leadingOffset: snapshot.leadingOffset,
+                    language: language.language
                 )
                     .frame(height: 81)
             }
@@ -1347,29 +1351,23 @@ struct MainPanelView: View {
 
     private func categoryColors(for categories: [TokenChartCategory]) -> [String: Color] {
         let palette = PanelTheme.categoryPaletteExtended
-        var usedIndices = Set<Int>()
-        var colors: [String: Color] = [:]
-        for category in categories.sorted(by: {
-            if $0.preferredPaletteIndex != $1.preferredPaletteIndex {
-                return $0.preferredPaletteIndex < $1.preferredPaletteIndex
-            }
-            return $0.id < $1.id
-        }) {
-            let candidates = (0..<palette.count).map { offset in
-                (category.preferredPaletteIndex + offset) % palette.count
-            }
-            let index = candidates.first(where: { !usedIndices.contains($0) }) ?? category.preferredPaletteIndex
-            usedIndices.insert(index)
-            colors[category.id] = palette[index]
-        }
-        return colors
+        return Dictionary(
+            categories.map { category in
+                (category.id, palette[category.preferredPaletteIndex % palette.count])
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
     private func stablePaletteIndex(for value: String) -> Int {
         let hash = value.utf8.reduce(UInt32(2166136261)) { partial, byte in
             (partial ^ UInt32(byte)) &* 16777619
         }
-        return Int(hash % UInt32(PanelTheme.categoryPalette.count))
+        return Int(hash % UInt32(PanelTheme.categoryPaletteExtended.count))
+    }
+
+    private func stableCategoryColor(for value: String) -> Color {
+        PanelTheme.categoryPaletteExtended[stablePaletteIndex(for: value)]
     }
 
     private func chartCategory(for bucket: TokenUsageBucket) -> TokenChartCategory {
@@ -1883,6 +1881,14 @@ private struct ChartTooltipSizePreferenceKey: PreferenceKey {
     }
 }
 
+private enum ChartTooltipLayout {
+    // Keep the compact width as the minimum, while allowing long model names
+    // to expand up to the original tooltip width when the content needs it.
+    static let minimumWidth: CGFloat = 86
+    static let maximumWidth: CGFloat = 244
+    static let initialSize = CGSize(width: minimumWidth, height: 46)
+}
+
 private struct ChartTooltip: View {
     let title: String
     let value: String
@@ -1941,8 +1947,12 @@ private struct ChartTooltip: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        // 统一宽度上限，避免模型名或模型数量把浮层撑成横向色块。
-        .frame(minWidth: 128, maxWidth: 244, alignment: .leading)
+        // 统一紧凑宽度，避免模型名或模型数量把浮层撑成横向色块。
+        .frame(
+            minWidth: ChartTooltipLayout.minimumWidth,
+            maxWidth: ChartTooltipLayout.maximumWidth,
+            alignment: .leading
+        )
         .background {
             GeometryReader { proxy in
                 Color.clear.preference(key: ChartTooltipSizePreferenceKey.self, value: proxy.size)
@@ -1964,8 +1974,9 @@ private struct Sparkline: View {
     let labels: [String]
     let color: Color
     let valueLabel: String
+    let language: AppLanguage
     @State private var hoveredIndex: Int?
-    @State private var tooltipSize = CGSize(width: 128, height: 46)
+    @State private var tooltipSize = ChartTooltipLayout.initialSize
 
     var body: some View {
         GeometryReader { proxy in
@@ -2025,11 +2036,11 @@ private struct Sparkline: View {
                 }
 
                 VStack(alignment: .trailing, spacing: 0) {
-                    Text(QuotaFormatters.tokensCN(Int(peak)))
+                    Text(QuotaFormatters.localizedTokens(Int(peak), language: language))
                     Spacer()
-                    Text(QuotaFormatters.tokensCN(Int(peak * 2 / 3)))
+                    Text(QuotaFormatters.localizedTokens(Int(peak * 2 / 3), language: language))
                     Spacer()
-                    Text(QuotaFormatters.tokensCN(Int(peak / 3)))
+                    Text(QuotaFormatters.localizedTokens(Int(peak / 3), language: language))
                     Spacer()
                     Text("0")
                 }
@@ -2070,7 +2081,7 @@ private struct Sparkline: View {
                     let point = points[hoveredIndex]
                     ChartTooltip(
                         title: labels[hoveredIndex],
-                        value: QuotaFormatters.tokensCN(Int(values[hoveredIndex])),
+                        value: QuotaFormatters.localizedTokens(Int(values[hoveredIndex]), language: language),
                         valueLabel: valueLabel
                     )
                     .position(ChartTooltipPlacement.adjacentToBar(
@@ -2140,8 +2151,24 @@ private struct StackedBarChart: View {
     let rows: [MainPanelView.TokenChartRow]
     let todayLabel: String
     let tokenLabel: String
+    let language: AppLanguage
+    let showsSingleSegmentBreakdown: Bool
     @State private var hoveredIndex: Int?
-    @State private var tooltipSize = CGSize(width: 128, height: 46)
+    @State private var tooltipSize = ChartTooltipLayout.initialSize
+
+    init(
+        rows: [MainPanelView.TokenChartRow],
+        todayLabel: String,
+        tokenLabel: String,
+        language: AppLanguage = .simplifiedChinese,
+        showsSingleSegmentBreakdown: Bool = false
+    ) {
+        self.rows = rows
+        self.todayLabel = todayLabel
+        self.tokenLabel = tokenLabel
+        self.language = language
+        self.showsSingleSegmentBreakdown = showsSingleSegmentBreakdown
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -2217,11 +2244,11 @@ private struct StackedBarChart: View {
                     }
                 }
                 VStack(alignment: .trailing, spacing: 0) {
-                    Text(QuotaFormatters.tokensCN(peak))
+                    Text(QuotaFormatters.localizedTokens(peak, language: language))
                     Spacer()
-                    Text(QuotaFormatters.tokensCN(peak * 2 / 3))
+                    Text(QuotaFormatters.localizedTokens(peak * 2 / 3, language: language))
                     Spacer()
-                    Text(QuotaFormatters.tokensCN(peak / 3))
+                    Text(QuotaFormatters.localizedTokens(peak / 3, language: language))
                     Spacer()
                     Text("0")
                 }
@@ -2233,7 +2260,7 @@ private struct StackedBarChart: View {
 
                 if let hoveredIndex, rows.indices.contains(hoveredIndex) {
                     let row = rows[hoveredIndex]
-                    let tooltipItems = row.segments.count > 1
+                    let tooltipItems = (row.segments.count > 1 || showsSingleSegmentBreakdown)
                         ? compactTooltipItems(row.segments)
                         : []
                     let tooltipCenter = ChartTooltipPlacement.adjacentToBar(
@@ -2243,7 +2270,7 @@ private struct StackedBarChart: View {
                     )
                     ChartTooltip(
                         title: row.isToday ? todayLabel : row.label,
-                        value: QuotaFormatters.tokensCN(row.total),
+                        value: QuotaFormatters.localizedTokens(row.total, language: language),
                         valueLabel: tooltipItems.isEmpty ? nil : tokenLabel,
                         items: tooltipItems
                     )
@@ -2277,13 +2304,13 @@ private struct StackedBarChart: View {
         let visible = Array(sorted.prefix(visibleLimit))
         let remainder = sorted.dropFirst(visibleLimit)
         var items = visible.map { segment in
-            ChartTooltipItem(label: segment.name, value: QuotaFormatters.tokensCN(segment.value), color: segment.color)
+            ChartTooltipItem(label: segment.name, value: QuotaFormatters.localizedTokens(segment.value, language: language), color: segment.color)
         }
         if !remainder.isEmpty {
             let total = remainder.reduce(0) { $0 + $1.value }
             items.append(ChartTooltipItem(
                 label: "others",
-                value: QuotaFormatters.tokensCN(total),
+                value: QuotaFormatters.localizedTokens(total, language: language),
                 color: PanelTheme.modelFallback
             ))
         }
@@ -2303,14 +2330,22 @@ struct TokenYearHeatmap: View {
     let values: [Int]
     let labels: [String]
     let leadingOffset: Int
+    let language: AppLanguage
     @State private var hoveredIndex: Int?
-    @State private var tooltipSize = CGSize(width: 128, height: 46)
+    @State private var tooltipSize = ChartTooltipLayout.initialSize
 
-    init(levels: [Int], values: [Int] = [], labels: [String] = [], leadingOffset: Int) {
+    init(
+        levels: [Int],
+        values: [Int] = [],
+        labels: [String] = [],
+        leadingOffset: Int,
+        language: AppLanguage = .simplifiedChinese
+    ) {
         self.levels = levels
         self.values = values
         self.labels = labels
         self.leadingOffset = leadingOffset
+        self.language = language
     }
 
     var body: some View {
@@ -2339,8 +2374,8 @@ struct TokenYearHeatmap: View {
                     let anchorY = CGFloat(cell.row) * (metrics.cellHeight + metrics.gap) + metrics.cellHeight / 2
                     ChartTooltip(
                         title: labels[hoveredIndex],
-                        value: QuotaFormatters.tokensCN(values[hoveredIndex]),
-                        valueLabel: "Token"
+                        value: QuotaFormatters.localizedTokens(values[hoveredIndex], language: language),
+                        valueLabel: nil
                     )
                     .position(
                         x: ChartTooltipPlacement.x(

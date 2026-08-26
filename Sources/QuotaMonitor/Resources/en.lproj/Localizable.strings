@@ -28,6 +28,8 @@
 "menu.noUsage" = "No token usage yet";
 "menu.deepSeekRoute" = "DeepSeek route";
 "menu.daysShort" = "~%@ days";
+"menu.balance" = "Balance";
+"menu.daysLeft" = "Days left";
 
 "panel.showDetails" = "Show daily details";
 "panel.hideDetails" = "Hide daily details";
