@@ -1882,11 +1882,42 @@ private struct ChartTooltipSizePreferenceKey: PreferenceKey {
 }
 
 private enum ChartTooltipLayout {
-    // Keep the compact width as the minimum, while allowing long model names
-    // to expand up to the original tooltip width when the content needs it.
-    static let minimumWidth: CGFloat = 86
-    static let maximumWidth: CGFloat = 244
+    // Keep the tooltip at least 140pt wide, expand for longer labels up to
+    // 250pt, and let labels truncate at the trailing edge beyond that cap.
+    static let minimumWidth: CGFloat = 140
+    static let maximumWidth: CGFloat = 250
     static let initialSize = CGSize(width: minimumWidth, height: 46)
+
+    static func resolvedWidth(
+        title: String,
+        value: String,
+        valueLabel: String?,
+        items: [ChartTooltipItem]
+    ) -> CGFloat {
+        let headerWidth = textWidth(title, font: .monospacedSystemFont(ofSize: 10, weight: .medium))
+            + 8
+            + 6
+            + textWidth(value, font: .monospacedSystemFont(ofSize: 11.5, weight: .semibold))
+
+        let detailWidth: CGFloat
+        if items.isEmpty {
+            detailWidth = valueLabel.map { textWidth($0, font: .systemFont(ofSize: 9)) } ?? 0
+        } else {
+            detailWidth = items.map { item in
+                6
+                    + 6
+                    + textWidth(item.label, font: .systemFont(ofSize: 9.5))
+                    + 6
+                    + textWidth(item.value, font: .monospacedSystemFont(ofSize: 9.5, weight: .regular))
+            }.max() ?? 0
+        }
+
+        return min(max(ceil(max(headerWidth, detailWidth) + 20), minimumWidth), maximumWidth)
+    }
+
+    private static func textWidth(_ value: String, font: NSFont) -> CGFloat {
+        ceil((value as NSString).size(withAttributes: [.font: font]).width)
+    }
 }
 
 private struct ChartTooltip: View {
@@ -1922,7 +1953,7 @@ private struct ChartTooltip: View {
                     .frame(height: 1)
                 VStack(spacing: 4) {
                     ForEach(items) { item in
-                        HStack(spacing: 6) {
+                        HStack(alignment: .top, spacing: 6) {
                             Circle()
                                 .fill(item.color)
                                 .frame(width: 6, height: 6)
@@ -1930,12 +1961,14 @@ private struct ChartTooltip: View {
                                 .font(.system(size: 9.5))
                                 .foregroundStyle(PanelTheme.text2)
                                 .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer(minLength: 6)
+                                .truncationMode(.tail)
+                                .layoutPriority(1)
+                            Spacer(minLength: 4)
                             Text(item.value)
                                 .font(.system(size: 9.5))
                                 .fontDesign(.monospaced)
                                 .foregroundStyle(PanelTheme.text)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
                     }
                 }
@@ -1947,10 +1980,14 @@ private struct ChartTooltip: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        // 统一紧凑宽度，避免模型名或模型数量把浮层撑成横向色块。
+        // 依据当前内容在 140pt 下限与 250pt 上限之间自适应，超长标签单行尾部省略。
         .frame(
-            minWidth: ChartTooltipLayout.minimumWidth,
-            maxWidth: ChartTooltipLayout.maximumWidth,
+            width: ChartTooltipLayout.resolvedWidth(
+                title: title,
+                value: value,
+                valueLabel: valueLabel,
+                items: items
+            ),
             alignment: .leading
         )
         .background {
