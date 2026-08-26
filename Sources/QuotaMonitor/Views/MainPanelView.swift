@@ -1883,9 +1883,9 @@ private struct ChartTooltipSizePreferenceKey: PreferenceKey {
 
 private enum ChartTooltipLayout {
     // Keep the tooltip at least 140pt wide, expand for longer labels up to
-    // 250pt, and let labels truncate at the trailing edge beyond that cap.
+    // 400pt, and let labels truncate at the trailing edge beyond that cap.
     static let minimumWidth: CGFloat = 140
-    static let maximumWidth: CGFloat = 250
+    static let maximumWidth: CGFloat = 400
     static let initialSize = CGSize(width: minimumWidth, height: 46)
 
     static func resolvedWidth(
@@ -1980,7 +1980,7 @@ private struct ChartTooltip: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        // 依据当前内容在 140pt 下限与 250pt 上限之间自适应，超长标签单行尾部省略。
+        // 依据当前内容在 140pt 下限与 400pt 上限之间自适应，超长标签单行尾部省略。
         .frame(
             width: ChartTooltipLayout.resolvedWidth(
                 title: title,
