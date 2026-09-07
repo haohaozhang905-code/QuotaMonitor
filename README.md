@@ -19,23 +19,50 @@
   <img src="https://img.shields.io/badge/License-MIT-22c55e" alt="MIT License">
 </p>
 
-## 界面预览
+## 从状态栏，到完整看板
 
-下面是 macOS 实际运行截图，数据为本地示例，仅用于展示界面与交互布局。
+**抬眼看状态，点击查详情，需要时再展开分析。** QuotaMonitor 提供三种形态，让不同深度的信息各有入口。
 
-<p align="center">
-  <img src="docs/images/overview-preview.png" width="49%" alt="QuotaMonitor 概览页面">
-  <img src="docs/images/token-dashboard-preview.png" width="49%" alt="QuotaMonitor Token 看板">
-</p>
+![QuotaMonitor 三种形态：放大展示状态栏中的额度和余额，点击展开下拉框，再通过“打开主面板”进入完整概览](docs/images/three-surfaces-annotated.png)
 
-<p align="center">
-  <img src="docs/images/token-breakdown-preview.png" width="49%" alt="QuotaMonitor Token 明细与趋势">
-  <img src="docs/images/settings-preview.png" width="49%" alt="QuotaMonitor 设置页面">
-</p>
+| 形态 | 什么时候用 | 能看到什么 |
+| --- | --- | --- |
+| **① 状态栏** | 工作时抬眼查看 | Codex 剩余额度、已识别 DeepSeek 路由的余额 |
+| **② 下拉框** | 点击菜单栏入口，快速确认 | 今日 Token、额度与重置时间、平台和模型用量摘要 |
+| **③ 主面板** | 想了解用量变化与分布 | 概览、今日分时趋势，以及更完整的 Token 看板 |
 
-<p align="center">
-  <img src="docs/images/menu-bar-preview.png" width="280" alt="QuotaMonitor 菜单栏面板">
-</p>
+### 主面板：看趋势，也看用量分布
+
+选择近 **7 / 30 / 90 日或累计**范围，按平台或模型查看 Token 趋势；结合用量排行和 **365 天热力图**，回看哪些工具用得多、哪段时间用得集中。
+
+![Token 看板重点标注：时间范围、按平台或模型切换的局部放大，以及用量占比](docs/images/token-charts-annotated.png)
+
+展示图基于作者提供的真实运行截图，经 AI 辅助排版、局部放大与标注制作；放大镜和引导线为图片说明元素。截图数值为拍摄时的账户与本机记录，具体界面细节可查看下方原图。
+
+<details>
+<summary>查看未经标注的原始截图（含设置页）</summary>
+
+**状态栏与下拉框**
+
+<img src="docs/images/menu-bar-preview.png" width="360" alt="原始截图：状态栏与下拉框">
+
+**主面板概览**
+
+![原始截图：主面板概览](docs/images/overview-preview.png)
+
+**Token 趋势与用量分布**
+
+![原始截图：Token 看板](docs/images/token-dashboard-preview.png)
+
+**年度热力图**
+
+![原始截图：用量分布与年度热力图](docs/images/token-breakdown-preview.png)
+
+**设置**
+
+![原始截图：语言、登录启动与 Dock 图标设置](docs/images/settings-preview.png)
+
+</details>
 
 ## 它能帮你做什么
 
