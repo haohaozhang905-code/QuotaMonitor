@@ -19,6 +19,24 @@
   <img src="https://img.shields.io/badge/License-MIT-22c55e" alt="MIT License">
 </p>
 
+## 界面预览
+
+下面是 macOS 实际运行截图，数据为本地示例，仅用于展示界面与交互布局。
+
+<p align="center">
+  <img src="docs/images/overview-preview.png" width="49%" alt="QuotaMonitor 概览页面">
+  <img src="docs/images/token-dashboard-preview.png" width="49%" alt="QuotaMonitor Token 看板">
+</p>
+
+<p align="center">
+  <img src="docs/images/token-breakdown-preview.png" width="49%" alt="QuotaMonitor Token 明细与趋势">
+  <img src="docs/images/settings-preview.png" width="49%" alt="QuotaMonitor 设置页面">
+</p>
+
+<p align="center">
+  <img src="docs/images/menu-bar-preview.png" width="280" alt="QuotaMonitor 菜单栏面板">
+</p>
+
 ## 它能帮你做什么
 
 如果你经常在 Codex、Claude Code、WorkBuddy 等 AI 工具之间切换，可以用 QuotaMonitor 回答三个问题：
