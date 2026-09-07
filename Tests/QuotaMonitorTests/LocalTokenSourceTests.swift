@@ -760,54 +760,7 @@ struct QwenWorkTokenClientTests {
 
 }
 
-struct TraeWorkTokenSourceTests {
-    @Test func countsOnlyExplicitFeeUsageAndIgnoresNullMetadata() async throws {
-        let root = try Fixtures.makeTempDir("trae-work")
-        defer { Fixtures.remove(root) }
-        let logs = root.appendingPathComponent("Library/Application Support/TRAE SOLO CN/logs", isDirectory: true)
-        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
-        let lines = [
-            #"2026-08-14 [info] metadata {"fee_usage":null,"model_info":{"prompt_max_tokens":168000}}"#,
-            #"2026-08-14 [info] metadata {"model":"DeepSeek-V4-Flash","fee_usage":{"input_tokens":40,"output_tokens":8}}"#
-        ]
-        try lines.joined(separator: "\n").write(to: logs.appendingPathComponent("renderer.log"), atomically: true, encoding: .utf8)
 
-        let source = LocalToolTokenSource(
-            platform: .traeWork,
-            roots: ["Library/Application Support/TRAE SOLO CN/logs"],
-            overrideEnvironment: "",
-            format: .traeWork,
-            client: .desktop
-        )
-        let client = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:])
-        let snapshot = try await client.fetchSnapshots().first
-
-        #expect(snapshot?.history.first?.total == 48)
-        #expect(snapshot?.buckets.first?.model == "deepseek-v4-flash")
-    }
-
-    @Test func ignoresMetadataWithoutFeeUsage() async throws {
-        let root = try Fixtures.makeTempDir("trae-work-estimate")
-        defer { Fixtures.remove(root) }
-        let logs = root.appendingPathComponent("Library/Application Support/TRAE SOLO CN/logs", isDirectory: true)
-        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
-        let day = Fixtures.noon(yesterdayOffset: 0)
-        let line = #"2026-08-14T18:44:18.566+08:00 [info] [trae-chat-core] [MetadataHandler] received metadata {"message_id":"m1","created_at":\#(Int(day.timeIntervalSince1970)),"user_message_context":{"model_info":{"model_name":"DeepSeek-V4-Flash"},"query":"[{\"type\":\"text\",\"data\":{\"content\":\"请分析这份报告\"}}]"}}"#
-        try line.write(to: logs.appendingPathComponent("renderer.log"), atomically: true, encoding: .utf8)
-
-        let source = LocalToolTokenSource(
-            platform: .traeWork,
-            roots: ["Library/Application Support/TRAE SOLO CN/logs"],
-            overrideEnvironment: "",
-            format: .traeWork,
-            client: .desktop
-        )
-        let client = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:])
-        let snapshot = try await client.fetchSnapshots().first
-
-        #expect(snapshot == nil)
-    }
-}
 
 struct QoderSessionTokenClientTests {
     @Test func readsCanonicalEventsAndDeduplicatesDesktopMessageCopies() async throws {

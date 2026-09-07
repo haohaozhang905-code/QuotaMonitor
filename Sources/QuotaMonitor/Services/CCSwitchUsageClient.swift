@@ -13,7 +13,7 @@ struct CCSwitchDailyUsage: Sendable {
 /// 数据来源：`~/.cc-switch/cc-switch.db` 的 `proxy_request_logs` 表，
 /// 每行一次请求：app_type / model / input / output / cache_read /
 /// cache_creation / created_at（epoch 秒）。cc-switch 为 Claude 桌面版
-/// 的本地代理捕获，这是桌面版唯一可用的用量来源。
+/// 的本地代理捕获，这是当前 QuotaMonitor 已接入的桌面版用量来源。
 ///
 /// 统一口径：input = input_tokens + cache_read + cache_creation（cc-switch
 /// 的 input_tokens 不含缓存），cachedInput 单独列示。

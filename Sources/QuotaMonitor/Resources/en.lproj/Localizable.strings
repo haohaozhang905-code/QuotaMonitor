@@ -127,15 +127,15 @@
 "panel.resetCount" = "Reset credits";
 "settings.language" = "Language";
 "settings.launchAtLogin" = "Launch at login";
-"settings.refreshRate" = "Refresh interval";
+"settings.refreshRate" = "Quota refresh";
 "settings.refreshRate.value" = "60 seconds";
-"settings.privacy" = "Credentials stay local; tokens estimated locally, nothing uploaded.";
+"settings.privacy" = "Usage is counted locally; quota queries go to providers. Conversation content is not uploaded.";
 "settings.title" = "Settings";
 "settings.detail" = "Launch behavior and display language";
 "settings.general" = "General";
 "settings.sources" = "Data sources";
 "settings.launchAtLogin.detail" = "Show quota status after login";
-"settings.refreshRate.detail" = "Update quota and token data";
+"settings.refreshRate.detail" = "Tokens update about every 5 min, plus batched file changes";
 "settings.language.detail" = "Choose the interface language";
 "settings.dockIcon" = "Dock icon";
 "settings.dockIcon.detail" = "Choose when the Dock icon appears with the main window";
@@ -147,7 +147,7 @@
 "settings.deepSeekConnected" = "DeepSeek route · Connected";
 "settings.manage" = "Manage connection　›";
 "settings.tokenLogs" = "Token logs";
-"settings.tokenLogs.detail" = "Codex, Claude, WorkBuddy, Kimi, Trae Work, Qwen Office";
+"settings.tokenLogs.detail" = "Codex, Claude, WorkBuddy, Kimi, Qwen Office";
 "settings.sourceCount" = "%@ sources";
 "sidebar.connectionHealthy" = "Data source ready";
 "sidebar.connectionDetail" = "Local data source connected";

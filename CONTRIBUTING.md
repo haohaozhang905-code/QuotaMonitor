@@ -2,6 +2,8 @@
 
 感谢你帮助改进 QuotaMonitor。
 
+开始前可阅读[安装与构建](docs/INSTALL.md)、[工具支持清单](docs/DATA_SOURCES.md)和[定制与二次开发](docs/CUSTOMIZATION.md)。新增工具时请区分代码适配与真实环境验证，说明已验证的工具版本及统计边界。
+
 ## 提交改动前
 
 1. 先搜索已有 Issue，并尽量让每个改动保持单一目标。
@@ -14,8 +16,10 @@
 ```bash
 ./script/security_check.sh
 swift test
-./script/build_and_run.sh --verify
+QUOTAMONITOR_ALLOW_ADHOC=1 QUOTAMONITOR_SIGNING_IDENTITY=- ./script/build_and_run.sh --verify
 ```
+
+最后一条命令会构建、替换 `/Applications/QuotaMonitor.app` 并启动验证；执行前保存需要保留的旧应用。本地 ad-hoc 签名不等于公开分发所需的签名与公证。
 
 Pull Request 请说明：
 

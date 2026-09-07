@@ -436,7 +436,7 @@ final class QuotaStore {
     /// 拉取全部本地 token 来源并落盘快照；后台每 5 分钟刷新一次。
     ///
     /// 数据来源分工：Codex / Claude 命令行 / WorkBuddy 直接解析本地文件，
-    /// 不依赖 cc-switch；Claude 桌面版唯一来源是 cc-switch 请求日志，
+    /// 不依赖 cc-switch；当前已接入的 Claude 桌面版来源是 cc-switch 请求日志，
     /// 它退出时该列显示「未采集」，其余工具不受影响。
     private func refreshTokenSources() async {
         guard !isRefreshingTokenSources else { return }

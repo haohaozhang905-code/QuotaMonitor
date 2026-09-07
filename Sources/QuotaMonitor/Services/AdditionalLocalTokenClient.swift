@@ -10,8 +10,6 @@ struct LocalToolTokenSource: Hashable, Sendable {
         case kimiWire
         /// 千问办公同时写入 model.response.completed 与 turn.finished；前者是一条模型请求，后者是回合汇总。
         case qwenWork
-        /// Trae Work 的 renderer.log 在 JSON 前带有日志前缀，仅解析含有明确 fee_usage 的行。
-        case traeWork
     }
 
     let platform: TokenPlatform
@@ -69,13 +67,6 @@ struct LocalToolTokenSource: Hashable, Sendable {
             roots: [".qwenworkcn/logs/sessions"],
             overrideEnvironment: "QUOTAMONITOR_QWEN_WORK_HOME",
             format: .qwenWork,
-            client: .desktop
-        ),
-        .init(
-            platform: .traeWork,
-            roots: ["Library/Application Support/TRAE SOLO CN/logs"],
-            overrideEnvironment: "QUOTAMONITOR_TRAE_WORK_HOME",
-            format: .traeWork,
             client: .desktop
         ),
         .init(platform: .grok, roots: [".grok/sessions", ".grok/logs"], overrideEnvironment: "GROK_HOME"),
@@ -228,9 +219,6 @@ actor AdditionalLocalTokenClient {
         if source.format == .qwenWork {
             return parseQwenWork(url: url, source: source, fallbackDate: fallbackDate, startingAt: startingAt)
         }
-        if source.format == .traeWork {
-            return parseTraeWork(url: url, source: source, fallbackDate: fallbackDate, startingAt: startingAt)
-        }
         switch url.pathExtension.lowercased() {
         case "db", "sqlite", "sqlite3": return parseSQLite(url: url, source: source, fallbackDate: fallbackDate)
         case "jsonl", "log":
@@ -373,36 +361,6 @@ actor AdditionalLocalTokenClient {
         }
         guard didRead else { return nil }
         return TokenUsageBucket.combining(buckets)
-    }
-
-    /// Trae Work 的 renderer.log 形如 `ISO 时间 [级别] ... {JSON}`，
-    /// 只读取明确含有 fee_usage 的记录，避免把 prompt_max_tokens 等上限字段误当成消耗。
-    private static func parseTraeWork(
-        url: URL,
-        source: LocalToolTokenSource,
-        fallbackDate: Date,
-        startingAt: Int
-    ) -> [TokenUsageBucket]? {
-        guard url.pathExtension.lowercased() == "log" else { return [] }
-        var parsedBuckets: [TokenUsageBucket] = []
-        let didRead = JSONLReader.forEachLine(at: url, startingAt: UInt64(startingAt)) { data in
-            guard let line = String(data: data, encoding: .utf8), line.contains("\"fee_usage\""),
-                  let start = line.firstIndex(of: "{"),
-                  let jsonData = String(line[start...]).data(using: .utf8),
-                  let value = try? JSONSerialization.jsonObject(with: jsonData) else { return }
-            let lineDate = traeLogDate(from: line) ?? fallbackDate
-            parsedBuckets.append(contentsOf: buckets(in: value, source: source, fallbackDate: lineDate))
-        }
-        guard didRead else { return nil }
-        return TokenUsageBucket.combining(parsedBuckets)
-    }
-
-    private static func traeLogDate(from line: String) -> Date? {
-        guard let separator = line.range(of: " [") else { return nil }
-        let raw = String(line[..<separator.lowerBound])
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: raw)
     }
 
     private static func cacheKey(url: URL, source: LocalToolTokenSource) -> String {

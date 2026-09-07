@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QuotaMonitor · 三平台额度概览视觉提案</title>
+<style>
+  /* ==================================================================
+     DESIGN TOKENS — Acme base tokens retained for a self-contained doc.
+     ================================================================== */
+  :root {
+    /* Primary palette */
+    --ivory: #FAF9F5;
+    --slate: #141413;
+    --clay: #D97757;
+    --clay-d: #B85C3E;
+    --oat: #E3DACC;
+    --olive: #788C5D;
+    --rust: #B04A3F;
+    --white: #FFFFFF;
+
+    /* Gray scale */
+    --gray-100: #F0EEE6;
+    --gray-200: #E6E3DA;
+    --gray-300: #D1CFC5;
+    --gray-500: #87867F;
+    --gray-700: #3D3D3A;
+
+    /* Semantic */
+    --success: #788C5D;
+    --warning: #C78E3F;
+    --danger:  #B04A4A;
+    --info:    #5C7CA3;
+
+    /* Typography */
+    --serif: ui-serif, Georgia, "Times New Roman", Times, serif;
+    --sans:  system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono:  ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+    /* Radius */
+    --radius-xs: 4px;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-panel: 12px;
+    --radius-row: 8px;
+    --radius-pill: 999px;
+
+    /* Borders */
+    --border: 1.5px solid var(--gray-300);
+    --border-light: 1px solid var(--gray-100);
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgba(20, 20, 19, 0.06);
+    --shadow-md: 0 4px 10px rgba(20, 20, 19, 0.08);
+    --shadow-lg: 0 12px 28px rgba(20, 20, 19, 0.12);
+
+    /* QuotaMonitor proposal tokens */
+    --app-bg: var(--gray-100);
+    --app-sidebar: var(--gray-200);
+    --app-surface: var(--white);
+    --app-surface-2: var(--gray-100);
+    --app-text: var(--slate);
+    --app-text-2: var(--gray-700);
+    --app-text-3: var(--gray-500);
+    --codex: var(--info);
+    --trae: var(--clay);
+    --workbuddy: var(--olive);
+    --doubao: var(--warning);
+
+    /* Current QuotaMonitor PanelTheme values. */
+    --qm-background: #F6F6F7;
+    --qm-sidebar: #ECECEF;
+    --qm-surface: #FFFFFF;
+    --qm-surface-2: #F3F3F5;
+    --qm-border: #E4E4E7;
+    --qm-separator: #E9E9EC;
+    --qm-text: #19191C;
+    --qm-text-2: #696971;
+    --qm-text-3: #9A9AA2;
+    --qm-codex: #5B6F8D;
+    --qm-codex-deep: #4C607D;
+    --qm-codex-soft: #E7EBF1;
+    --qm-claude: #D97757;
+    --qm-claude-code: #77678B;
+    --qm-deepseek: #5D858D;
+    --qm-workbuddy: #5E8975;
+    --qm-ok: #2FA36B;
+    --qm-warn: #D99A2B;
+    --qm-danger: #D9534F;
+    --qm-dark-background: #15191F;
+    --qm-dark-sidebar: #1C222B;
+    --qm-dark-surface: #20262F;
+    --qm-dark-surface-2: #272E38;
+    --qm-dark-border: #2C333C;
+    --qm-dark-separator: #29313A;
+    --qm-dark-text: #E8EBF0;
+    --qm-dark-text-2: #97A0AC;
+    --qm-dark-text-3: #7B8593;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 56px 24px 120px;
+    background: var(--ivory);
+    color: var(--slate);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { max-width: 1060px; margin: 0 auto; }
+  .eyebrow, .meta, .micro, .data-label, .footer-meta {
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+  }
+  .eyebrow { color: var(--gray-500); font-size: 12px; margin-bottom: 16px; }
+  h1, h2, h3 { font-family: var(--serif); font-weight: 500; letter-spacing: -.015em; }
+  h1 { font-size: clamp(32px, 5vw, 46px); line-height: 1.1; margin: 0 0 10px; }
+  h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; }
+  h3 { font-size: 18px; line-height: 1.3; margin: 0 0 5px; }
+  .sub { max-width: 720px; color: var(--gray-500); font-size: 15px; margin: 0 0 30px; }
+  section { margin: 0 0 54px; }
+  .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+  .section-heading .note { color: var(--gray-500); font-size: 13px; text-align: right; }
+  hr.rule { border: none; border-top: 1px solid var(--gray-300); margin: 13px 0 22px; }
+
+  .control-bar {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 20px; padding: 10px 12px;
+    background: var(--white); border: var(--border); border-radius: var(--radius-panel);
+  }
+  .control-group { display: flex; align-items: center; gap: 7px; }
+  .control-label { color: var(--gray-500); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; }
+  button {
+    border: 1.5px solid transparent; border-radius: var(--radius-row); cursor: pointer;
+    font: 500 12px var(--sans); transition: background .12s ease, border-color .12s ease, color .12s ease;
+  }
+  .control-button { padding: 7px 10px; color: var(--gray-700); background: transparent; }
+  .control-button:hover { background: var(--gray-100); }
+  .control-button.active { color: var(--slate); background: var(--gray-100); border-color: var(--gray-300); }
+  .state-button[data-state="warning"].active { color: var(--warning); }
+  .state-button[data-state="unavailable"].active { color: var(--danger); }
+
+  /* The visual proposal: a restrained desktop app preview inside the editorial page. */
+  .app-shell {
+    --app-bg: var(--gray-100);
+    --app-sidebar: var(--gray-200);
+    --app-surface: var(--white);
+    --app-surface-2: var(--gray-100);
+    --app-text: var(--slate);
+    --app-text-2: var(--gray-700);
+    --app-text-3: var(--gray-500);
+    --app-border: var(--gray-300);
+    display: grid; grid-template-columns: 176px minmax(0, 1fr); min-height: 690px;
+    overflow: hidden; background: var(--app-bg); border: var(--border);
+    border-radius: 16px; box-shadow: var(--shadow-lg);
+  }
+  .app-shell[data-theme="dark"] {
+    --app-bg: var(--slate);
+    --app-sidebar: var(--gray-700);
+    --app-surface: var(--gray-700);
+    --app-surface-2: var(--gray-500);
+    --app-text: var(--ivory);
+    --app-text-2: var(--gray-200);
+    --app-text-3: var(--gray-300);
+    --app-border: var(--gray-500);
+  }
+  .app-sidebar { padding: 22px 12px; background: var(--app-sidebar); border-right: 1px solid var(--app-border); }
+  .app-brand { display: flex; align-items: center; gap: 9px; padding: 0 8px 25px; color: var(--app-text); }
+  .brand-mark { display: grid; place-items: center; width: 28px; height: 28px; color: var(--white); background: var(--codex); border-radius: 8px; font: 600 13px var(--mono); }
+  .brand-name { font: 600 13px var(--sans); }
+  .app-nav { display: grid; gap: 5px; }
+  .nav-item { display: flex; align-items: center; gap: 9px; padding: 9px 10px; color: var(--app-text-3); border-radius: 8px; font-size: 12px; }
+  .nav-item.active { color: var(--codex); background: color-mix(in srgb, var(--codex) 16%, transparent); font-weight: 600; }
+  .nav-icon { width: 16px; text-align: center; font-family: var(--mono); }
+  .sidebar-caption { margin: 36px 10px 8px; color: var(--app-text-3); font: 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .source-mini { display: grid; gap: 8px; padding: 0 10px; }
+  .source-mini-row { display: flex; align-items: center; gap: 7px; color: var(--app-text-2); font-size: 10px; }
+  .source-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+  .source-dot.warn { background: var(--warning); }
+
+  .app-main { min-width: 0; background: var(--app-bg); }
+  .app-topbar { display: flex; align-items: center; justify-content: space-between; height: 52px; padding: 0 24px; border-bottom: 1px solid var(--app-border); }
+  .app-topbar-title { color: var(--app-text-2); font-size: 12px; font-weight: 600; }
+  .sync-status { display: flex; align-items: center; gap: 6px; color: var(--app-text-3); font: 10px var(--mono); }
+  .sync-status::before { content: ""; width: 6px; height: 6px; background: var(--success); border-radius: 50%; }
+  .app-content { padding: 25px 24px 30px; }
+  .overview-head { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 17px; }
+  .overview-head h2 { color: var(--app-text); font-family: var(--sans); font-size: 22px; font-weight: 700; letter-spacing: -.025em; margin: 0; }
+  .overview-head p { color: var(--app-text-3); font-size: 10px; margin: 0; }
+  .app-section-label { display: flex; align-items: baseline; justify-content: space-between; margin: 22px 0 9px; }
+  .app-section-label h3 { color: var(--app-text); font-family: var(--sans); font-size: 12px; font-weight: 650; letter-spacing: 0; }
+  .app-section-label span { color: var(--app-text-3); font: 9px var(--mono); }
+
+  .quota-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .quota-card { min-width: 0; padding: 14px 14px 13px; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: 11px; transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
+  .quota-card:hover { transform: translateY(-2px); border-color: var(--app-text-3); box-shadow: var(--shadow-md); }
+  .quota-card.stale { border-color: var(--warning); }
+  .quota-card.off { border-color: var(--app-border); opacity: .72; }
+  .quota-card-top { display: flex; align-items: center; gap: 8px; min-height: 25px; }
+  .platform-icon { display: grid; place-items: center; width: 22px; height: 22px; color: var(--white); border-radius: 7px; font: 600 10px var(--mono); }
+  .platform-icon.workbuddy { background: var(--workbuddy); }
+  .platform-icon.trae { background: var(--trae); }
+  .platform-icon.doubao { background: var(--doubao); }
+  .quota-name { color: var(--app-text); font-size: 11px; font-weight: 650; }
+  .status-badge { margin-left: auto; padding: 3px 6px; border-radius: 999px; font: 9px var(--mono); color: var(--success); background: color-mix(in srgb, var(--success) 15%, transparent); white-space: nowrap; }
+  .status-badge.warn { color: var(--warning); background: color-mix(in srgb, var(--warning) 17%, transparent); }
+  .status-badge.off { color: var(--app-text-3); background: color-mix(in srgb, var(--app-text-3) 14%, transparent); }
+  .quota-main { display: flex; align-items: baseline; gap: 5px; margin-top: 15px; }
+  .quota-value { color: var(--app-text); font: 600 22px var(--mono); letter-spacing: -.06em; }
+  .quota-unit { color: var(--app-text-3); font: 9px var(--mono); }
+  .quota-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; color: var(--app-text-3); font: 9px var(--mono); }
+  .quota-bar { height: 5px; margin-top: 13px; overflow: hidden; background: color-mix(in srgb, var(--app-text-3) 15%, transparent); border-radius: 999px; }
+  .quota-bar span { display: block; height: 100%; border-radius: inherit; background: var(--success); }
+  .quota-card.stale .quota-bar span { background: var(--warning); }
+  .quota-card.doubao .quota-main { display: block; margin-top: 12px; }
+  .window-row { display: grid; grid-template-columns: 31px 1fr 35px; align-items: center; gap: 7px; margin-top: 7px; color: var(--app-text-3); font: 9px var(--mono); }
+  .window-row strong { color: var(--app-text); font-weight: 600; text-align: right; }
+  .window-row .quota-bar { margin: 0; }
+  .window-row.warn strong { color: var(--warning); }
+  .window-row.warn .quota-bar span { background: var(--warning); }
+
+  .token-hero { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(215px, .9fr); gap: 18px; padding: 18px; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: 11px; }
+  .token-label { color: var(--app-text-3); font: 9px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .token-value { color: var(--app-text); font: 600 33px var(--mono); letter-spacing: -.07em; line-height: 1; margin-top: 7px; }
+  .token-sub { color: var(--app-text-3); font-size: 10px; margin-top: 9px; }
+  .token-delta { display: inline-flex; padding: 3px 6px; margin-left: 5px; color: var(--success); background: color-mix(in srgb, var(--success) 15%, transparent); border-radius: 999px; font: 9px var(--mono); }
+  .mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 20px; }
+  .mini-stat { padding-top: 9px; border-top: 1px solid var(--app-border); }
+  .mini-stat span { display: block; color: var(--app-text-3); font: 9px var(--mono); }
+  .mini-stat strong { display: block; color: var(--app-text); font: 600 12px var(--mono); margin-top: 4px; }
+  .sparkline { align-self: center; width: 100%; height: 112px; }
+  .sparkline .grid { stroke: var(--app-border); stroke-width: 1; }
+  .sparkline .area { fill: color-mix(in srgb, var(--codex) 14%, transparent); }
+  .sparkline .line { fill: none; stroke: var(--codex); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.3; }
+  .sparkline text { fill: var(--app-text-3); font: 9px var(--mono); }
+
+  .lower-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .list-card { padding: 14px; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: 11px; }
+  .list-card h3 { color: var(--app-text); font-family: var(--sans); font-size: 12px; font-weight: 650; }
+  .list-card .small-note { color: var(--app-text-3); font: 9px var(--mono); }
+  .usage-row { display: grid; grid-template-columns: 80px 1fr 48px; align-items: center; gap: 7px; margin-top: 13px; color: var(--app-text-2); font-size: 10px; }
+  .usage-row .bar { height: 5px; overflow: hidden; background: color-mix(in srgb, var(--app-text-3) 15%, transparent); border-radius: 999px; }
+  .usage-row .bar span { display: block; height: 100%; border-radius: inherit; }
+  .usage-row strong { color: var(--app-text-3); font: 9px var(--mono); text-align: right; }
+  .usage-row.workbuddy .bar span { width: 62%; background: var(--workbuddy); }
+  .usage-row.trae .bar span { width: 28%; background: var(--trae); }
+  .usage-row.doubao .bar span { width: 10%; background: var(--doubao); }
+  .daily-list { margin-top: 12px; }
+  .daily-row { display: flex; justify-content: space-between; padding: 7px 0; color: var(--app-text-2); border-top: 1px solid var(--app-border); font-size: 10px; }
+  .daily-row strong { color: var(--app-text); font: 600 10px var(--mono); }
+  .daily-row.today { color: var(--codex); font-weight: 650; }
+
+  .preview-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; align-items: start; gap: 24px; }
+  .annotation { padding: 20px 22px; background: var(--white); border: var(--border); border-radius: var(--radius-panel); }
+  .annotation p { color: var(--gray-700); font-size: 14px; margin: 0 0 16px; }
+  .annotation ul { display: grid; gap: 11px; padding: 0; margin: 0; list-style: none; }
+  .annotation li { display: grid; grid-template-columns: 24px 1fr; gap: 9px; align-items: start; color: var(--gray-700); font-size: 13px; }
+  .annotation li::before { content: ""; width: 7px; height: 7px; margin: 7px 0 0 5px; background: var(--clay); border-radius: 2px; }
+  .annotation strong { color: var(--slate); font-weight: 650; }
+
+  .dropdown-stage { position: relative; min-height: 390px; padding: 22px; background: var(--gray-200); border: var(--border); border-radius: var(--radius-panel); }
+  .menu-anchor { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 10px 12px; color: var(--gray-700); background: var(--white); border: var(--border); border-radius: var(--radius-row); }
+  .menu-anchor:hover { border-color: var(--slate); }
+  .menu-anchor-left { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; }
+  .menu-anchor-right { color: var(--gray-500); font: 10px var(--mono); }
+  .popover { display: none; position: absolute; z-index: 2; top: 71px; left: 22px; right: 22px; overflow: hidden; background: var(--slate); border: 1.5px solid var(--gray-700); border-radius: 12px; box-shadow: var(--shadow-lg); }
+  .popover.open { display: block; }
+  .popover-head { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 14px 7px; color: var(--ivory); }
+  .popover-head strong { font-size: 13px; }
+  .popover-head span { color: var(--gray-300); font: 9px var(--mono); }
+  .popover-hero { padding: 0 14px 13px; color: var(--ivory); }
+  .popover-hero strong { font: 600 25px var(--mono); letter-spacing: -.06em; }
+  .popover-hero span { margin-left: 5px; color: var(--gray-300); font-size: 10px; }
+  .popover-section { padding: 5px 14px; color: var(--gray-300); background: color-mix(in srgb, var(--white) 10%, transparent); font: 9px var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+  .popover-row { display: grid; grid-template-columns: 72px 1fr 1fr; gap: 8px; padding: 10px 14px; color: var(--ivory); border-bottom: 1px solid color-mix(in srgb, var(--white) 12%, transparent); }
+  .popover-row:last-child { border-bottom: none; }
+  .popover-platform { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 600; }
+  .popover-platform i { display: grid; place-items: center; width: 16px; height: 16px; color: var(--white); border-radius: 5px; font: 8px var(--mono); font-style: normal; }
+  .popover-metric label { display: block; color: var(--gray-300); font: 8px var(--mono); }
+  .popover-metric strong { display: block; margin-top: 2px; font: 600 10px var(--mono); }
+  .popover-metric small { display: block; margin-top: 1px; color: var(--gray-500); font: 8px var(--mono); }
+  .popover-row.warning strong { color: var(--warning); }
+  .popover-footer { display: flex; justify-content: space-between; padding: 10px 14px 12px; color: var(--gray-300); border-top: 1px solid color-mix(in srgb, var(--white) 12%, transparent); font-size: 9px; }
+
+  .state-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .state-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; color: var(--gray-700); background: var(--white); border: var(--border); border-radius: 999px; font: 10px var(--mono); }
+  .state-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+  .state-chip.warn::before { background: var(--warning); }
+  .state-chip.off::before { background: var(--gray-500); }
+
+  footer { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--gray-300); color: var(--gray-500); font: 11px var(--mono); }
+
+  .warning-copy, .unavailable-copy { display: none; }
+  body[data-state="warning"] .warning-copy { display: inline; }
+  body[data-state="warning"] .normal-copy { display: none; }
+  body[data-state="unavailable"] .unavailable-copy { display: inline; }
+  body[data-state="unavailable"] .normal-copy,
+  body[data-state="unavailable"] .warning-copy { display: none; }
+  body[data-state="warning"] .quota-card.trae { border-color: var(--warning); }
+  body[data-state="warning"] .quota-card.trae .status-badge { color: var(--warning); background: color-mix(in srgb, var(--warning) 17%, transparent); }
+  body[data-state="warning"] .quota-card.trae .status-badge::after { content: " · 上次数据"; }
+  body[data-state="unavailable"] .quota-card.workbuddy,
+  body[data-state="unavailable"] .quota-card.trae,
+  body[data-state="unavailable"] .quota-card.doubao { opacity: .72; }
+  body[data-state="unavailable"] .quota-card .status-badge { color: var(--gray-500); background: var(--gray-100); }
+  body[data-state="unavailable"] .quota-card .status-badge::after { content: "未连接"; }
+  body[data-state="unavailable"] .quota-card .status-badge { font-size: 0; }
+  body[data-state="unavailable"] .quota-card .status-badge::after { font-size: 9px; }
+
+  @media (max-width: 880px) {
+    .app-shell { grid-template-columns: 150px minmax(0, 1fr); }
+    .quota-grid { grid-template-columns: 1fr; }
+    .quota-card { min-height: 130px; }
+    .preview-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 720px) {
+    body { padding: 34px 16px 80px; }
+    .section-heading { align-items: start; flex-direction: column; gap: 5px; }
+    .section-heading .note { text-align: left; }
+    .app-shell { display: block; }
+    .app-sidebar { display: none; }
+    .token-hero, .lower-grid { grid-template-columns: 1fr; }
+    .sparkline { height: 95px; }
+  }
+  @media (max-width: 640px) {
+    .app-topbar, .app-content { padding-left: 15px; padding-right: 15px; }
+    .popover-row { grid-template-columns: 66px 1fr 1fr; gap: 5px; padding-left: 10px; padding-right: 10px; }
+    .dropdown-stage { padding: 14px; }
+    .popover { left: 14px; right: 14px; }
+  }
+
+  /* ================================================================
+     QUOTAMONITOR ALIGNMENT OVERRIDES
+     These rules deliberately mirror the current SwiftUI PanelTheme
+     and MainPanelView geometry instead of the surrounding editorial shell.
+     ================================================================ */
+  body {
+    padding: 34px 24px 74px;
+    background: var(--qm-background);
+    color: var(--qm-text);
+  }
+  .page { max-width: 980px; }
+  .eyebrow { color: var(--qm-text-3); font-size: 10px; letter-spacing: .1em; margin-bottom: 9px; }
+  h1, h2, h3 { font-family: var(--sans); }
+  h1 { color: var(--qm-text); font-size: 23px; font-weight: 700; letter-spacing: -.025em; margin-bottom: 7px; }
+  h2 { color: var(--qm-text); font-size: 19px; font-weight: 650; letter-spacing: -.02em; }
+  h3 { color: var(--qm-text); font-size: 14px; font-weight: 650; letter-spacing: 0; }
+  .sub { max-width: 700px; color: var(--qm-text-2); font-size: 12px; line-height: 1.55; margin-bottom: 20px; }
+  .section-heading .note { color: var(--qm-text-3); font-size: 11px; }
+  hr.rule { border-top-color: var(--qm-border); margin: 10px 0 16px; }
+  .control-bar { padding: 7px 9px; margin-bottom: 14px; background: var(--qm-surface); border-color: var(--qm-border); border-radius: 9px; box-shadow: none; }
+  .control-label { color: var(--qm-text-3); font-size: 10px; }
+  .control-button { color: var(--qm-text-2); font-size: 11px; padding: 6px 9px; }
+  .control-button:hover { background: var(--qm-surface-2); }
+  .control-button.active { color: var(--qm-codex-deep); background: var(--qm-codex-soft); border-color: transparent; }
+  .state-button[data-state="warning"].active { color: var(--qm-warn); background: color-mix(in srgb, var(--qm-warn) 13%, transparent); }
+  .state-button[data-state="unavailable"].active { color: var(--qm-danger); background: color-mix(in srgb, var(--qm-danger) 12%, transparent); }
+
+  .app-shell {
+    grid-template-columns: 210px minmax(0, 1fr);
+    min-height: 638px;
+    background: var(--qm-background);
+    border: .5px solid var(--qm-border);
+    border-radius: 10px;
+    box-shadow: 0 12px 28px rgba(25, 25, 28, .10);
+  }
+  .app-shell[data-theme="light"] {
+    --app-bg: var(--qm-background);
+    --app-sidebar: var(--qm-sidebar);
+    --app-surface: var(--qm-surface);
+    --app-surface-2: var(--qm-surface-2);
+    --app-text: var(--qm-text);
+    --app-text-2: var(--qm-text-2);
+    --app-text-3: var(--qm-text-3);
+    --app-border: var(--qm-border);
+    --codex: var(--qm-codex);
+    --trae: var(--qm-claude);
+    --workbuddy: var(--qm-workbuddy);
+    --doubao: var(--qm-warn);
+    --success: var(--qm-ok);
+    --warning: var(--qm-warn);
+    --danger: var(--qm-danger);
+  }
+  .app-shell[data-theme="dark"] {
+    --app-bg: var(--qm-dark-background);
+    --app-sidebar: var(--qm-dark-sidebar);
+    --app-surface: var(--qm-dark-surface);
+    --app-surface-2: var(--qm-dark-surface-2);
+    --app-text: var(--qm-dark-text);
+    --app-text-2: var(--qm-dark-text-2);
+    --app-text-3: var(--qm-dark-text-3);
+    --app-border: var(--qm-dark-border);
+    --codex: #6C82A3;
+    --trae: #E68A6D;
+    --workbuddy: #78A18F;
+    --doubao: #DCA869;
+    --success: #69BD93;
+    --warning: #DCA869;
+    --danger: #E07C6C;
+  }
+  .app-sidebar { padding: 0 9px; border-right-color: var(--app-border); }
+  .app-brand { gap: 10px; padding: 48px 7px 19px; }
+  .brand-mark { display: block; width: 64px; height: 64px; border-radius: 12px; object-fit: cover; }
+  .brand-name { font-size: 15.5px; }
+  .app-nav { gap: 3px; }
+  .nav-item { gap: 10px; padding: 8px 10px; font-size: 12px; }
+  .nav-item.active { color: var(--qm-codex-deep); background: var(--qm-codex-soft); }
+  .sidebar-caption { margin: 29px 10px 9px; color: var(--app-text-3); font-size: 9px; }
+  .source-mini { gap: 9px; }
+  .source-mini-row { color: var(--app-text-2); font-size: 10px; }
+  .app-topbar { position: relative; height: 38px; padding: 0 13px; border-bottom-color: var(--app-border); }
+  .app-topbar-title { position: absolute; left: calc(50% - 105px); transform: translateX(-50%); color: var(--app-text-2); font-size: 12.5px; }
+  .sync-status { color: var(--app-text-2); font-size: 9px; }
+  .app-content { padding: 20px 16px 24px; }
+  .overview-head { margin-bottom: 13px; }
+  .overview-head h2 { font-size: 22px; }
+  .overview-head p { font-size: 9px; }
+  .app-section-label { margin: 17px 0 8px; }
+  .app-section-label h3 { font-size: 13px; }
+  .app-section-label span { font-size: 9px; }
+  .quota-grid { gap: 9px; }
+  .quota-card { padding: 12px 12px 11px; border-color: var(--app-border); border-radius: 10px; box-shadow: none; }
+  .quota-card:hover { border-color: var(--app-text-3); box-shadow: none; }
+  .quota-card-top { gap: 7px; }
+  .platform-icon { width: 21px; height: 21px; border-radius: 6px; }
+  .quota-name { font-size: 11px; }
+  .status-badge { font-size: 8px; }
+  .quota-main { margin-top: 12px; }
+  .quota-value { font-size: 20px; }
+  .quota-meta { font-size: 8px; }
+  .quota-bar { margin-top: 11px; }
+  .token-hero { gap: 14px; padding: 16px; border-color: var(--app-border); border-radius: 10px; }
+  .token-value { font-size: 31px; }
+  .token-sub { font-size: 9px; }
+  .mini-stats { margin-top: 16px; }
+  .mini-stat span { font-size: 8px; }
+  .mini-stat strong { font-size: 11px; }
+  .lower-grid { gap: 9px; }
+  .list-card { padding: 13px; border-color: var(--app-border); border-radius: 10px; }
+  .list-card h3 { font-size: 12px; }
+  .usage-row { margin-top: 11px; font-size: 9px; }
+  .daily-row { padding: 6px 0; font-size: 9px; }
+  .annotation { padding: 17px 18px; background: var(--qm-surface); border-color: var(--qm-border); border-radius: 10px; }
+  .annotation p, .annotation li { font-size: 12px; }
+  .dropdown-stage { padding: 18px; background: var(--qm-sidebar); border-color: var(--qm-border); border-radius: 10px; }
+  .dropdown-stage[data-theme="dark"] { --app-bg: var(--qm-dark-background); --app-surface: var(--qm-dark-surface); --app-surface-2: var(--qm-dark-surface-2); --app-text: var(--qm-dark-text); --app-text-2: var(--qm-dark-text-2); --app-text-3: var(--qm-dark-text-3); --app-border: var(--qm-dark-border); --workbuddy: #78A18F; --trae: #E68A6D; --doubao: #DCA869; }
+  .dropdown-stage[data-theme="dark"] .menu-anchor { background: var(--qm-dark-surface); color: var(--qm-dark-text); border-color: var(--qm-dark-border); }
+  .menu-anchor { padding: 9px 10px; border-color: var(--qm-border); border-radius: 8px; }
+  .popover { top: 64px; background: var(--app-surface); border-color: var(--app-border); border-radius: 10px; color: var(--app-text); }
+  .popover-head { padding: 13px 12px 6px; }
+  .popover-head { color: var(--app-text); }
+  .popover-head span, .popover-hero span, .popover-metric label, .popover-metric small { color: var(--app-text-2); }
+  .popover-hero { color: var(--app-text); }
+  .popover-hero { padding: 0 12px 11px; }
+  .popover-section { padding: 3px 12px; color: var(--app-text); background: var(--app-surface-2); font: 600 11px var(--sans); letter-spacing: 0; text-transform: none; }
+  .popover-row { grid-template-columns: 100px 1fr 1fr; gap: 12px; padding: 8px 12px; color: var(--app-text); border-bottom-color: var(--app-border); }
+  .popover-compact-row { display: grid; grid-template-columns: minmax(0, 1fr) 70px 42px; gap: 8px; align-items: center; padding: 3px 12px; color: var(--qm-text-2); font: 10px var(--mono); }
+  .popover-compact-row strong { color: var(--app-text); font-weight: 500; text-align: right; }
+  .popover-compact-row small { color: var(--app-text-2); font-size: 9px; text-align: right; }
+  .popover-action { display: flex; align-items: center; justify-content: space-between; padding: 7px 12px; color: var(--app-text-2); font-size: 10.5px; }
+  .popover-action kbd { color: var(--app-text-3); font: 9px var(--mono); }
+  .popover-footer { color: var(--app-text-2); border-top-color: var(--app-border); }
+  .popover-row.warning strong { color: var(--warning); }
+  .menu-app-icon { width: 18px; height: 18px; border-radius: 4px; object-fit: cover; }
+  footer { margin-top: 44px; padding-top: 14px; border-top-color: var(--qm-border); color: var(--qm-text-3); font-size: 9px; }
+
+  /* Match the actual overview hierarchy in MainPanelView.swift:
+     heading → Token hero → quota cards → hourly chart → breakdown cards. */
+  .overview-head p { display: none; }
+  .token-hero { display: block; }
+  .hero-top { display: flex; align-items: flex-start; gap: 9px; }
+  .hero-top .token-sub { margin-top: 9px; }
+  .token-hero .mini-stats { margin-top: 16px; }
+  .token-hero .mini-stat { padding-top: 0; border-top: 0; }
+  .quota-main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 0; margin-top: 10px; padding-top: 10px; border-top: .5px solid var(--app-border); }
+  .quota-main .quota-fact { min-width: 0; }
+  .quota-main .quota-fact + .quota-fact { padding-left: 13px; border-left: 1px solid var(--app-border); }
+  .quota-fact label { display: block; color: var(--app-text-3); font-size: 9px; }
+  .quota-fact strong { display: block; margin-top: 3px; color: var(--app-text); font: 600 20px var(--mono); letter-spacing: -.04em; line-height: 1.05; white-space: nowrap; }
+  .quota-fact small { display: block; margin-top: 3px; color: var(--app-text-2); font: 9px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .quota-card .quota-meta, .quota-card > .quota-bar { display: none; }
+  .quota-card.doubao .quota-main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); margin-top: 10px; padding-top: 10px; }
+  .quota-card.doubao .quota-fact strong { color: var(--app-text); }
+  .hourly-card { padding: 13px 16px 10px; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: 10px; }
+  .hourly-card-head { display: flex; align-items: center; justify-content: space-between; }
+  .hourly-card-head strong { color: var(--app-text); font-size: 13px; }
+  .hourly-card-head span { color: var(--app-text-3); font-size: 10px; }
+  .hour-bars { display: flex; align-items: end; gap: 5px; height: 92px; padding: 12px 2px 3px; }
+  .hour-bar { flex: 1; min-width: 3px; height: var(--h); background: var(--qm-codex); border-radius: 3px 3px 1px 1px; opacity: .86; }
+  .hour-axis { display: flex; justify-content: space-between; color: var(--app-text-3); font: 8px var(--mono); }
+  .lower-grid .list-card { min-height: 170px; }
+  .list-card-head { display: flex; align-items: center; justify-content: space-between; }
+  .list-card-head h3 { margin: 0; }
+  .list-card-head span { color: var(--app-text-3); font-size: 10px; }
+  .usage-row { grid-template-columns: minmax(0, 1fr) 65px 42px; }
+  .usage-row .bar { display: none; }
+  .usage-row strong { color: var(--app-text-2); }
+</style>
+</head>
+<body data-state="normal">
+<main class="page">
+  <header>
+    <div class="eyebrow">QUOTAMONITOR · VISUAL EXPLORATION</div>
+    <h1>三平台额度概览</h1>
+    <p class="sub">一版面向 WorkBuddy、TraeWork、豆包工作的概览视觉提案。额度先被看见，Token 消耗紧随其后；异常状态保留上下文，不用一个空白数字带过。</p>
+  </header>
+
+  <section>
+    <div class="control-bar" aria-label="预览控制">
+      <div class="control-group">
+        <span class="control-label">外观</span>
+        <button class="control-button active" data-theme="light">浅色</button>
+        <button class="control-button" data-theme="dark">深色</button>
+      </div>
+      <div class="control-group">
+        <span class="control-label">状态</span>
+        <button class="control-button state-button active" data-state="normal">正常</button>
+        <button class="control-button state-button" data-state="warning">预警</button>
+        <button class="control-button state-button" data-state="unavailable">未连接</button>
+      </div>
+    </div>
+
+    <div class="app-shell" id="appShell" data-theme="light">
+      <aside class="app-sidebar">
+        <div class="app-brand"><img class="brand-mark" src="../Sources/QuotaMonitor/Resources/AppIcon.png" alt=""><span class="brand-name">QuotaMonitor</span></div>
+        <nav class="app-nav" aria-label="主导航">
+          <div class="nav-item active"><span class="nav-icon">⌂</span>概览</div>
+          <div class="nav-item"><span class="nav-icon">▥</span>Token 看板</div>
+          <div class="nav-item"><span class="nav-icon">☷</span>设置</div>
+        </nav>
+        <div class="sidebar-caption">已接入来源</div>
+        <div class="source-mini">
+          <div class="source-mini-row"><span class="source-dot"></span>WorkBuddy</div>
+          <div class="source-mini-row"><span class="source-dot"></span>TraeWork</div>
+          <div class="source-mini-row"><span class="source-dot warn"></span>豆包工作</div>
+        </div>
+      </aside>
+
+      <div class="app-main">
+        <div class="app-topbar">
+          <span class="app-topbar-title">QuotaMonitor</span>
+          <span class="sync-status">数据更新于 08:46</span>
+        </div>
+        <div class="app-content">
+          <div class="overview-head">
+            <h2>概览</h2>
+            <p>今日 Token 消耗与平台额度</p>
+          </div>
+
+          <div class="app-section-label">
+            <h3>今日 Token 消耗</h3>
+            <span>含 TraeWork 会话用量</span>
+          </div>
+          <div class="token-hero">
+            <div class="hero-top">
+              <div>
+              <div class="token-label">今日总量</div>
+              <div class="token-value">1.28M</div>
+              <div class="token-sub">较昨日 1.14M</div>
+              </div>
+              <span class="token-delta">↑ 12.4%</span>
+            </div>
+            <div class="mini-stats">
+              <div class="mini-stat"><span>近 7 日</span><strong>8.64M</strong></div>
+              <div class="mini-stat"><span>今日峰值</span><strong>318K</strong></div>
+              <div class="mini-stat"><span>主要平台</span><strong>TraeWork</strong></div>
+            </div>
+          </div>
+
+          <div class="app-section-label">
+            <h3>平台额度</h3>
+            <span>状态跟随数据源</span>
+          </div>
+          <div class="quota-grid">
+            <article class="quota-card workbuddy">
+              <div class="quota-card-top"><span class="platform-icon workbuddy">W</span><span class="quota-name">WorkBuddy</span><span class="status-badge">健康</span></div>
+              <div class="quota-main">
+                <div class="quota-fact"><label>剩余额度</label><strong>2,945.65</strong><small>credits</small></div>
+                <div class="quota-fact"><label>剩余比例</label><strong>98.2%</strong><small>08-31 重置</small></div>
+              </div>
+            </article>
+            <article class="quota-card trae">
+              <div class="quota-card-top"><span class="platform-icon trae">T</span><span class="quota-name">TraeWork</span><span class="status-badge">健康</span></div>
+              <div class="quota-main">
+                <div class="quota-fact"><label>剩余额度</label><strong>4,098.45</strong><small>credits</small></div>
+                <div class="quota-fact"><label>剩余比例</label><strong>57.7%</strong><small>09-14 到期</small></div>
+              </div>
+            </article>
+            <article class="quota-card doubao">
+              <div class="quota-card-top"><span class="platform-icon doubao">豆</span><span class="quota-name">豆包工作</span><span class="status-badge warn">注意</span></div>
+              <div class="quota-main">
+                <div class="quota-fact"><label>5 小时窗口</label><strong>88%</strong><small>剩余</small></div>
+                <div class="quota-fact"><label>7 天窗口</label><strong>3%</strong><small>剩余 · 约 19:51 重置</small></div>
+              </div>
+            </article>
+          </div>
+
+          <div class="app-section-label">
+            <h3>今日小时 Token 消耗</h3>
+            <span>按小时聚合</span>
+          </div>
+          <div class="hourly-card">
+            <div class="hourly-card-head"><strong>今日每小时用量</strong><span>Token</span></div>
+            <div class="hour-bars" aria-label="今日小时 Token 消耗柱状图">
+              <i class="hour-bar" style="--h:22%"></i><i class="hour-bar" style="--h:34%"></i><i class="hour-bar" style="--h:28%"></i><i class="hour-bar" style="--h:46%"></i><i class="hour-bar" style="--h:39%"></i><i class="hour-bar" style="--h:61%"></i><i class="hour-bar" style="--h:52%"></i><i class="hour-bar" style="--h:78%"></i><i class="hour-bar" style="--h:66%"></i><i class="hour-bar" style="--h:91%"></i><i class="hour-bar" style="--h:73%"></i><i class="hour-bar" style="--h:100%"></i></div>
+            <div class="hour-axis"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>现在</span></div>
+          </div>
+
+          <div class="app-section-label">
+            <h3>用量构成</h3>
+            <span>今天</span>
+          </div>
+          <div class="lower-grid">
+            <div class="list-card">
+              <div class="list-card-head"><h3>按平台</h3><span>今天</span></div>
+              <div class="usage-row trae"><span>TraeWork</span><strong>793K</strong><strong>62.0%</strong></div>
+              <div class="usage-row workbuddy"><span>WorkBuddy</span><strong>358K</strong><strong>28.0%</strong></div>
+              <div class="usage-row doubao"><span>其他来源</span><strong>128K</strong><strong>10.0%</strong></div>
+            </div>
+            <div class="list-card">
+              <div class="list-card-head"><h3>按模型</h3><span>今天</span></div>
+              <div class="usage-row"><span>Claude Sonnet</span><strong>512K</strong><strong>40.0%</strong></div>
+              <div class="usage-row"><span>GPT-5</span><strong>448K</strong><strong>35.0%</strong></div>
+              <div class="usage-row"><span>其他</span><strong>320K</strong><strong>25.0%</strong></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-heading"><div><h2>下拉框：快速判断还能用多少</h2></div><div class="note">保留今日 Token Hero，额度区采用三行紧凑指标</div></div>
+    <hr class="rule">
+    <div class="preview-grid">
+      <div class="annotation">
+        <p>下拉框承接“我现在要不要切换平台”的即时判断。数值、单位、重置时间和异常来源放在同一行，避免用户点进主面板才能确认。</p>
+        <ul>
+          <li><strong>WorkBuddy / TraeWork</strong><span>显示剩余 credits，并在第二行显示剩余比例与重置/到期时间。</span></li>
+          <li><strong>豆包工作</strong><span>同时展示 5 小时和 7 天窗口，较低窗口使用警告色。</span></li>
+          <li><strong>异常状态</strong><span>展示“上次可用数据”或“未连接”，不把未知值伪装成 0。</span></li>
+        </ul>
+        <div class="state-strip"><span class="state-chip">正常</span><span class="state-chip warn">注意 / 预警</span><span class="state-chip off">未连接</span></div>
+      </div>
+        <div class="dropdown-stage" data-theme="light">
+        <button class="menu-anchor" id="menuAnchor" aria-expanded="true"><span class="menu-anchor-left"><img class="menu-app-icon" src="../Sources/QuotaMonitor/Resources/AppIcon.png" alt="">QuotaMonitor</span><span class="menu-anchor-right">98% · 1.28M</span></button>
+        <div class="popover open" id="popover">
+          <div class="popover-head"><strong>QuotaMonitor</strong><span>更新于 08:46</span></div>
+          <div class="popover-hero"><strong>1.28M</strong><span>今日 Token 消耗</span></div>
+          <div class="popover-section">平台额度</div>
+          <div class="popover-row"><div class="popover-platform"><i style="background:var(--workbuddy)">W</i>WorkBuddy</div><div class="popover-metric"><label>剩余</label><strong>2,945.65</strong><small>credits</small></div><div class="popover-metric"><label>周期</label><strong>98.2%</strong><small>08-31 重置</small></div></div>
+          <div class="popover-row"><div class="popover-platform"><i style="background:var(--trae)">T</i>TraeWork</div><div class="popover-metric"><label>剩余</label><strong>4,098.45</strong><small>credits</small></div><div class="popover-metric"><label>到期</label><strong>57.7%</strong><small>09-14 到期</small></div></div>
+          <div class="popover-row warning"><div class="popover-platform"><i style="background:var(--doubao)">豆</i>豆包工作</div><div class="popover-metric"><label>5 小时</label><strong>88%</strong><small>剩余</small></div><div class="popover-metric"><label>7 天</label><strong>3%</strong><small>剩余 · 注意</small></div></div>
+          <div class="popover-section">平台用量</div>
+          <div class="popover-compact-row"><span>TraeWork</span><strong>793K</strong><small>62.0%</small></div>
+          <div class="popover-compact-row"><span>WorkBuddy</span><strong>358K</strong><small>28.0%</small></div>
+          <div class="popover-section">模型用量</div>
+          <div class="popover-compact-row"><span>Claude Sonnet</span><strong>512K</strong><small>40.0%</small></div>
+          <div class="popover-compact-row"><span>GPT-5</span><strong>448K</strong><small>35.0%</small></div>
+          <div class="popover-footer"><span>打开主面板</span><span>⌘ O</span></div>
+          <div class="popover-action"><span>刷新数据</span><kbd>⌘ R</kbd></div>
+          <div class="popover-action"><span>设置</span><kbd>⌘ ,</kbd></div>
+          <div class="popover-action"><span>退出</span><kbd>⌘ Q</kbd></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-heading"><div><h2>这版视觉的取舍</h2></div><div class="note">用于下一步 SwiftUI 实现对照</div></div>
+    <hr class="rule">
+    <div class="card-grid" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px">
+      <article class="annotation"><h3>先额度，后消耗</h3><p>概览页第一屏先呈现三个平台还能使用的额度，再呈现今日 Token 消耗，符合监控场景的使用顺序。</p></article>
+      <article class="annotation"><h3>一套卡片，两种内容</h3><p>credits 平台用剩余数值和进度条；豆包工作用双窗口进度条，结构相同，语义不混淆。</p></article>
+      <article class="annotation"><h3>状态有解释</h3><p>正常、预警、上次数据、未连接分别表达不同事实，让刷新失败不会变成没有上下文的短横线。</p></article>
+    </div>
+  </section>
+
+  <footer class="footer-meta">QUOTAMONITOR · 独立视觉提案 · 示例数据来自 docs/API_REFERENCE.md 的字段口径 · 2026-08-28</footer>
+</main>
+<script>
+  (function () {
+    const body = document.body;
+    const shell = document.getElementById('appShell');
+    const dropdownStage = document.querySelector('.dropdown-stage');
+    const menuAnchor = document.getElementById('menuAnchor');
+    const popover = document.getElementById('popover');
+
+    document.querySelectorAll('.control-button[data-theme]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        const theme = button.getAttribute('data-theme');
+        shell.setAttribute('data-theme', theme);
+        dropdownStage.setAttribute('data-theme', theme);
+        document.querySelectorAll('.control-button[data-theme]').forEach(function (item) {
+          item.classList.toggle('active', item === button);
+        });
+      });
+    });
+
+    document.querySelectorAll('.state-button').forEach(function (button) {
+      button.addEventListener('click', function () {
+        const state = button.getAttribute('data-state');
+        body.setAttribute('data-state', state);
+        document.querySelectorAll('.state-button').forEach(function (item) {
+          item.classList.toggle('active', item === button);
+        });
+      });
+    });
+
+    menuAnchor.addEventListener('click', function () {
+      const open = popover.classList.toggle('open');
+      menuAnchor.setAttribute('aria-expanded', String(open));
+    });
+
+    document.addEventListener('click', function (event) {
+      if (!event.target.closest('.dropdown-stage')) {
+        popover.classList.remove('open');
+        menuAnchor.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }());
+</script>
+</body>
+</html>

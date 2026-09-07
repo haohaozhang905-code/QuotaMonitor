@@ -15,7 +15,6 @@ enum TokenPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
     case cline
     case qwen
     case qwenWork
-    case traeWork
     case grok
     case copilot
     case pi
@@ -47,7 +46,6 @@ extension TokenPlatform {
         case .cline: "Cline"
         case .qwen: "Qwen CLI"
         case .qwenWork: "千问办公"
-        case .traeWork: "Trae Work"
         case .grok: "Grok Build"
         case .copilot: "GitHub Copilot"
         case .pi: "Pi"

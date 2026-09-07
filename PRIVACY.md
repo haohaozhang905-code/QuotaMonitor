@@ -1,30 +1,65 @@
-# 隐私说明
+# 隐私与数据处理说明
 
-QuotaMonitor 是一个本地 macOS 工具，不包含 QuotaMonitor 账号系统、分析 SDK、广告、位置权限或遥测服务。
+[返回 README](README.md) · [数据源目录](docs/DATA_SOURCES.md) · [安全问题反馈](SECURITY.md)
 
-## 应用会读取哪些本地数据
+QuotaMonitor 在本机汇总 AI 工具用量，当前没有自建账号、广告、分析 SDK 或遥测后端。查询服务商额度与余额时需要联网；本地统计与网络查询的数据流如下。
 
-- 当前版本 Codex 使用的 macOS Keychain 认证信息，或旧版文件认证路径 `CODEX_HOME/auth.json` / `~/.codex/auth.json`。
-- `~/.codex/sessions` 中的 Codex Session 日志，用于本地 Token 用量统计。
-- `~/.claude/projects` 中的 Claude Code Transcript，只读取模型、用量和时间等结构化字段，用于本地 Token 用量统计。
-- 如果系统中存在并且能够读取，当前实现会读取 `~/.cc-switch/cc-switch.db` 中 Claude / Claude Desktop 的结构化请求记录，包括模型、Token 数量和时间。
-- `~/.workbuddy/traces` 中的 WorkBuddy Trace。旧版文件直接提供 Token 汇总；新版文件需要流式读取本地 Trace，以定位结构化的 generation usage 字段。
+## 应用读取什么
 
-通过 cc-switch 将 Claude 接入 DeepSeek，主要用于观察当前 DeepSeek 路由、余额和部分本地请求记录。这不等于 Claude 官方额度显示机制已经完成验证，也不代表 Claude Desktop 的本地用量只能通过 cc-switch 获得。QuotaMonitor 会根据当前系统中实际存在、且能够读取的结构化记录进行统计。
+| 数据 | 用途 | 处理位置 |
+| --- | --- | --- |
+| Codex 本地认证、Keychain 中匹配的 Codex Auth 条目，或启动环境中显式提供的认证 | 查询当前额度和 Reset Credits | 本机读取，向 OpenAI 发送认证请求 |
+| Codex / Claude / cc-switch 路由设置及活动 DeepSeek 凭据 | 判断服务路由、查询 DeepSeek 余额 | 本机读取，向 DeepSeek 发送认证请求 |
+| Codex、Claude Code、WorkBuddy、Qoder 等工具的日志、Trace 或数据库 | 提取模型、时间及 Token 用量，识别部分重复记录 | 本机解析 |
+| 额外工具目录中的 JSON / JSONL / SQLite 和支持的日志文件 | 按适配规则提取结构化用量 | 本机解析；完整路径见[支持清单](docs/DATA_SOURCES.md) |
+| 文件路径、大小、修改时间 | 发现变化、复用缓存和增量读取 | 本机缓存 |
 
-QuotaMonitor 不会提取、保存、展示或传输对话正文。Claude 的消息文本会被忽略；WorkBuddy 扫描只会保留定位结构化用量字段所需的极小临时字节窗口。
+这些源日志本身可能包含提示词、回答和项目内容。解析过程会读取文件字节，部分格式会在内存中解析整个记录或文件；**应用不把对话正文作为统计结果保存、展示或上传**。这不意味着应用从不接触含正文的文件，也不意味着原 AI 工具的日志已被清除。
 
-## 网络请求
+数据库采集使用只读方式。QuotaMonitor 不修改原会话记录，不自动切换 AI 工具路由，也不主动兑换 Reset Credits。Claude Desktop 当前通过 cc-switch 请求日志采集，cc-switch 自身的数据处理由其软件和配置决定。
 
-- Codex 官方额度请求会使用当前本地 Codex Session，直接发送到 OpenAI。
-- DeepSeek 余额请求会使用本地路由配置，直接发送到 DeepSeek。
+## 哪些请求会离开电脑
 
-凭据不会发送给 QuotaMonitor 运营的中间服务。Claude 官方额度目前缺少真实会员账号验证，原因是项目作者没有 Claude 会员；这属于验证范围限制，不代表 Claude 官方额度接口不存在。
+当前应用代码中的额度 / 余额查询目标为：
 
-当前实现从 cc-switch 请求记录读取桌面端可用量时，如果 cc-switch 没有运行，数据可能缺失或保持为旧快照，应用会显示“未采集 / Not captured”，不会自行估算。Claude 单独通过 DeepSeek 路由时，QuotaMonitor 只会读取活动提供方凭据，用于请求 DeepSeek 官方余额接口。
+| 目标 | 用途 | 涉及信息 |
+| --- | --- | --- |
+| `https://chatgpt.com/backend-api/wham/usage` | Codex 额度窗口 | 当前 Codex 登录凭据、适用的账户标识 |
+| `https://chatgpt.com/backend-api/wham/rate-limit-reset-credits` | 可用 Reset Credits | 当前 Codex 登录凭据、适用的账户标识 |
+| `https://api.deepseek.com/user/balance` | DeepSeek 余额 | 已配置的 DeepSeek API 凭据 |
 
-## 存储与日志
+直接读取认证或查询失败时，应用可能启动本机可发现的 Codex `app-server --stdio`，通过 `account/rateLimits/read` 获取额度。此路径由 Codex 处理认证解密和可能的认证刷新，受所安装 Codex 版本及其网络配置影响。
 
-QuotaMonitor 不会将原始认证 Token 保存到偏好设置或日志中。应用只保存语言偏好，以及包含数据源路径、修改信息、日期、模型名称和聚合 Token 数量的本地缓存。这些缓存位于用户的 macOS Caches 目录，不包含 Prompt 或 Response 正文。运行日志只记录刷新状态，不记录凭据。
+凭据会用于向对应服务商认证，不能概括为“凭据永不离开本机”。QuotaMonitor 没有用于接收这些凭据或对话正文的中间服务。应用不为统计调用模型生成接口，不通过生成任务估算 Token。
 
-涉及凭据、Token、Keychain 或本地文件访问的安全问题，请按照 [SECURITY.md](SECURITY.md) 的说明私下报告。
+README 页面上的 GitHub 链接、远程徽章以及用户另外使用的安装 Agent，不属于应用的本地统计链路；这些服务遵循各自的数据处理规则。
+
+## 本机保存什么
+
+统计缓存位于 `~/Library/Caches/com.cmsjcm.QuotaMonitor/`，可能包含：
+
+- 源文件路径、修改时间、文件大小及读取位置。
+- 日期、小时、平台、客户端、模型和聚合 Token 数量。
+- 去重和增量解析所需的会话标识、父会话关系、请求 / 消息标识及计数。
+- 数据更新时间和部分来源的过期状态。
+
+应用还保存语言、窗口 / Dock 等显示偏好；启用“登录后自动启动”会注册系统登录项。认证凭据不会被应用另存到统计缓存、偏好设置或运行日志中。运行日志包含刷新成功 / 失败、超时及部分数值核对信息。
+
+缓存没有提供应用级加密或多账号隔离，其中路径、模型和标识可能暴露使用习惯，因此不应当作匿名数据公开分享。能访问你用户文件的其他程序、备份工具或同步软件也可能读取这些缓存。
+
+## 权限与现有限制
+
+为读取其他工具的本地数据目录，当前应用未启用 macOS App Sandbox；访问仍受当前用户文件权限、macOS 隐私控制和钥匙串授权约束。应用没有麦克风、摄像头、位置或屏幕采集功能，也不要求用户把密码和密钥粘贴到聊天中。
+
+“本地优先”降低了额外传输数据的范围，但无法消除操作系统被入侵、来源不明的安装包、第三方日志泄露或依赖变化等风险。本项目未宣称已通过独立安全审计。请从本仓库获取代码或发行附件，按实际发布说明确认签名与公证状态。
+
+当前没有完整的本地多账号隔离；共享 macOS 用户或切换服务账号时，历史统计可能包含之前的记录。应用也没有独立的“断网模式”开关，运行中会按已识别路由尝试刷新远端额度。
+
+## 你的控制方式
+
+- 可以拒绝具体的文件或钥匙串授权，相应数据源可能不可用。
+- 可以关闭登录后自动启动并退出应用，停止后台采集和查询。
+- 可以在退出后将应用缓存移到废纸篓；再次运行会按现有源日志重建，缓存删除不会替你清除原工具日志。
+- 更新、卸载及缓存目录清理步骤见[安装指南](docs/INSTALL.md)。
+
+反馈问题优先提供版本、复现步骤和已脱敏截图。不要公开上传认证文件、Keychain 导出、原始日志或完整缓存目录。涉及凭据和安全的问题，请按 [SECURITY.md](SECURITY.md) 私密反馈。
