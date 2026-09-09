@@ -134,7 +134,6 @@ struct MainPanelView: View {
     let store: QuotaStore
     @Bindable var language: LanguageSettings
     @Bindable var dockIconSettings: DockIconSettings
-    @Bindable var appearanceSettings: AppearanceSettings
     @State private var loginItem = LoginItemManager()
     @State private var selectedPage: DashboardPage = .overview
     @State private var tokenPeriod: TokenPeriod = .sevenDays
@@ -169,7 +168,7 @@ struct MainPanelView: View {
     private var titlebar: some View {
         ZStack {
             Text(QuotaMonitorIdentity.displayName)
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .font(.system(size: 12.5, weight: .semibold))
                 .foregroundStyle(PanelTheme.text2)
                 // 标题栏属于右侧内容列，但标题视觉中心要落在整个窗口中心。
                 .offset(x: -MainPanelLayout.sidebarWidth / 2, y: -2)
@@ -245,8 +244,13 @@ struct MainPanelView: View {
 
             HStack(spacing: 10) {
                 // 直接使用 Finder/Dock 为应用包返回的图标；侧边栏品牌图标按 64pt 展示。
+                Image(nsImage: Self.applicationIcon)
+                    .interpolation(.high)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 64, height: 64)
                 Text(QuotaMonitorIdentity.displayName)
-                    .font(Font.custom("PingFang SC", size: 15.5).weight(.semibold))
+                    .font(.system(size: 15.5, weight: .semibold))
                     .foregroundStyle(PanelTheme.text)
             }
             .padding(.horizontal, MainPanelLayout.sidebarLeadingInset)
@@ -263,22 +267,22 @@ struct MainPanelView: View {
                     } label: {
                         HStack(spacing: 10) {
                             Image(systemName: page.iconName)
-                                .font(.system(size: 14, weight: .medium, design: .monospaced))
+                                .font(.system(size: 14, weight: .medium))
                                 .frame(width: 15)
                             Text(language.text(page.titleKey))
-                                .font(.system(size: 12, weight: selectedPage == page ? .semibold : .regular, design: .monospaced))
+                                .font(.system(size: 12, weight: selectedPage == page ? .semibold : .regular))
                             Spacer(minLength: 0)
                         }
-                        .foregroundStyle(selectedPage == page ? PanelTheme.text : PanelTheme.text2)
+                        .foregroundStyle(selectedPage == page ? PanelTheme.codexDeep : PanelTheme.text2)
                         .padding(.horizontal, 10)
                         .frame(height: 34)
                         .background(
                             selectedPage == page
-                                ? PanelTheme.sidebarSelected
+                                ? PanelTheme.codexSoft
                                 : (hoveredPage == page ? Color.primary.opacity(0.07) : .clear),
-                            in: Capsule()
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
                         )
-                        .contentShape(Capsule())
+                        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     .onHover { hovering in
@@ -292,11 +296,6 @@ struct MainPanelView: View {
         }
         .frame(width: MainPanelLayout.sidebarWidth)
         .background(PanelTheme.sidebar)
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(PanelTheme.hairline)
-                .frame(width: 1)
-        }
     }
 
     @ViewBuilder
@@ -322,7 +321,7 @@ struct MainPanelView: View {
 
     private var overviewHeading: some View {
         Text(language.text("overview.pageTitle"))
-            .font(.system(size: 22, weight: .bold, design: .monospaced))
+            .font(.system(size: 22, weight: .bold))
             .kerning(-0.4)
             .foregroundStyle(PanelTheme.text)
     }
@@ -330,24 +329,24 @@ struct MainPanelView: View {
     /// 首页首卡只回答三个问题：今天用了多少、和昨天比如何、近 7 天的量级。
     private var overviewHeroCard: some View {
         let presentation = store.presentationSnapshot
-        return panelCard(elevated: false) {
+        return panelCard {
             HStack(alignment: .top, spacing: 24) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(language.text("menu.todayTokensLabel"))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(PanelTheme.text3)
                     Text(QuotaFormatters.localizedTokens(presentation.today.total, language: language.language))
-                        .font(.system(size: 34, weight: .bold, design: .monospaced))
+                        .font(.system(size: 34, weight: .bold))
                         .fontDesign(.monospaced)
                         .foregroundStyle(PanelTheme.text)
                     Text(heroSubtext)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .font(.system(size: 11, weight: .regular))
                         .fontDesign(.monospaced)
                         .foregroundStyle(PanelTheme.text2)
                 }
                 if let delta = relativeDeltaText {
                     Text(delta)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium))
                         .fontDesign(.monospaced)
                         .foregroundStyle(relativeDeltaColor)
                         .padding(.horizontal, 7)
@@ -385,10 +384,10 @@ struct MainPanelView: View {
     private func overviewHeroMetric(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(PanelTheme.text3)
             Text(value)
-                .font(.system(size: 17, weight: .semibold, design: .monospaced))
+                .font(.system(size: 17, weight: .semibold))
                 .fontDesign(.monospaced)
                 .foregroundStyle(PanelTheme.text)
                 .lineLimit(1)
@@ -416,7 +415,7 @@ struct MainPanelView: View {
             if overviewQuotaItems.isEmpty {
                 panelCard(height: 76) {
                     Text(language.text("overview.noQuotaSources"))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(PanelTheme.text2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -553,34 +552,34 @@ struct MainPanelView: View {
                     .frame(width: 22, height: 22)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name)
-                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(PanelTheme.text)
                     Text(route)
-                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .font(.system(size: 9, weight: .regular))
                         .foregroundStyle(PanelTheme.text3)
                 }
                 Spacer(minLength: 8)
                 Text(status.label)
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(status.color)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(status.background, in: Capsule())
+                    .background(status.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             HStack(spacing: 0) {
                 ForEach(Array(facts.enumerated()), id: \.offset) { index, fact in
                     VStack(alignment: .leading, spacing: 3) {
                         Text(fact.0)
-                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .font(.system(size: 9, weight: .regular))
                             .foregroundStyle(PanelTheme.text3)
                         Text(fact.1)
-                            .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 20, weight: .semibold))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                         Text(fact.2)
-                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .font(.system(size: 9, weight: .regular))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text2)
                             .lineLimit(1)
@@ -636,11 +635,11 @@ struct MainPanelView: View {
         return panelCard {
             HStack {
                 Text(language.text("overview.todayHourlyTitle"))
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(PanelTheme.text)
                 Spacer()
                 Text(language.text("overview.todayHourlyNote"))
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular))
                     .foregroundStyle(PanelTheme.text3)
             }
             StackedBarChart(
@@ -652,14 +651,13 @@ struct MainPanelView: View {
                 .frame(height: 92)
                 .padding(.top, 4)
             GeometryReader { proxy in
-                let plotWidth = max(proxy.size.width - 52, 1)
+                let plotWidth = max(proxy.size.width - 44, 1)
                 ZStack(alignment: .topLeading) {
                     ForEach(axisIndices, id: \.self) { index in
                         let row = chart.rows[index]
-                        let x = 44 + (CGFloat(index) + 0.5) / CGFloat(max(chart.rows.count, 1)) * plotWidth
-                        // 横轴只显示开始时间；完整区间（开始-结束）见 hover 数据标签
-                        Text(String(row.label.prefix(5)))
-                            .font(.system(size: 8, weight: .regular, design: .monospaced))
+                        let x = 40 + (CGFloat(index) + 0.5) / CGFloat(max(chart.rows.count, 1)) * plotWidth
+                        Text(row.label)
+                            .font(.system(size: 8, weight: .regular))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text3)
                             .fixedSize()
@@ -710,8 +708,18 @@ struct MainPanelView: View {
     }
 
     private func breakdownColor(for key: UsageBreakdownKey) -> Color {
-        // 与 Token 看板柱状图、下拉框行共用同一索引映射（见 UsageBreakdownColor）。
-        UsageBreakdownColor.color(for: key)
+        switch key {
+        case let .platformClient(platform, client):
+            switch (platform, client) {
+            case (.codex, _): PanelTheme.codex
+            case (.claude, .cli): PanelTheme.claudeCode
+            case (.claude, _): PanelTheme.claude
+            case (.workbuddy, _): PanelTheme.workbuddy
+            default: stableCategoryColor(for: platform.rawValue)
+            }
+        case let .model(model): stableCategoryColor(for: model)
+        case .otherModels, .otherPlatforms: PanelTheme.modelFallback
+        }
     }
 
     private func breakdownItems(_ values: [(String, Int, Color)]) -> [BreakdownItem] {
@@ -727,11 +735,11 @@ struct MainPanelView: View {
         return panelCard(height: 170) {
             HStack {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(PanelTheme.text)
                 Spacer()
                 Text(language.text("panel.today"))
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular))
                     .foregroundStyle(PanelTheme.text3)
             }
             VStack(spacing: rowSpacing) {
@@ -742,17 +750,17 @@ struct MainPanelView: View {
                                 .fill(item.color)
                                 .frame(width: 8, height: 8)
                             Text(item.name)
-                                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                                .font(.system(size: 10.5, weight: .regular))
                                 .foregroundStyle(PanelTheme.text)
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 4)
                         Text(QuotaFormatters.localizedTokens(item.value, language: language.language))
-                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .font(.system(size: 10, weight: .regular))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text2)
                         Text(String(format: "%.1f%%", item.share * 100))
-                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .font(.system(size: 9.5, weight: .regular))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text3)
                             .frame(width: 40, alignment: .trailing)
@@ -761,7 +769,7 @@ struct MainPanelView: View {
                 }
                 if values.isEmpty {
                     Text(language.text("overview.noData"))
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 10.5))
                         .foregroundStyle(PanelTheme.text3)
                         .frame(height: rowHeight, alignment: .leading)
                 }
@@ -785,7 +793,7 @@ struct MainPanelView: View {
     private var tokenHeading: some View {
         HStack(alignment: .center, spacing: 12) {
             Text(language.text("panel.tokensPageTitle"))
-                .font(.system(size: 22, weight: .bold, design: .monospaced))
+                .font(.system(size: 22, weight: .bold))
                 .kerning(-0.4)
                 .foregroundStyle(PanelTheme.text)
             Spacer(minLength: 8)
@@ -802,16 +810,17 @@ struct MainPanelView: View {
             metricCell(language.text("tokens.topPlatform"), dashboard.platform.first?.name ?? "--", large: false)
             metricCell(language.text("tokens.topModel"), dashboard.models.first?.model ?? "--", large: false)
         }
-        .background(PanelTheme.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(PanelTheme.surface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(PanelTheme.border, lineWidth: 0.5))
     }
 
     private func metricCell(_ label: String, _ value: String, large: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .font(.system(size: 9.5, weight: .medium))
                 .foregroundStyle(PanelTheme.text3)
             Text(value)
-                .font(.system(size: large ? 21 : 16, weight: .semibold, design: .monospaced))
+                .font(.system(size: large ? 21 : 16, weight: .semibold))
                 .fontDesign(.monospaced)
                 .foregroundStyle(PanelTheme.text)
                 .lineLimit(1)
@@ -835,12 +844,12 @@ struct MainPanelView: View {
             // with the 16pt title inset used by the other cards.
             HStack(alignment: .center, spacing: 10) {
                 Text(language.text(tokenChartDimension == .platform ? "panel.tokenTrendPlatformTitle" : "panel.tokenTrendModelTitle"))
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(PanelTheme.text)
                 Spacer(minLength: 6)
                 tokenChartDimensionPicker
                 Text(language.text("tokens.peakValue", QuotaFormatters.localizedTokens(chart.rows.map { $0.total }.max() ?? 0, language: language.language)))
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular))
                     .fontDesign(.monospaced)
                     .foregroundStyle(PanelTheme.text3)
             }
@@ -859,15 +868,15 @@ struct MainPanelView: View {
                 let plotWidth = max(proxy.size.width - 44, 1)
                 ZStack(alignment: .topLeading) {
                     ForEach(axisIndices, id: \.self) { index in
-                    let row = chart.rows[index]
-                    let x = 44 + (CGFloat(index) + 0.5) / CGFloat(max(chart.rows.count, 1)) * plotWidth
-                    Text(row.isToday ? language.text("panel.today") : row.label)
-                        .font(.system(size: 8.5, weight: row.isToday ? .semibold : .regular, design: .monospaced))
-                        .fontDesign(.monospaced)
-                        .foregroundStyle(row.isToday ? PanelTheme.codex : PanelTheme.text3)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .position(x: x, y: 5)
+                        let row = chart.rows[index]
+                        let x = 40 + (CGFloat(index) + 0.5) / CGFloat(max(chart.rows.count, 1)) * plotWidth
+                        Text(row.isToday ? language.text("panel.today") : row.label)
+                            .font(.system(size: 8.5, weight: row.isToday ? .semibold : .regular))
+                            .fontDesign(.monospaced)
+                            .foregroundStyle(row.isToday ? PanelTheme.codex : PanelTheme.text3)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .position(x: x, y: 5)
                     }
                 }
             }
@@ -889,7 +898,7 @@ struct MainPanelView: View {
             .padding(.top, 5)
             if chart.legend.isEmpty {
                 Text(language.text("panel.modelNoData"))
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: 10.5))
                     .foregroundStyle(PanelTheme.text3)
                     .frame(maxWidth: .infinity)
             }
@@ -924,13 +933,13 @@ struct MainPanelView: View {
     private func rankingCard(title: String, items: [BreakdownItem]) -> some View {
         panelCard(height: 170) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(PanelTheme.text)
             VStack(spacing: 5) {
                 ForEach(items.prefix(5)) { item in
                     HStack(spacing: 8) {
                         Text(item.name)
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.system(size: 10.5))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text)
                             .lineLimit(1)
@@ -946,12 +955,12 @@ struct MainPanelView: View {
                         }
                         .frame(height: 4)
                         Text(QuotaFormatters.localizedTokens(item.value, language: language.language))
-                            .font(.system(size: 9, design: .monospaced))
+                            .font(.system(size: 9.5))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text2)
                             .frame(width: 54, alignment: .trailing)
                         Text(String(format: "%.1f%%", item.share * 100))
-                            .font(.system(size: 9, design: .monospaced))
+                            .font(.system(size: 9))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text3)
                             .frame(width: 38, alignment: .trailing)
@@ -960,7 +969,7 @@ struct MainPanelView: View {
                 }
                 if items.isEmpty {
                     Text(language.text("overview.noData"))
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 10.5))
                         .foregroundStyle(PanelTheme.text3)
                         .frame(maxWidth: .infinity, minHeight: 80)
                 }
@@ -975,12 +984,12 @@ struct MainPanelView: View {
         return panelCard {
             HStack(alignment: .bottom, spacing: 8) {
                 Text(language.text("tokens.yearTitle"))
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(PanelTheme.text)
                 Spacer()
                 HStack(spacing: 4) {
                     Text(language.text("tokens.less"))
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(.system(size: 9))
                         .foregroundStyle(PanelTheme.text3)
                     ForEach(0..<5, id: \.self) { level in
                         RoundedRectangle(cornerRadius: 2, style: .continuous)
@@ -988,7 +997,7 @@ struct MainPanelView: View {
                             .frame(width: 9, height: 9)
                     }
                     Text(language.text("tokens.more"))
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(.system(size: 9))
                         .foregroundStyle(PanelTheme.text3)
                 }
             }
@@ -1000,7 +1009,7 @@ struct MainPanelView: View {
                 ZStack(alignment: .topLeading) {
                     ForEach(snapshot.months) { month in
                         Text(monthLabel(for: month.date))
-                        .font(.system(size: 8.5, design: .monospaced))
+                        .font(.system(size: 8.5))
                         .fontDesign(.monospaced)
                         .foregroundStyle(PanelTheme.text3)
                             .fixedSize()
@@ -1014,7 +1023,7 @@ struct MainPanelView: View {
                 VStack(spacing: 3) {
                     ForEach(Array(weekdayLabels.enumerated()), id: \.offset) { _, label in
                         Text(label)
-                            .font(.system(size: 8, design: .monospaced))
+                            .font(.system(size: 8))
                             .foregroundStyle(PanelTheme.text3)
                             .frame(width: 19, height: 9, alignment: .leading)
                     }
@@ -1079,18 +1088,18 @@ struct MainPanelView: View {
 
     private func heatColor(level: Int) -> Color {
         switch level {
-        case 1: PanelTheme.heat1
-        case 2: PanelTheme.heat2
-        case 3: PanelTheme.heat3
-        case 4: PanelTheme.heat4
-        default: PanelTheme.heat0
+        case 1: PanelTheme.codex.opacity(0.20)
+        case 2: PanelTheme.codex.opacity(0.42)
+        case 3: PanelTheme.codex.opacity(0.68)
+        case 4: PanelTheme.codex
+        default: PanelTheme.surface
         }
     }
 
     private var settingsPage: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(language.text("settings.title"))
-                .font(.system(size: 22, weight: .bold, design: .monospaced))
+                .font(.system(size: 22, weight: .bold))
                 .kerning(-0.4)
                 .foregroundStyle(PanelTheme.text)
             VStack(spacing: 14) {
@@ -1107,18 +1116,6 @@ struct MainPanelView: View {
                             selection: $language.language
                         ) { value in
                             value == .simplifiedChinese ? "简体中文" : "English"
-                        }
-                    }
-                    settingsRow(title: language.text("settings.appearance"), detail: language.text("settings.appearance.detail")) {
-                        PanelSegmentedControl(
-                            options: AppearanceMode.allCases,
-                            selection: $appearanceSettings.mode
-                        ) { mode in
-                            switch mode {
-                            case .system: language.text("appearance.system")
-                            case .light: language.text("appearance.light")
-                            case .dark: language.text("appearance.dark")
-                            }
                         }
                     }
                     settingsRow(title: language.text("settings.dockIcon"), detail: language.text("settings.dockIcon.detail")) {
@@ -1143,18 +1140,19 @@ struct MainPanelView: View {
         VStack(alignment: .leading, spacing: 0) {
             content()
         }
-        .background(PanelTheme.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(PanelTheme.surface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(PanelTheme.border, lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
     }
 
     private func settingsRow<Control: View>(title: String, detail: String, @ViewBuilder control: () -> Control) -> some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(PanelTheme.text)
                 Text(detail)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: 9.5))
                     .foregroundStyle(PanelTheme.text3)
             }
             Spacer(minLength: 8)
@@ -1239,7 +1237,7 @@ struct MainPanelView: View {
                     id: "hourly-total",
                     name: language.text("panel.totalTokens"),
                     value: value,
-                    color: PanelTheme.chartPrimary
+                    color: PanelTheme.codex
                 )]
                 : []
             return TokenChartRow(
@@ -1362,7 +1360,10 @@ struct MainPanelView: View {
     }
 
     private func stablePaletteIndex(for value: String) -> Int {
-        UsageBreakdownColor.stableIndex(for: value)
+        let hash = value.utf8.reduce(UInt32(2166136261)) { partial, byte in
+            (partial ^ UInt32(byte)) &* 16777619
+        }
+        return Int(hash % UInt32(PanelTheme.categoryPaletteExtended.count))
     }
 
     private func stableCategoryColor(for value: String) -> Color {
@@ -1494,16 +1495,16 @@ struct MainPanelView: View {
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 5) {
                             Text(language.text("panel.syncingTitle"))
-                                .font(.system(size: 22, weight: .bold, design: .monospaced))
+                                .font(.system(size: 22, weight: .bold))
                                 .foregroundStyle(PanelTheme.text)
                             Text(loadingProgressText)
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .font(.system(size: 11.5, weight: .medium))
                                 .foregroundStyle(PanelTheme.text2)
                         }
                         Spacer()
                         if let progress = store.localTokenRefreshProgress {
                             Text("\(Int(progress.fraction * 100))%")
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 12, weight: .semibold))
                                 .fontDesign(.monospaced)
                                 .foregroundStyle(PanelTheme.codex)
                         }
@@ -1527,13 +1528,13 @@ struct MainPanelView: View {
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "bolt.shield")
-                        .font(.system(size: 30, weight: .medium, design: .monospaced))
+                        .font(.system(size: 30, weight: .medium))
                         .foregroundStyle(PanelTheme.codex)
                     Text(language.text("panel.noDataTitle"))
-                        .font(.system(size: 18, weight: .bold, design: .monospaced))
+                        .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(PanelTheme.text)
                     Text(language.text("panel.noDataDetail"))
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(PanelTheme.text2)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 430)
@@ -1562,9 +1563,13 @@ struct MainPanelView: View {
     }
 
     private func loadingPlaceholder(height: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 24, style: .continuous)
+        RoundedRectangle(cornerRadius: 11, style: .continuous)
             .fill(PanelTheme.surface)
             .frame(maxWidth: .infinity, minHeight: height, maxHeight: height)
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .stroke(PanelTheme.border, lineWidth: 0.5)
+            )
             .opacity(reduceMotion ? 0.72 : 0.88)
     }
 
@@ -1573,16 +1578,16 @@ struct MainPanelView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(PanelTheme.danger)
             Text(message)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(PanelTheme.text2)
             Spacer(minLength: 8)
             Text(language.text("panel.showingLastData"))
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(PanelTheme.text3)
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 10)
-        .background(PanelTheme.dangerSoft, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(PanelTheme.dangerSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var sharedBalanceText: String {
@@ -1600,7 +1605,7 @@ struct MainPanelView: View {
                 .fill(color)
                 .frame(width: 7, height: 7)
             Text(title)
-                .font(.system(size: 9, weight: .regular, design: .monospaced))
+                .font(.system(size: 9.5, weight: .regular))
                 .foregroundStyle(PanelTheme.text3)
         }
     }
@@ -1690,7 +1695,6 @@ struct MainPanelView: View {
         spacing: CGFloat = 12,
         topPadding: CGFloat = 16,
         bottomPadding: CGFloat = 16,
-        elevated: Bool = true,
         @ViewBuilder content: () -> some View
     ) -> some View {
         VStack(alignment: .leading, spacing: spacing) {
@@ -1700,19 +1704,9 @@ struct MainPanelView: View {
         .padding(.horizontal, 16)
         .padding(.bottom, bottomPadding)
         .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .topLeading)
-        .background(elevated ? PanelTheme.surfaceFloat : PanelTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay {
-            if elevated {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(PanelTheme.border, lineWidth: 0.5)
-            }
-        }
-        .shadow(
-            color: elevated ? Color.black.opacity(0.08) : .clear,
-            radius: elevated ? 16 : 0,
-            y: elevated ? 4 : 0
-        )
+        .background(PanelTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(PanelTheme.border, lineWidth: 0.5))
     }
 }
 
@@ -1732,7 +1726,7 @@ struct TitlebarStatusView: View {
                 .fill(statusColor)
                 .frame(width: 7, height: 7)
             Text(statusText)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(PanelTheme.text2)
                 .lineLimit(1)
         }
@@ -1816,14 +1810,14 @@ private struct PanelSegmentedControl<Option: Hashable>: View {
                 } label: {
                     ZStack {
                         if selection == option {
-                            Capsule()
+                            RoundedRectangle(cornerRadius: PanelSegmentedMetrics.cornerRadius, style: .continuous)
                                 .fill(PanelTheme.surface)
                                 .frame(width: PanelSegmentedMetrics.segmentWidth, height: PanelSegmentedMetrics.height)
                                 .shadow(color: PanelTheme.shadowSmall, radius: 2, y: 1)
                                 .matchedGeometryEffect(id: "selection", in: selectionIndicator)
                         }
                         Text(label(option))
-                            .font(.system(size: 11, weight: selection == option ? .semibold : .regular, design: .monospaced))
+                            .font(.system(size: 11, weight: selection == option ? .semibold : .regular))
                             .foregroundStyle(
                                 enabled
                                     ? (selection == option ? PanelTheme.text : PanelTheme.text2)
@@ -1833,7 +1827,7 @@ private struct PanelSegmentedControl<Option: Hashable>: View {
                             .minimumScaleFactor(0.8)
                     }
                     .frame(width: PanelSegmentedMetrics.segmentWidth, height: PanelSegmentedMetrics.height)
-                    .contentShape(Capsule())
+                    .contentShape(RoundedRectangle(cornerRadius: PanelSegmentedMetrics.cornerRadius, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .disabled(!enabled)
@@ -1841,7 +1835,8 @@ private struct PanelSegmentedControl<Option: Hashable>: View {
             }
         }
         .padding(2)
-        .background(PanelTheme.surface2, in: Capsule())
+        .background(PanelTheme.surface2, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(PanelTheme.border, lineWidth: 0.5))
     }
 }
 
@@ -1851,10 +1846,10 @@ private struct CustomToggle: View {
     var body: some View {
         ZStack(alignment: isOn ? .trailing : .leading) {
             Capsule()
-                .fill(isOn ? PanelTheme.ink : PanelTheme.surface3)
+                .fill(isOn ? PanelTheme.codex : PanelTheme.surface3)
                 .frame(width: 32, height: 19)
             Circle()
-                .fill(PanelTheme.paper)
+                .fill(.white)
                 .frame(width: 15, height: 15)
                 .padding(2)
                 .shadow(color: PanelTheme.shadowSmall, radius: 1, y: 0.5)
@@ -1939,13 +1934,13 @@ private struct ChartTooltip: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(title)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium))
                         .fontDesign(.monospaced)
                         .foregroundStyle(PanelTheme.text2)
                         .lineLimit(1)
                     Spacer(minLength: 6)
                     Text(value)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11.5, weight: .semibold))
                         .fontDesign(.monospaced)
                         .foregroundStyle(PanelTheme.text)
                         .fixedSize(horizontal: true, vertical: false)
@@ -1956,19 +1951,19 @@ private struct ChartTooltip: View {
                         .frame(height: 1)
                     VStack(spacing: 4) {
                         ForEach(items) { item in
-                            HStack(alignment: .center, spacing: 6) {
+                            HStack(alignment: .top, spacing: 6) {
                                 Circle()
                                     .fill(item.color)
                                     .frame(width: 6, height: 6)
                                 Text(item.label)
-                                    .font(.system(size: 9, design: .monospaced))
+                                    .font(.system(size: 9.5))
                                     .foregroundStyle(PanelTheme.text2)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                                     .layoutPriority(1)
                                 Spacer(minLength: 4)
                                 Text(item.value)
-                                    .font(.system(size: 9, design: .monospaced))
+                                    .font(.system(size: 9.5))
                                     .fontDesign(.monospaced)
                                     .foregroundStyle(PanelTheme.text)
                                     .fixedSize(horizontal: true, vertical: false)
@@ -1977,7 +1972,7 @@ private struct ChartTooltip: View {
                     }
                 } else if let valueLabel {
                     Text(valueLabel)
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(.system(size: 9))
                         .foregroundStyle(PanelTheme.text3)
                 }
             }
@@ -1989,11 +1984,10 @@ private struct ChartTooltip: View {
                 Color.clear.preference(key: ChartTooltipSizePreferenceKey.self, value: proxy.size)
             }
         }
-        // 浮动浮层：浮卡面 + 描边 + 投影（规范允许投影的浮动产品组件）。
-        // tooltipSurface / tooltipBorder 在深色模式下比卡片提亮一档，保证与画布区分。
-        .background(PanelTheme.tooltipSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PanelTheme.tooltipBorder, lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.18), radius: 18, y: 6)
+        // 使用完全不透明的面板底色，浮层经过图例或其他内容时不再透叠。
+        .background(PanelTheme.surface, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(PanelTheme.borderStrong, lineWidth: 0.9))
+        .shadow(color: Color.black.opacity(0.18), radius: 14, y: 6)
         .zIndex(20)
         .allowsHitTesting(false)
     }
@@ -2076,7 +2070,7 @@ private struct Sparkline: View {
                     Spacer()
                     Text("0")
                 }
-                .font(.system(size: 8.5, design: .monospaced))
+                .font(.system(size: 8.5))
                 .fontDesign(.monospaced)
                 .foregroundStyle(PanelTheme.text3)
                 .frame(width: 32, height: plotHeight, alignment: .topTrailing)
@@ -2099,7 +2093,7 @@ private struct Sparkline: View {
                 ForEach(axisIndices, id: \.self) { index in
                     if labels.indices.contains(index), points.indices.contains(index) {
                         Text(labels[index])
-                            .font(.system(size: 8.5, design: .monospaced))
+                            .font(.system(size: 8.5))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text3)
                             .fixedSize()
@@ -2208,10 +2202,10 @@ private struct StackedBarChart: View {
             let plotTopInset: CGFloat = 15
             let plotBottomInset: CGFloat = 2
             let plotHeight = max(proxy.size.height - plotTopInset - plotBottomInset, 1)
-            let plotX: CGFloat = 44
-            let plotWidth = max(proxy.size.width - 52, 1)
+            let plotX: CGFloat = 40
+            let plotWidth = max(proxy.size.width - 44, 1)
             let slotWidth = plotWidth / CGFloat(max(rows.count, 1))
-            let barWidth = min(20, max(slotWidth * 0.6, 0.65))
+            let barWidth = min(22, max(slotWidth * 0.64, 0.65))
             let barRects = rows.enumerated().map { index, row in
                 let x = plotX + CGFloat(index) * slotWidth + (slotWidth - barWidth) / 2
                 let height = max(CGFloat(row.total) / CGFloat(peak) * plotHeight, min(1, plotHeight))
@@ -2284,7 +2278,7 @@ private struct StackedBarChart: View {
                     Spacer()
                     Text("0")
                 }
-                .font(.system(size: 8.5, design: .monospaced))
+                .font(.system(size: 8.5))
                 .fontDesign(.monospaced)
                 .foregroundStyle(PanelTheme.text3)
                 .frame(width: 32, height: plotHeight, alignment: .topTrailing)
@@ -2468,11 +2462,11 @@ struct TokenYearHeatmap: View {
 
     private func color(for level: Int) -> Color {
         switch level {
-        case 1: PanelTheme.heat1
-        case 2: PanelTheme.heat2
-        case 3: PanelTheme.heat3
-        case 4: PanelTheme.heat4
-        default: PanelTheme.heat0
-        }
+        case 1: PanelTheme.codex.opacity(0.20)
+        case 2: PanelTheme.codex.opacity(0.42)
+        case 3: PanelTheme.codex.opacity(0.68)
+        case 4: PanelTheme.codex
+        default: PanelTheme.surface2
     }
+}
 }

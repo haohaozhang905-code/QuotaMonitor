@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = QuotaStore()
     let language = LanguageSettings()
     let dockIconSettings = DockIconSettings()
+    let appearanceSettings = AppearanceSettings()
 
     private var statusItem: NSStatusItem?
     private var panelController: MainPanelController?
@@ -38,17 +39,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard enforceSingleInstance() else { return }
         configureApplicationIcon()
         NSApp.setActivationPolicy(.accessory)
-        // 改造版视觉标准以暗黑界面为默认外观；保留环境变量作为验收脚本的显式开关。
-        if ProcessInfo.processInfo.environment["CODEXQUOTA_FORCE_DARK"] == "1"
-            || UserDefaults.standard.object(forKey: "QuotaMonitor.useDarkAppearance") == nil
-            || UserDefaults.standard.bool(forKey: "QuotaMonitor.useDarkAppearance") {
+        // 外观：应用内切换（跟随系统 / 浅色 / 深色），持久化见 AppearanceSettings。
+        // CODEXQUOTA_FORCE_DARK=1 保留为验收脚本的显式深色开关。
+        if ProcessInfo.processInfo.environment["CODEXQUOTA_FORCE_DARK"] == "1" {
             NSApp.appearance = NSAppearance(named: .darkAqua)
+        } else {
+            appearanceSettings.apply()
         }
         setupStatusItem()
         panelController = MainPanelController(
             store: store,
             language: language,
-            dockIconSettings: dockIconSettings
+            dockIconSettings: dockIconSettings,
+            appearanceSettings: appearanceSettings
         )
         observeStore()
         refreshTask = Task { await store.start() }
@@ -249,11 +252,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = false
+        panel.hasShadow = true
         panel.level = .statusBar
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.appearance = NSApp.appearance ?? NSAppearance(named: .darkAqua)
 
         let rootView = DropdownPopoverView(
             store: store,

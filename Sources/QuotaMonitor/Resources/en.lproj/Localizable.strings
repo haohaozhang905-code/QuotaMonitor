@@ -208,3 +208,8 @@
 "time.minutes" = "%d minutes";
 
 "error.quotaUnavailable" = "Quota services unavailable";
+"settings.appearance" = "Appearance";
+"settings.appearance.detail" = "Choose light or dark display";
+"appearance.system" = "System";
+"appearance.light" = "Light";
+"appearance.dark" = "Dark";

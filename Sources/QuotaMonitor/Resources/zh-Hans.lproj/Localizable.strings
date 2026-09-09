@@ -208,3 +208,8 @@
 "time.minutes" = "%d 分钟";
 
 "error.quotaUnavailable" = "额度服务暂不可用";
+"settings.appearance" = "外观";
+"settings.appearance.detail" = "选择浅色或深色显示";
+"appearance.system" = "跟随系统";
+"appearance.light" = "浅色";
+"appearance.dark" = "深色";

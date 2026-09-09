@@ -22,13 +22,13 @@ struct MenuBarSlotsView: View {
             if isLoading {
                 MenuBarLoadingGlyph(phase: loadingFrame)
             } else if codexRoute == .deepseek, claudeRoute == .deepseek {
-                slot(icon: .deepSeek, value: balanceText, routed: false)
+                slot(icon: .deepSeek, value: balanceText)
             } else {
                 if codexRoute != .unknown {
-                    slot(icon: .codex, value: codexValue, routed: codexRoute == .deepseek)
+                    slot(icon: .codex, value: codexValue)
                 }
                 if claudeRoute != .unknown || claudeRemaining != nil {
-                    slot(icon: .claude, value: claudeValue, routed: claudeRoute == .deepseek)
+                    slot(icon: .claude, value: claudeValue)
                 }
                 if codexRoute == .unknown, claudeRoute == .unknown, claudeRemaining == nil {
                     MenuBarQuotaGlyph()
@@ -54,7 +54,7 @@ struct MenuBarSlotsView: View {
         return QuotaFormatters.money(balanceAmount, currency: balanceCurrency)
     }
 
-    private func slot(icon: BrandIconKind, value: String, routed: Bool) -> some View {
+    private func slot(icon: BrandIconKind, value: String) -> some View {
         HStack(spacing: 4) {
             BrandIconView(
                 kind: icon,
@@ -62,17 +62,8 @@ struct MenuBarSlotsView: View {
                 monochromeColor: .white
             )
                 .frame(width: 18, height: 18)
-                .overlay(alignment: .topTrailing) {
-                    if routed {
-                        Circle()
-                            .fill(PanelTheme.deepseek)
-                            .frame(width: 6, height: 6)
-                            .overlay(Circle().stroke(.white, lineWidth: 1))
-                            .offset(x: 1, y: 1)
-                    }
-                }
             Text(value)
-                .font(.system(size: 12.5, weight: .regular))
+                .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .fontDesign(.monospaced)
                 .foregroundStyle(.white)
                 .lineLimit(1)

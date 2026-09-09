@@ -36,7 +36,7 @@ final class MainPanelController: NSObject, NSWindowDelegate {
     let window: NSWindow
     private let dockIconSettings: DockIconSettings
 
-    init(store: QuotaStore, language: LanguageSettings, dockIconSettings: DockIconSettings) {
+    init(store: QuotaStore, language: LanguageSettings, dockIconSettings: DockIconSettings, appearanceSettings: AppearanceSettings) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 980, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -53,7 +53,7 @@ final class MainPanelController: NSObject, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.backgroundColor = NSColor(PanelTheme.background)
-        window.hasShadow = false
+        window.hasShadow = true
         window.level = .normal
         window.delegate = self
         // 只允许从原生标题栏（顶部交通灯所在横条）拖动，内容区空白不再劫持点击。
@@ -72,7 +72,8 @@ final class MainPanelController: NSObject, NSWindowDelegate {
         let hosting = NSHostingView(rootView: MainPanelView(
             store: store,
             language: language,
-            dockIconSettings: dockIconSettings
+            dockIconSettings: dockIconSettings,
+            appearanceSettings: appearanceSettings
         ))
         hosting.frame = NSRect(origin: .zero, size: window.contentRect(forFrameRect: window.frame).size)
         hosting.autoresizingMask = [.width, .height]
