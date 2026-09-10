@@ -35,7 +35,7 @@ final class QuotaStore {
         case workBuddy(TokenSourceSnapshot?)
         case desktop(TokenSourceSnapshot?)
         case claudeCrossCheck(TokenSourceSnapshot?)
-        case additional([TokenSourceSnapshot]?)
+        case additional(AdditionalLocalTokenScanResult?)
         case qoder(TokenSourceSnapshot?)
     }
 
@@ -70,6 +70,13 @@ final class QuotaStore {
     private(set) var workbuddyDeepSeekHistory: [DailyTokenUsage] = []
     /// 跨工具汇总的 DeepSeek 用量（稀疏），用于余额消耗估算与官方/DeepSeek 拆分。
     private(set) var deepSeekHistory: [DailyTokenUsage] = []
+    /// 逐来源诊断状态。失败时保留 last-good 数据，并在展示快照中标记 stale。
+    private var sourceStates: [DataSourceID: DataSourceHealthState] = [:]
+    private var sourceLastAttemptAt: [DataSourceID: Date] = [:]
+    private var sourceLastSuccessAt: [DataSourceID: Date] = [:]
+    private var sourceCandidateFileCounts: [DataSourceID: Int] = [:]
+    private var sourceValidRecordCounts: [DataSourceID: Int] = [:]
+    private var sourceUsesLastGoodData: Set<DataSourceID> = []
 
     private let codexDirectClient = CodexDirectClient()
     private let deepSeekBalanceClient = DeepSeekBalanceClient()
@@ -167,6 +174,90 @@ final class QuotaStore {
         [lastUpdated, lastTokenUpdatedAt].compactMap { $0 }.max()
     }
 
+    /// 统一的逐来源健康快照，供来源中心和风险首页共同使用。
+    var dataSourceHealth: [DataSourceHealthSnapshot] {
+        dataSourceHealth(at: .now)
+    }
+
+    func dataSourceHealth(at now: Date) -> [DataSourceHealthSnapshot] {
+        DataSourceCatalog.all.map { descriptor in
+            let sourceID = descriptor.id
+            let storedState = sourceStates[sourceID] ?? .notDetected
+            let lastSuccess = sourceLastSuccessAt[sourceID]
+            let isExpired = storedState == .ready
+                && lastSuccess.map { now.timeIntervalSince($0) > descriptor.staleAfter } == true
+            let state = isExpired ? .stale : storedState
+            return DataSourceHealthSnapshot(
+                id: sourceID,
+                nameKey: descriptor.nameKey,
+                fallbackName: descriptor.fallbackName,
+                kind: descriptor.kind,
+                state: state,
+                redactedPath: descriptor.redactedPath,
+                lastAttemptAt: sourceLastAttemptAt[sourceID],
+                lastSuccessAt: lastSuccess,
+                candidateFileCount: sourceCandidateFileCounts[sourceID] ?? sourceValidRecordCounts[sourceID] ?? 0,
+                validRecordCount: sourceValidRecordCounts[sourceID] ?? 0,
+                usesLastGoodData: sourceUsesLastGoodData.contains(sourceID) || state == .stale,
+                isInstalled: isSourceInstalled(descriptor),
+                recoveryActions: descriptor.recoveryActions
+            )
+        }
+    }
+
+    private func isSourceInstalled(_ descriptor: DataSourceDescriptor) -> Bool {
+        if descriptor.id != DataSourceCatalog.qoder,
+           sourceLastSuccessAt[descriptor.id] != nil || sourceValidRecordCounts[descriptor.id, default: 0] > 0 {
+            return true
+        }
+
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        switch descriptor.id {
+        case DataSourceCatalog.codexQuota:
+            return codexRoute != .unknown
+        case DataSourceCatalog.deepSeekBalance:
+            return codexRoute == .deepseek || claudeUsesDeepSeek || lastDeepSeekBalance != nil
+        case DataSourceCatalog.qoder:
+            // Qoder 的卸载流程可能会保留 Library/Application Support/Qoder
+            // 中的历史日志。仅凭日志目录不能判定产品仍已安装，否则卸载后
+            // 旧数据会让来源中心继续显示 Qoder。
+            let appCandidates = [
+                home.appendingPathComponent("Applications/Qoder.app"),
+                URL(fileURLWithPath: "/Applications/Qoder.app")
+            ]
+            let cliCandidates = [
+                home.appendingPathComponent(".local/bin/qoder"),
+                URL(fileURLWithPath: "/opt/homebrew/bin/qoder"),
+                URL(fileURLWithPath: "/usr/local/bin/qoder")
+            ]
+            return (appCandidates + cliCandidates).contains {
+                FileManager.default.fileExists(atPath: $0.path)
+            }
+        default:
+            break
+        }
+
+        let environment = ProcessInfo.processInfo.environment
+        if let source = LocalToolTokenSource.additional.first(where: { $0.dataSourceID == descriptor.id }) {
+            return source.resolvedRoots(home: home, environment: environment).contains {
+                FileManager.default.fileExists(atPath: $0.path)
+            }
+        }
+
+        let candidatePaths: [String]
+        switch descriptor.id {
+        case DataSourceCatalog.codexToken: candidatePaths = [".codex"]
+        case DataSourceCatalog.claudeCode: candidatePaths = [".claude"]
+        case DataSourceCatalog.claudeDesktop: candidatePaths = [".cc-switch"]
+        case DataSourceCatalog.workBuddy: candidatePaths = [".workbuddy/traces"]
+        case DataSourceCatalog.qoder: candidatePaths = [".qoder", "Library/Application Support/Qoder/SharedClientCache/cli/projects"]
+        default: candidatePaths = []
+        }
+        return candidatePaths.contains {
+            FileManager.default.fileExists(atPath: home.appendingPathComponent($0).path)
+        }
+    }
+
     var yesterdayTokenUsage: DailyTokenUsage? {
         Calendar.current.date(byAdding: .day, value: -1, to: .now).flatMap { tokenUsage(for: $0) }
     }
@@ -253,14 +344,18 @@ final class QuotaStore {
         }
         switch codexRoute {
         case .official:
+            beginSourceAttempt(DataSourceCatalog.codexQuota)
             applyDirectCodex(try? await codexDirectClient.fetch())
             if claudeUsesDeepSeek {
+                beginSourceAttempt(DataSourceCatalog.deepSeekBalance)
                 applyDeepSeekBalance(try? await deepSeekBalanceClient.fetch())
             }
         case .deepseek:
+            beginSourceAttempt(DataSourceCatalog.deepSeekBalance)
             applyDeepSeekBalance(try? await deepSeekBalanceClient.fetch())
         case .unknown:
             if claudeUsesDeepSeek {
+                beginSourceAttempt(DataSourceCatalog.deepSeekBalance)
                 applyDeepSeekBalance(try? await deepSeekBalanceClient.fetch())
             } else {
                 errorMessageKey = "error.quotaUnavailable"
@@ -291,12 +386,14 @@ final class QuotaStore {
 
     private func applyDeepSeekBalance(_ result: DeepSeekBalanceSnapshot?) {
         guard let result else {
+            finishSource(DataSourceCatalog.deepSeekBalance, state: .failed)
             logger.info("DeepSeek balance refresh failed")
             setFailureMessageIfNeeded()
             return
         }
 
         lastDeepSeekBalance = result
+        finishSource(DataSourceCatalog.deepSeekBalance, state: .ready)
         refreshDeepSeekProvider()
         logger.info("DeepSeek balance refresh succeeded")
     }
@@ -355,6 +452,7 @@ final class QuotaStore {
 
     private func applyDirectCodex(_ result: CodexDirectSnapshot?) {
         guard let result else {
+            finishSource(DataSourceCatalog.codexQuota, state: .failed)
             logger.info("Codex direct refresh failed")
             setFailureMessageIfNeeded()
             return
@@ -364,6 +462,7 @@ final class QuotaStore {
         replace(result.provider, in: &fresh)
         if let resetCredits = result.resetCredits { codexResetCredits = resetCredits }
         commit(fresh)
+        finishSource(DataSourceCatalog.codexQuota, state: .ready)
         logger.info("Codex direct refresh succeeded")
     }
 
@@ -386,6 +485,40 @@ final class QuotaStore {
     private func setFailureMessageIfNeeded() {
         guard providers.isEmpty else { return }
         errorMessageKey = "error.quotaUnavailable"
+    }
+
+    private func beginSourceAttempt(_ id: DataSourceID) {
+        sourceLastAttemptAt[id] = .now
+        sourceStates[id] = .scanning
+        sourceUsesLastGoodData.remove(id)
+    }
+
+    private func finishSource(
+        _ id: DataSourceID,
+        state: DataSourceHealthState,
+        candidateFileCount: Int? = nil,
+        validRecordCount: Int = 0,
+        usesLastGoodData: Bool = false
+    ) {
+        if let candidateFileCount {
+            sourceCandidateFileCounts[id] = candidateFileCount
+        }
+        if state == .ready {
+            sourceStates[id] = .ready
+            sourceLastSuccessAt[id] = .now
+            sourceValidRecordCounts[id] = validRecordCount
+            sourceUsesLastGoodData.remove(id)
+        } else if sourceLastSuccessAt[id] != nil {
+            sourceStates[id] = .stale
+            sourceUsesLastGoodData.insert(id)
+        } else {
+            sourceStates[id] = state
+            sourceValidRecordCounts[id] = validRecordCount
+            if usesLastGoodData { sourceUsesLastGoodData.insert(id) }
+            if candidateFileCount == nil {
+                sourceCandidateFileCounts[id] = validRecordCount
+            }
+        }
     }
 
     private func monitorTokenSources() async {
@@ -441,6 +574,14 @@ final class QuotaStore {
     private func refreshTokenSources() async {
         guard !isRefreshingTokenSources else { return }
         isRefreshingTokenSources = true
+        let tokenSourceIDs = [
+            DataSourceCatalog.codexToken,
+            DataSourceCatalog.claudeCode,
+            DataSourceCatalog.claudeDesktop,
+            DataSourceCatalog.workBuddy,
+            DataSourceCatalog.qoder
+        ] + DataSourceCatalog.additional
+        tokenSourceIDs.forEach { beginSourceAttempt($0) }
         let totalSources = 7
         tokenProgressRevealTask?.cancel()
         tokenProgressRevealTask = Task { @MainActor [weak self] in
@@ -494,7 +635,7 @@ final class QuotaStore {
             }
             group.addTask(priority: .utility) {
                 .additional(await Self.withTimeout(Self.tokenSourceTimeout) {
-                    try? await additionalClient.fetchSnapshots()
+                    try? await additionalClient.fetchScanResult()
                 })
             }
             group.addTask(priority: .utility) {
@@ -550,7 +691,13 @@ final class QuotaStore {
                 tokenHistory = snapshot.history
                 codexDeepSeekHistory = snapshot.deepSeekHistory
                 Self.replaceBuckets(in: &freshBuckets, matching: { $0.platform == .codex }, with: snapshot.buckets)
+                finishSource(
+                    DataSourceCatalog.codexToken,
+                    state: snapshot.buckets.isEmpty ? .noData : .ready,
+                    validRecordCount: snapshot.buckets.count
+                )
             } else {
+                finishSource(DataSourceCatalog.codexToken, state: .failed)
                 logger.warning("Codex token refresh failed; retaining last good snapshot")
             }
         case let .claude(snapshot):
@@ -562,7 +709,13 @@ final class QuotaStore {
                     matching: { $0.platform == .claude && $0.client == .cli },
                     with: snapshot.buckets
                 )
+                finishSource(
+                    DataSourceCatalog.claudeCode,
+                    state: snapshot.buckets.isEmpty ? .noData : .ready,
+                    validRecordCount: snapshot.buckets.count
+                )
             } else {
+                finishSource(DataSourceCatalog.claudeCode, state: .failed)
                 logger.warning("Claude Code token refresh failed; retaining last good snapshot")
             }
         case let .workBuddy(snapshot):
@@ -570,7 +723,13 @@ final class QuotaStore {
                 workBuddyHistory = snapshot.history
                 workbuddyDeepSeekHistory = snapshot.deepSeekHistory
                 Self.replaceBuckets(in: &freshBuckets, matching: { $0.platform == .workbuddy }, with: snapshot.buckets)
+                finishSource(
+                    DataSourceCatalog.workBuddy,
+                    state: snapshot.buckets.isEmpty ? .noData : .ready,
+                    validRecordCount: snapshot.buckets.count
+                )
             } else {
+                finishSource(DataSourceCatalog.workBuddy, state: .failed)
                 logger.warning("WorkBuddy token refresh failed; retaining last good snapshot")
             }
         case let .desktop(snapshot):
@@ -583,25 +742,47 @@ final class QuotaStore {
                     with: snapshot.buckets
                 )
                 claudeDesktopStale = !CCSwitchUsageClient.isCCSwitchRunning()
+                finishSource(
+                    DataSourceCatalog.claudeDesktop,
+                    state: snapshot.buckets.isEmpty ? .noData : (claudeDesktopStale ? .stale : .ready),
+                    validRecordCount: snapshot.buckets.count
+                )
             } else {
                 claudeDesktopStale = true
+                finishSource(DataSourceCatalog.claudeDesktop, state: .failed)
                 logger.warning("Claude Desktop token refresh failed; retaining last good snapshot")
             }
         case let .claudeCrossCheck(snapshot):
             if let snapshot { crossCheckClaudeSource(cc: snapshot.history) }
-        case let .additional(snapshots):
-            guard let snapshots else {
+        case let .additional(scanResult):
+            guard let scanResult else {
+                DataSourceCatalog.additional.forEach { finishSource($0, state: .failed) }
                 logger.warning("Additional local token refresh failed; retaining last good snapshot")
                 break
             }
             let platforms = Set(LocalToolTokenSource.additional.map(\.platform))
-            Self.replaceBuckets(in: &freshBuckets, matching: { platforms.contains($0.platform) }, with: snapshots.flatMap(\.buckets))
+            Self.replaceBuckets(in: &freshBuckets, matching: { platforms.contains($0.platform) }, with: scanResult.snapshots.flatMap(\.buckets))
+            for diagnostic in scanResult.diagnostics {
+                finishSource(
+                    diagnostic.id,
+                    state: diagnostic.state,
+                    candidateFileCount: diagnostic.candidateFileCount,
+                    validRecordCount: diagnostic.validRecordCount,
+                    usesLastGoodData: diagnostic.usesLastGoodData
+                )
+            }
         case let .qoder(snapshot):
             guard let snapshot else {
+                finishSource(DataSourceCatalog.qoder, state: .failed)
                 logger.warning("Qoder token refresh failed; retaining last good snapshot")
                 break
             }
             Self.replaceBuckets(in: &freshBuckets, matching: { $0.platform == .qoder }, with: snapshot.buckets)
+            finishSource(
+                DataSourceCatalog.qoder,
+                state: snapshot.buckets.isEmpty ? .noData : .ready,
+                validRecordCount: snapshot.buckets.count
+            )
         }
         tokenBuckets = TokenUsageBucket.combining(freshBuckets)
         deepSeekHistory = TokenSourceSnapshot(buckets: tokenBuckets.filter { $0.provider == .deepseek }).history
@@ -635,7 +816,31 @@ final class QuotaStore {
         deepSeekHistory = TokenSourceSnapshot(buckets: tokenBuckets.filter { $0.provider == .deepseek }).history
         lastTokenUpdatedAt = snapshot.tokenUpdatedAt
             ?? (try? tokenSnapshotURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        restoreTokenSourceHealthFromCache()
         lastSavedTokenSnapshot = snapshot
+    }
+
+    private func restoreTokenSourceHealthFromCache() {
+        guard let cachedAt = lastTokenUpdatedAt else { return }
+        let descriptors = DataSourceCatalog.all.filter {
+            $0.kind == .localToken || $0.kind == .cloudToken
+        }
+        for descriptor in descriptors {
+            let matchingBuckets = tokenBuckets.filter { bucket in
+                bucket.platform.rawValue == descriptor.id.platform
+                    && bucket.client.rawValue == descriptor.id.client
+            }
+            guard !matchingBuckets.isEmpty else { continue }
+            sourceStates[descriptor.id] = descriptor.id == DataSourceCatalog.claudeDesktop && claudeDesktopStale
+                ? .stale
+                : .ready
+            sourceLastSuccessAt[descriptor.id] = cachedAt
+            sourceLastAttemptAt[descriptor.id] = cachedAt
+            sourceValidRecordCounts[descriptor.id] = matchingBuckets.count
+            if descriptor.id == DataSourceCatalog.claudeDesktop && claudeDesktopStale {
+                sourceUsesLastGoodData.insert(descriptor.id)
+            }
+        }
     }
 
     private func saveTokenSnapshotIfNeeded() {

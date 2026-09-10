@@ -14,20 +14,32 @@ enum BalanceState {
     case critical
     case unknown
 
-    /// 百分比卡阈值：≤10% 危急，≤50% 低余额。
+    /// 百分比卡阈值：≤30% 危急，≤50% 低余额。
     init(remainingPercent: Double?) {
-        guard let remaining = remainingPercent else { self = .unknown; return }
-        if remaining <= 0.10 { self = .critical }
-        else if remaining <= 0.50 { self = .low }
-        else { self = .normal }
+        self.init(health: QuotaHealth(remaining: remainingPercent))
     }
 
     /// 余额卡阈值：≤2 天危急，≤7 天低余额。
-    init(days: Int?) {
-        guard let days else { self = .unknown; return }
-        if days <= 2 { self = .critical }
-        else if days <= 7 { self = .low }
-        else { self = .normal }
+    init(balanceAmount: Double?, days: Int?) {
+        self.init(health: QuotaHealth(balanceAmount: balanceAmount, estimatedDays: days))
+    }
+
+    init(health: QuotaHealth) {
+        switch health {
+        case .healthy: self = .normal
+        case .warning: self = .low
+        case .critical: self = .critical
+        case .unknown: self = .unknown
+        }
+    }
+
+    var health: QuotaHealth {
+        switch self {
+        case .normal: .healthy
+        case .low: .warning
+        case .critical: .critical
+        case .unknown: .unknown
+        }
     }
 
     var color: Color {
@@ -140,6 +152,8 @@ struct MainPanelView: View {
     @State private var tokenPeriod: TokenPeriod = .sevenDays
     @State private var tokenChartDimension: TokenChartDimension = .platform
     @State private var hoveredPage: DashboardPage?
+    @State private var showSourceHelp = false
+    @State private var showCodexResetCreditsPopover = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -212,7 +226,9 @@ struct MainPanelView: View {
     }
 
     private var shouldShowEmptyState: Bool {
-        switch store.presentationSnapshot.availability {
+        // 数据来源与设置是故障恢复入口，任何数据状态下都必须可访问。
+        guard selectedPage != .settings else { return false }
+        return switch store.presentationSnapshot.availability {
         case .loading, .unavailable, .error: true
         case .ready, .connectedOnly, .stale: false
         }
@@ -314,10 +330,190 @@ struct MainPanelView: View {
     private var overviewPage: some View {
         VStack(alignment: .leading, spacing: 14) {
             overviewHeading
+            overviewRiskCard
             overviewHeroCard
             overviewQuotaGrid
             overviewBottomGrid
         }
+    }
+
+    /// 首页新增的唯一主状态，保留原有额度、Token 与排行模块顺序不变。
+    private var overviewRiskCard: some View {
+        let risk = OverviewRiskResolver.resolve(store: store)
+        let isActionable = risk.actionPage != .overview
+        let title = overviewRiskTitle(risk)
+        let detail = overviewRiskDetail(risk)
+        let color: Color = switch risk.level {
+        case .healthy: PanelTheme.ok
+        case .reminder: PanelTheme.warn
+        case .critical: PanelTheme.danger
+        case .trustWarning: PanelTheme.warn
+        case .unavailable: PanelTheme.text2
+        }
+        let background: Color = switch risk.level {
+        case .healthy: PanelTheme.okSoft
+        case .reminder, .trustWarning: PanelTheme.warnSoft
+        case .critical: PanelTheme.dangerSoft
+        case .unavailable: PanelTheme.surface2
+        }
+        return Button {
+            guard isActionable else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                selectedPage = .settings
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: risk.level == .healthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(color)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    overviewRiskHeadline(risk, color: color)
+                    overviewRiskDetailView(risk, color: color)
+                }
+                Spacer(minLength: 8)
+                if isActionable {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(PanelTheme.text2)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(background, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue("\(detail). \(language.text("overview.risk.sourceSummary", readySourceCount, overviewFreshnessText))")
+        .accessibilityHint(isActionable ? language.text("overview.risk.actionHint") : "")
+    }
+
+    @ViewBuilder
+    private func overviewRiskHeadline(_ risk: OverviewRiskResolution, color: Color) -> some View {
+        if let signal = risk.signal,
+           signal.metric != .sharedBalance,
+           let remaining = signal.remainingPercent,
+           remaining > 0 {
+            Text(language.text(
+                "overview.risk.quota.remaining.prefix",
+                overviewRiskProviderName(signal.provider),
+                overviewRiskMetricName(signal.metric)
+            ))
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(PanelTheme.text)
+            + Text(QuotaFormatters.percent(remaining))
+                .font(.system(size: 15, weight: .bold, design: .monospaced))
+                .foregroundStyle(color)
+        } else {
+            Text(overviewRiskTitle(risk))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(PanelTheme.text)
+        }
+    }
+
+    @ViewBuilder
+    private func overviewRiskDetailView(_ risk: OverviewRiskResolution, color: Color) -> some View {
+        if let reset = risk.signal?.resetsAt {
+            Text(language.text(
+                "overview.risk.resetDetail",
+                QuotaFormatters.reset(reset, language: language.language),
+                overviewRiskResetCountdown(reset)
+            ))
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(color)
+            .lineLimit(1)
+        } else {
+            Text(overviewRiskDetail(risk))
+                .font(.system(size: 11))
+                .foregroundStyle(PanelTheme.text2)
+                .lineLimit(2)
+        }
+    }
+
+    private func overviewRiskResetCountdown(_ reset: Date) -> String {
+        let countdown = QuotaFormatters.relativeReset(from: reset, language: language)
+        guard language.language == .simplifiedChinese else { return countdown }
+        return countdown.replacingOccurrences(of: " ", with: "")
+    }
+
+    private func overviewRiskTitle(_ risk: OverviewRiskResolution) -> String {
+        guard let signal = risk.signal else {
+            return language.text(risk.level == .trustWarning
+                ? "overview.risk.trust.title"
+                : "overview.risk.unavailable.title")
+        }
+        if signal.metric == .sharedBalance {
+            if signal.balanceAmount.map({ $0 <= 0 }) == true {
+                return language.text("overview.risk.balance.depleted", overviewRiskProviderName(signal.provider))
+            }
+            guard let days = signal.estimatedDays else {
+                return language.text("overview.risk.unavailable.title")
+            }
+            return language.text("overview.risk.balance.days", overviewRiskProviderName(signal.provider), days)
+        }
+        let provider = overviewRiskProviderName(signal.provider)
+        let metric = overviewRiskMetricName(signal.metric)
+        if signal.remainingPercent == 0 {
+            return language.text("overview.risk.quota.exhausted", provider, metric)
+        }
+        return language.text(
+            "overview.risk.quota.remaining",
+            provider,
+            metric,
+            QuotaFormatters.percent(signal.remainingPercent)
+        )
+    }
+
+    private func overviewRiskDetail(_ risk: OverviewRiskResolution) -> String {
+        var parts: [String] = []
+        if let signal = risk.signal {
+            if let reset = signal.resetsAt {
+                parts.append(language.text(
+                    "overview.risk.resetDetail",
+                    QuotaFormatters.reset(reset, language: language.language),
+                    overviewRiskResetCountdown(reset)
+                ))
+            } else if signal.metric == .sharedBalance {
+                parts.append(language.text("overview.risk.balance.detail"))
+            } else if signal.coverageRatio == nil {
+                parts.append(language.text("overview.risk.thresholdFallback"))
+            }
+        } else {
+            parts.append(language.text(risk.level == .trustWarning
+                ? "overview.risk.trust.detail"
+                : "overview.risk.unavailable.detail"))
+        }
+        if risk.unavailableQuotaSourceCount > 0, risk.signal != nil {
+            parts.append(language.text("overview.risk.partialSources", risk.unavailableQuotaSourceCount))
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private func overviewRiskProviderName(_ provider: OverviewRiskProvider) -> String {
+        switch provider {
+        case .codex: "Codex"
+        case .claude: "Claude"
+        case .deepSeek: "DeepSeek"
+        }
+    }
+
+    private func overviewRiskMetricName(_ metric: OverviewRiskMetric) -> String {
+        switch metric {
+        case .session: language.text("panel.sessionLeft")
+        case .weekly: language.text("overview.weekQuota")
+        case .sharedBalance: language.text("overview.sharedBalance")
+        }
+    }
+
+    private var readySourceCount: Int {
+        store.dataSourceHealth.filter { $0.isInstalled && $0.state == .ready }.count
+    }
+
+    private var overviewFreshnessText: String {
+        guard let date = store.latestUpdatedAt else { return "--" }
+        return QuotaFormatters.clock(language: language.language).string(from: date)
     }
 
     private var overviewHeading: some View {
@@ -327,35 +523,35 @@ struct MainPanelView: View {
             .foregroundStyle(PanelTheme.text)
     }
 
-    /// 首页首卡只回答三个问题：今天用了多少、和昨天比如何、近 7 天的量级。
+    /// 首页首卡只回答三个问题：今天用了多少、和昨天比如何、近7天的量级。
     private var overviewHeroCard: some View {
         let presentation = store.presentationSnapshot
         return panelCard(elevated: false) {
-            HStack(alignment: .top, spacing: 24) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(language.text("menu.todayTokensLabel"))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(PanelTheme.text3)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(language.text("menu.todayTokensLabel"))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(PanelTheme.text3)
+                HStack(alignment: .lastTextBaseline, spacing: 12) {
                     Text(QuotaFormatters.localizedTokens(presentation.today.total, language: language.language))
                         .font(.system(size: 34, weight: .bold, design: .monospaced))
                         .fontDesign(.monospaced)
                         .foregroundStyle(PanelTheme.text)
-                    Text(heroSubtext)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
-                        .fontDesign(.monospaced)
-                        .foregroundStyle(PanelTheme.text2)
+                    HStack(alignment: .lastTextBaseline, spacing: 8) {
+                        Text(heroYesterdayText)
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .foregroundStyle(PanelTheme.text2)
+                        if let delta = relativeDeltaText {
+                            Text(delta)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .fontDesign(.monospaced)
+                                .foregroundStyle(relativeDeltaColor)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(relativeDeltaColor.opacity(0.14), in: Capsule())
+                                .fixedSize()
+                        }
+                    }
                 }
-                if let delta = relativeDeltaText {
-                    Text(delta)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .fontDesign(.monospaced)
-                        .foregroundStyle(relativeDeltaColor)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(relativeDeltaColor.opacity(0.14), in: Capsule())
-                        .fixedSize()
-                }
-                Spacer(minLength: 0)
             }
             HStack(spacing: 0) {
                 overviewHeroMetric(language.text("overview.last7Total"), QuotaFormatters.localizedTokens(presentation.lastSevenDays.total, language: language.language))
@@ -369,12 +565,9 @@ struct MainPanelView: View {
         }
     }
 
-    private var heroSubtext: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        let updated = store.lastUpdated.map { formatter.string(from: $0) } ?? "--:--"
+    private var heroYesterdayText: String {
         let yesterday = store.yesterdayTokenUsage.map { QuotaFormatters.localizedTokens($0.total, language: language.language) } ?? "--"
-        return language.text("overview.yesterdayUpdated", yesterday, updated)
+        return language.text("overview.yesterdayComparison", yesterday)
     }
 
     private var todayPeakShare: String {
@@ -401,8 +594,7 @@ struct MainPanelView: View {
         guard let today = store.todayTokenUsage?.total,
               let yesterday = store.yesterdayTokenUsage?.total,
               let percent = DailyTokenUsage.trendPercent(today: today, yesterday: yesterday) else { return nil }
-        let key = percent >= 0 ? "menu.vsYesterdayUp" : "menu.vsYesterdayDown"
-        return language.text(key, String(format: "%.1f", abs(percent)))
+        return String(format: "%@ %.1f%%", percent >= 0 ? "↑" : "↓", abs(percent))
     }
 
     private var relativeDeltaColor: Color {
@@ -466,10 +658,17 @@ struct MainPanelView: View {
         let icon: BrandIconKind
         let name: String
         let route: String
-        let facts: [(String, String, String)]
+        let facts: [OverviewQuotaFact]
         let state: BalanceState?
 
         var id: String { platform.rawValue }
+    }
+
+    private struct OverviewQuotaFact {
+        let label: String
+        let value: String
+        let detail: String
+        let health: QuotaHealth
     }
 
     private var codexOverviewRoute: String {
@@ -490,45 +689,103 @@ struct MainPanelView: View {
         }
     }
 
-    private var codexOverviewFacts: [(String, String, String)] {
+    private var codexOverviewFacts: [OverviewQuotaFact] {
         if QuotaPresentationPolicy.mode(for: store.codexRoute) == .sharedBalance { return sharedOverviewFacts }
         return [
-            (language.text("panel.sessionLeft"), codexProvider?.session?.remainingPercent.map(QuotaFormatters.percent) ?? "--", codexResetText(codexProvider?.session)),
-            (language.text("overview.weekQuota"), codexProvider?.weekly?.remainingPercent.map(QuotaFormatters.percent) ?? "--", codexResetText(codexProvider?.weekly))
+            quotaFact(label: language.text("panel.sessionLeft"), metric: .session, line: codexProvider?.session),
+            quotaFact(label: language.text("overview.weekQuota"), metric: .weekly, line: codexProvider?.weekly)
         ]
     }
 
-    private var claudeOverviewFacts: [(String, String, String)] {
+    private var claudeOverviewFacts: [OverviewQuotaFact] {
         if store.claudeUsesDeepSeek { return sharedOverviewFacts }
         let detail = store.claudeRouteSummary == .unknown
             ? language.text("settings.notConnected")
             : language.text("overview.quotaUnavailable")
         return [
-            (language.text("overview.sessionQuota"), "--", detail),
-            (language.text("overview.weekQuota"), "--", detail)
+            .init(label: language.text("overview.sessionQuota"), value: "--", detail: detail, health: .unknown),
+            .init(label: language.text("overview.weekQuota"), value: "--", detail: detail, health: .unknown)
         ]
     }
 
-    private var sharedOverviewFacts: [(String, String, String)] {
-        [
-            (language.text("overview.sharedBalance"), sharedBalanceText, language.text("overview.balanceNoReset")),
-            (language.text("overview.estimatedDays"), store.deepSeekDays.map { language.text("panel.daysShortLabel", "\($0)") } ?? "--", language.text("overview.estimateNote"))
+    private var sharedOverviewFacts: [OverviewQuotaFact] {
+        let health = QuotaHealth(balanceAmount: store.deepSeekBalance, estimatedDays: store.deepSeekDays)
+        return [
+            .init(label: language.text("overview.sharedBalance"), value: sharedBalanceText, detail: balanceStatusDetail(health), health: health),
+            .init(label: language.text("overview.estimatedDays"), value: store.deepSeekDays.map { language.text("panel.daysShortLabel", "\($0)") } ?? "--", detail: language.text("overview.estimateNote"), health: health)
         ]
+    }
+
+    private func quotaFact(label: String, metric: OverviewRiskMetric, line: UsageLine?) -> OverviewQuotaFact {
+        let health = codexQuotaHealth(metric: metric, line: line)
+        return .init(
+            label: label,
+            value: line?.remainingPercent.map(QuotaFormatters.percent) ?? "--",
+            detail: codexResetText(line),
+            health: health
+        )
     }
 
     private var codexOverviewState: BalanceState? {
         switch store.codexRoute {
-        case .deepseek: BalanceState(days: store.deepSeekDays)
-        case .official: BalanceState(remainingPercent: codexProvider?.weekly?.remainingPercent)
+        case .deepseek: BalanceState(balanceAmount: store.deepSeekBalance, days: store.deepSeekDays)
+        case .official:
+            codexOfficialRiskResolution.map { balanceState(for: $0.level) } ?? .unknown
         case .unknown: nil
         }
     }
 
+    private var codexOfficialRiskResolution: OverviewRiskResolution? {
+        guard let provider = codexProvider else { return nil }
+        var candidates: [OverviewRiskCandidate] = []
+        if let session = provider.session {
+            candidates.append(.quota(provider: .codex, metric: .session, line: session))
+        }
+        if let weekly = provider.weekly {
+            candidates.append(.quota(provider: .codex, metric: .weekly, line: weekly))
+        }
+        guard !candidates.isEmpty else { return nil }
+        return OverviewRiskResolver.resolve(
+            input: .init(
+                candidates: candidates,
+                unavailableQuotaSourceCount: 0,
+                hasConnectedQuotaRoute: true
+            ),
+            now: .now
+        )
+    }
+
+    private func codexQuotaHealth(metric: OverviewRiskMetric, line: UsageLine?) -> QuotaHealth {
+        guard let line else { return .unknown }
+        let resolution = OverviewRiskResolver.resolve(
+            input: .init(
+                candidates: [.quota(provider: .codex, metric: metric, line: line)],
+                unavailableQuotaSourceCount: 0,
+                hasConnectedQuotaRoute: true
+            ),
+            now: .now
+        )
+        return quotaHealth(for: resolution.level)
+    }
+
+    private func balanceState(for level: OverviewRiskLevel) -> BalanceState {
+        switch level {
+        case .healthy: .normal
+        case .reminder: .low
+        case .critical: .critical
+        case .trustWarning, .unavailable: .unknown
+        }
+    }
+
+    private func quotaHealth(for level: OverviewRiskLevel) -> QuotaHealth {
+        balanceState(for: level).health
+    }
+
     private var claudeOverviewState: BalanceState? {
-        if store.claudeUsesDeepSeek { return BalanceState(days: store.deepSeekDays) }
+        if store.claudeUsesDeepSeek { return BalanceState(balanceAmount: store.deepSeekBalance, days: store.deepSeekDays) }
         return switch store.claudeRouteSummary {
         case .official, .other, .mixed: BalanceState.unknown
-        case .deepseek: BalanceState(days: store.deepSeekDays)
+        case .deepseek: BalanceState(balanceAmount: store.deepSeekBalance, days: store.deepSeekDays)
         case .unknown: nil
         }
     }
@@ -536,14 +793,24 @@ struct MainPanelView: View {
     private func codexResetText(_ line: UsageLine?) -> String {
         guard let line else { return language.text("overview.noResetData") }
         guard let reset = line.resetsAt else { return language.text("overview.noResetData") }
-        return language.text("overview.resetAfter", QuotaFormatters.reset(language: language.language).string(from: reset))
+        return language.text("overview.resetAfter", QuotaFormatters.reset(reset, language: language.language))
+    }
+
+    private func balanceStatusDetail(_ health: QuotaHealth) -> String {
+        let status = switch health {
+        case .healthy: language.text("quota.status.healthy")
+        case .warning: language.text("quota.status.warning")
+        case .critical: language.text("quota.status.critical")
+        case .unknown: language.text("quota.status.pendingEstimate")
+        }
+        return "\(status) · \(language.text("overview.balanceNoReset"))"
     }
 
     private func overviewQuotaCard(
         icon: BrandIconKind,
         name: String,
         route: String,
-        facts: [(String, String, String)],
+        facts: [OverviewQuotaFact],
         state: BalanceState?
     ) -> some View {
         let status = overviewStatus(for: state)
@@ -555,9 +822,16 @@ struct MainPanelView: View {
                     Text(name)
                         .font(.system(size: 13, weight: .semibold, design: .monospaced))
                         .foregroundStyle(PanelTheme.text)
-                    Text(route)
-                        .font(.system(size: 9, weight: .regular, design: .monospaced))
-                        .foregroundStyle(PanelTheme.text3)
+                    HStack(spacing: 5) {
+                        Text(route)
+                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .foregroundStyle(PanelTheme.text3)
+                        if icon == .codex,
+                           let resetCredits = store.codexResetCredits,
+                           resetCredits.availableCount > 0 {
+                            codexResetCreditsInline(resetCredits)
+                        }
+                    }
                 }
                 Spacer(minLength: 8)
                 Text(status.label)
@@ -570,16 +844,16 @@ struct MainPanelView: View {
             HStack(spacing: 0) {
                 ForEach(Array(facts.enumerated()), id: \.offset) { index, fact in
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(fact.0)
+                        Text(fact.label)
                             .font(.system(size: 9, weight: .regular, design: .monospaced))
                             .foregroundStyle(PanelTheme.text3)
-                        Text(fact.1)
+                        Text(fact.value)
                             .font(.system(size: 20, weight: .semibold, design: .monospaced))
                             .fontDesign(.monospaced)
-                            .foregroundStyle(PanelTheme.text)
+                            .foregroundStyle(PanelTheme.quotaValueColor(fact.health))
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
-                        Text(fact.2)
+                        Text(fact.detail)
                             .font(.system(size: 9, weight: .regular, design: .monospaced))
                             .fontDesign(.monospaced)
                             .foregroundStyle(PanelTheme.text2)
@@ -600,6 +874,105 @@ struct MainPanelView: View {
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func codexResetCreditsInline(_ resetCredits: CodexResetCredits) -> some View {
+        let label = language.text("overview.resetCredits.inline", resetCredits.availableCount)
+        let help = codexResetCreditsHelp(resetCredits)
+        return HStack(spacing: 3) {
+            (
+                Text(language.text("overview.resetCredits.inline.prefix"))
+                    .foregroundStyle(PanelTheme.text2)
+                + Text(language.text("overview.resetCredits.inline.value", resetCredits.availableCount))
+                    .foregroundStyle(PanelTheme.chartAccent)
+                + Text(language.text("overview.resetCredits.inline.suffix"))
+                    .foregroundStyle(PanelTheme.text2)
+            )
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .lineLimit(1)
+            Button {
+                showCodexResetCreditsPopover.toggle()
+            } label: {
+                Image(systemName: "questionmark.circle")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(PanelTheme.text3)
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showCodexResetCreditsPopover, arrowEdge: .bottom) {
+                codexResetCreditsPopover(resetCredits)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .accessibilityValue(help)
+            .accessibilityHint(language.text("overview.resetCredits.clickHint"))
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func codexResetCreditsPopover(_ resetCredits: CodexResetCredits) -> some View {
+        let missingCount = max(resetCredits.availableCount - resetCredits.expirations.count, 0)
+        return VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 0) {
+                Text(language.text("overview.resetCredits.title.prefix"))
+                    .foregroundStyle(PanelTheme.text)
+                Text(language.text("overview.resetCredits.title.value", resetCredits.availableCount))
+                    .foregroundStyle(PanelTheme.chartAccent)
+                Text(language.text("overview.resetCredits.title.suffix"))
+                    .foregroundStyle(PanelTheme.text)
+            }
+            .font(.system(size: 12, weight: .semibold))
+            ForEach(Array(resetCredits.expirations.enumerated()), id: \.offset) { index, expiration in
+                HStack(alignment: .firstTextBaseline, spacing: 18) {
+                    Text(language.text("overview.resetCredits.item", index + 1))
+                        .foregroundStyle(PanelTheme.text2)
+                    Spacer(minLength: 12)
+                    HStack(spacing: 0) {
+                        Text(language.text("overview.resetCredits.expiresAt.prefix"))
+                            .foregroundStyle(PanelTheme.text3)
+                        Text(QuotaFormatters.reset(expiration, language: language.language))
+                            .foregroundStyle(PanelTheme.chartAccent)
+                        Text(language.text("overview.resetCredits.expiresAt.suffix"))
+                            .foregroundStyle(PanelTheme.text3)
+                    }
+                    .fontDesign(.monospaced)
+                }
+                .font(.system(size: 10))
+            }
+            if missingCount > 0 {
+                Text(language.text("overview.resetCredits.missingExpirations", missingCount))
+                    .font(.system(size: 10))
+                    .foregroundStyle(PanelTheme.text2)
+            }
+            if resetCredits.expirations.isEmpty, missingCount == 0 {
+                Text(language.text("overview.resetCredits.noExpirations"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(PanelTheme.text2)
+            }
+        }
+        .padding(12)
+        .frame(minWidth: 228)
+        .background(PanelTheme.tooltipSurface)
+    }
+
+    private func codexResetCreditsHelp(_ resetCredits: CodexResetCredits) -> String {
+        var lines = [language.text("overview.resetCredits.title", resetCredits.availableCount)]
+        lines.append(contentsOf: resetCredits.expirations.enumerated().map { index, expiration in
+            language.text(
+                "overview.resetCredits.helpRow",
+                index + 1,
+                QuotaFormatters.reset(expiration, language: language.language)
+            )
+        })
+        let missingCount = max(resetCredits.availableCount - resetCredits.expirations.count, 0)
+        if missingCount > 0 {
+            lines.append(language.text("overview.resetCredits.missingExpirations", missingCount))
+        }
+        if resetCredits.expirations.isEmpty, missingCount == 0 {
+            lines.append(language.text("overview.resetCredits.noExpirations"))
+        }
+        return lines.joined(separator: "\n")
     }
 
     private var overviewBottomGrid: some View {
@@ -638,10 +1011,6 @@ struct MainPanelView: View {
                 Text(language.text("overview.todayHourlyTitle"))
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
                     .foregroundStyle(PanelTheme.text)
-                Spacer()
-                Text(language.text("overview.todayHourlyNote"))
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
-                    .foregroundStyle(PanelTheme.text3)
             }
             StackedBarChart(
                 rows: chart.rows,
@@ -838,11 +1207,11 @@ struct MainPanelView: View {
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
                     .foregroundStyle(PanelTheme.text)
                 Spacer(minLength: 6)
-                tokenChartDimensionPicker
                 Text(language.text("tokens.peakValue", QuotaFormatters.localizedTokens(chart.rows.map { $0.total }.max() ?? 0, language: language.language)))
                     .font(.system(size: 10, weight: .regular, design: .monospaced))
                     .fontDesign(.monospaced)
                     .foregroundStyle(PanelTheme.text3)
+                tokenChartDimensionPicker
             }
             StackedBarChart(
                 rows: chart.rows,
@@ -1096,10 +1465,15 @@ struct MainPanelView: View {
             VStack(spacing: 14) {
                 settingsCard {
                     settingsRow(title: language.text("settings.launchAtLogin"), detail: language.text("settings.launchAtLogin.detail")) {
-                        CustomToggle(isOn: Binding(
+                        Toggle("", isOn: Binding(
                             get: { loginItem.isRegistered },
                             set: { loginItem.setEnabled($0) }
                         ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .tint(PanelTheme.chartAccent)
+                        .accessibilityLabel(language.text("settings.launchAtLogin"))
+                        .accessibilityHint(language.text("settings.launchAtLogin.hint"))
                     }
                     settingsRow(title: language.text("settings.language"), detail: language.text("settings.language.detail")) {
                         PanelSegmentedControl(
@@ -1136,7 +1510,243 @@ struct MainPanelView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            trustedSourcesCard
         }
+    }
+
+    private var trustedSourcesCard: some View {
+        settingsCard {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(language.text("settings.sources"))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(PanelTheme.text)
+                    Text(language.text("settings.sources.detail"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(PanelTheme.text2)
+                }
+                Spacer(minLength: 8)
+                Text(language.text("settings.sources.summary", trustedSources.filter { $0.state == .ready }.count, trustedSources.filter { $0.state != .ready }.count))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(PanelTheme.text2)
+                    .lineLimit(1)
+                Button {
+                    Task { await store.refreshAll() }
+                } label: {
+                    Label(language.text("settings.sources.rescan"), systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityHint(language.text("settings.sources.rescan.hint"))
+            }
+            .padding(.horizontal, 15)
+            .padding(.vertical, 12)
+            sourceCapabilityTable
+            if showSourceHelp {
+                Text(language.text("settings.sources.help"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(PanelTheme.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 15)
+                    .padding(.bottom, 12)
+            }
+        }
+    }
+
+    private struct SourceCapabilityRow: Identifiable {
+        let id: String
+        let product: String
+        let quotaSources: [DataSourceHealthSnapshot]
+        let tokenSources: [DataSourceHealthSnapshot]
+
+        var isInstalled: Bool {
+            quotaSources.contains(where: \.isInstalled) || tokenSources.contains(where: \.isInstalled)
+        }
+
+        var canReadQuota: Bool {
+            quotaSources.contains { $0.state == .ready }
+        }
+
+        var canReadToken: Bool {
+            tokenSources.contains { $0.state == .ready }
+        }
+
+        var sourceDetails: [DataSourceHealthSnapshot] {
+            var seen = Set<DataSourceID>()
+            return (quotaSources + tokenSources).filter { seen.insert($0.id).inserted }
+        }
+
+        var redactedPaths: String {
+            sourceDetails.map(\.redactedPath).joined(separator: " · ")
+        }
+
+        var validRecordCount: Int {
+            sourceDetails.reduce(0) { $0 + $1.validRecordCount }
+        }
+
+    }
+
+    private var trustedSources: [DataSourceHealthSnapshot] {
+        store.dataSourceHealth.filter(\.isInstalled)
+    }
+
+    private var sourceCapabilityRows: [SourceCapabilityRow] {
+        let sources = store.dataSourceHealth
+        let byID = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
+        var rows: [SourceCapabilityRow] = []
+        func source(_ id: DataSourceID) -> DataSourceHealthSnapshot? { byID[id] }
+        func append(_ id: String, _ product: String, quota: [DataSourceHealthSnapshot], token: [DataSourceHealthSnapshot]) {
+            let row = SourceCapabilityRow(id: id, product: product, quotaSources: quota, tokenSources: token)
+            if row.isInstalled { rows.append(row) }
+        }
+
+        append(
+            "codex",
+            language.text("settings.sources.codexProduct"),
+            quota: [source(DataSourceCatalog.codexQuota)].compactMap { $0 },
+            token: [source(DataSourceCatalog.codexToken)].compactMap { $0 }
+        )
+        append(
+            "deepseek",
+            language.text("settings.sources.deepseekProduct"),
+            quota: [source(DataSourceCatalog.deepSeekBalance)].compactMap { $0 },
+            token: []
+        )
+        append(
+            "claude",
+            language.text("settings.sources.claudeProduct"),
+            quota: store.claudeUsesDeepSeek ? [source(DataSourceCatalog.deepSeekBalance)].compactMap { $0 } : [],
+            token: [source(DataSourceCatalog.claudeCode), source(DataSourceCatalog.claudeDesktop)].compactMap { $0 }
+        )
+        append(
+            "workbuddy",
+            language.text("settings.sources.workbuddyProduct"),
+            quota: [],
+            token: [source(DataSourceCatalog.workBuddy)].compactMap { $0 }
+        )
+        append(
+            "qoder",
+            language.text("settings.sources.qoderProduct"),
+            quota: [],
+            token: [source(DataSourceCatalog.qoder)].compactMap { $0 }
+        )
+        let builtInPlatforms: Set<String> = ["codex", "deepseek", "claude", "workbuddy", "qoder"]
+        let additional = sources.filter {
+            !builtInPlatforms.contains($0.id.platform) && $0.kind == .localToken && $0.isInstalled
+        }
+        let additionalPlatforms = Set(additional.map { $0.id.platform }).sorted()
+        for platform in additionalPlatforms {
+            let matching = additional.filter { $0.id.platform == platform }
+            append(platform, matching.first?.fallbackName ?? platform.capitalized, quota: [], token: matching)
+        }
+        return rows
+    }
+
+    private var sourceCapabilityTable: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                Text(language.text("settings.sources.table.product"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(language.text("settings.sources.table.quota"))
+                    .frame(width: 72, alignment: .center)
+                Text(language.text("settings.sources.table.token"))
+                    .frame(width: 72, alignment: .center)
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(PanelTheme.text2)
+            .padding(.horizontal, 15)
+            .padding(.bottom, 6)
+
+            ForEach(sourceCapabilityRows) { row in
+                HStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(row.product)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(PanelTheme.text)
+                        Text(row.redactedPaths)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(PanelTheme.text3)
+                            .lineLimit(2)
+                        if row.validRecordCount > 0 {
+                            Text(language.text("settings.sources.table.records", row.validRecordCount))
+                                .font(.system(size: 9))
+                                .foregroundStyle(PanelTheme.text3)
+                        }
+                        let quotaReason = capabilityReason(for: row.quotaSources, labelKey: "settings.sources.table.quota")
+                        let tokenReason = capabilityReason(for: row.tokenSources, labelKey: "settings.sources.table.token")
+                        if let quotaReason, let tokenReason {
+                            Text("\(quotaReason) · \(tokenReason)")
+                                .font(.system(size: 9))
+                                .foregroundStyle(PanelTheme.danger)
+                                .lineLimit(2)
+                        } else if let quotaReason {
+                            Text(quotaReason)
+                                .font(.system(size: 9))
+                                .foregroundStyle(PanelTheme.danger)
+                                .lineLimit(2)
+                        } else if let tokenReason {
+                            Text(tokenReason)
+                                .font(.system(size: 9))
+                                .foregroundStyle(PanelTheme.danger)
+                                .lineLimit(2)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    capabilityCell(isAvailable: row.canReadQuota, label: language.text("settings.sources.table.quota"))
+                        .frame(width: 72)
+                    capabilityCell(isAvailable: row.canReadToken, label: language.text("settings.sources.table.token"))
+                        .frame(width: 72)
+                }
+                .padding(.horizontal, 15)
+                .padding(.vertical, 9)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(PanelTheme.separator).frame(height: 0.5).padding(.horizontal, 15)
+                }
+            }
+
+            if sourceCapabilityRows.isEmpty {
+                Text(language.text("settings.sources.table.empty"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(PanelTheme.text2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 9)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func capabilityCell(isAvailable: Bool, label: String) -> some View {
+        Image(systemName: isAvailable ? "checkmark.circle.fill" : "xmark.circle.fill")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(isAvailable ? PanelTheme.success : PanelTheme.danger)
+            .accessibilityLabel("\(label): \(language.text(isAvailable ? "settings.sources.table.available" : "settings.sources.table.unavailable"))")
+    }
+
+    private func capabilityReason(for sources: [DataSourceHealthSnapshot], labelKey: String) -> String? {
+        guard !sources.contains(where: { $0.state == .ready }) else { return nil }
+        let reasonKey: String
+        guard let state = sourceReasonState(for: sources) else {
+            reasonKey = "settings.sources.table.reason.noSource"
+            return language.text("settings.sources.table.reason", language.text(labelKey), language.text(reasonKey))
+        }
+        reasonKey = switch state {
+        case .noData: "settings.sources.table.reason.noData"
+        case .notDetected: "settings.sources.table.reason.notDetected"
+        case .needsPermission: "settings.sources.table.reason.permission"
+        case .unsupportedFormat: "settings.sources.table.reason.unsupported"
+        case .failed: "settings.sources.table.reason.failed"
+        case .stale: "settings.sources.table.reason.stale"
+        case .scanning: "settings.sources.table.reason.scanning"
+        case .ready: "settings.sources.table.reason.noSource"
+        }
+        return language.text("settings.sources.table.reason", language.text(labelKey), language.text(reasonKey))
+    }
+
+    private func sourceReasonState(for sources: [DataSourceHealthSnapshot]) -> DataSourceHealthState? {
+        let priority: [DataSourceHealthState] = [.needsPermission, .failed, .unsupportedFormat, .stale, .noData, .notDetected, .scanning]
+        return priority.first { state in sources.contains { $0.state == state } }
     }
 
     private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -1352,7 +1962,7 @@ struct MainPanelView: View {
     }
 
     private func categoryColors(for categories: [TokenChartCategory]) -> [String: Color] {
-        let palette = PanelTheme.categoryPaletteExtended
+        let palette = PanelTheme.categoryPalette
         return Dictionary(
             categories.map { category in
                 (category.id, palette[category.preferredPaletteIndex % palette.count])
@@ -1366,7 +1976,7 @@ struct MainPanelView: View {
     }
 
     private func stableCategoryColor(for value: String) -> Color {
-        PanelTheme.categoryPaletteExtended[stablePaletteIndex(for: value)]
+        PanelTheme.categoryPalette[stablePaletteIndex(for: value)]
     }
 
     private func chartCategory(for bucket: TokenUsageBucket) -> TokenChartCategory {
@@ -1751,16 +2361,6 @@ struct TitlebarStatusView: View {
     }
 
     private var statusText: String {
-        if let progress = store.localTokenRefreshProgress {
-            return language.text(
-                "panel.statusProgress",
-                progress.completedSources,
-                progress.totalSources
-            )
-        }
-        if isUpdating {
-            return language.text("panel.syncingTitle")
-        }
         guard let date = store.latestUpdatedAt else {
             return language.text("panel.updated", "--:--")
         }
@@ -1842,26 +2442,6 @@ private struct PanelSegmentedControl<Option: Hashable>: View {
         }
         .padding(2)
         .background(PanelTheme.surface2, in: Capsule())
-    }
-}
-
-private struct CustomToggle: View {
-    @Binding var isOn: Bool
-
-    var body: some View {
-        ZStack(alignment: isOn ? .trailing : .leading) {
-            Capsule()
-                .fill(isOn ? PanelTheme.ink : PanelTheme.surface3)
-                .frame(width: 32, height: 19)
-            Circle()
-                .fill(PanelTheme.paper)
-                .frame(width: 15, height: 15)
-                .padding(2)
-                .shadow(color: PanelTheme.shadowSmall, radius: 1, y: 0.5)
-        }
-        .animation(.easeInOut(duration: 0.15), value: isOn)
-        .contentShape(Capsule())
-        .onTapGesture { isOn.toggle() }
     }
 }
 
@@ -2009,6 +2589,7 @@ private struct Sparkline: View {
     let language: AppLanguage
     @State private var hoveredIndex: Int?
     @State private var tooltipSize = ChartTooltipLayout.initialSize
+    @State private var isSelectionPinned = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -2124,15 +2705,41 @@ private struct Sparkline: View {
                 }
             }
             .contentShape(Rectangle())
+            .focusable()
+            .focusEffectDisabled()
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(language == .simplifiedChinese ? "Token 趋势图" : "Token trend chart")
+            .accessibilityValue(accessibilitySummary)
+            .accessibilityAdjustableAction { direction in
+                moveSelection(direction == .increment ? 1 : -1)
+            }
+            .onKeyPress(.return) {
+                toggleSelection()
+                return .handled
+            }
+            .onKeyPress(.space) {
+                toggleSelection()
+                return .handled
+            }
+            .onMoveCommand { direction in
+                switch direction {
+                case .left: moveSelection(-1)
+                case .right: moveSelection(1)
+                default: break
+                }
+            }
+            .onExitCommand { hoveredIndex = nil; isSelectionPinned = false }
             .onPreferenceChange(ChartTooltipSizePreferenceKey.self) { tooltipSize = $0 }
             .onContinuousHover(coordinateSpace: .local) { phase in
                 switch phase {
                 case .active(let location):
-                    hoveredIndex = index(at: location, plotX: plotX, plotWidth: plotWidth)
+                    if !isSelectionPinned {
+                        hoveredIndex = index(at: location, plotX: plotX, plotWidth: plotWidth)
+                    }
                 case .ended:
-                    hoveredIndex = nil
+                    if !isSelectionPinned { hoveredIndex = nil }
                 @unknown default:
-                    hoveredIndex = nil
+                    if !isSelectionPinned { hoveredIndex = nil }
                 }
             }
         }
@@ -2142,6 +2749,26 @@ private struct Sparkline: View {
         guard !values.isEmpty, location.x >= plotX, location.x <= plotX + plotWidth else { return nil }
         let slotWidth = plotWidth / CGFloat(values.count)
         return min(max(Int((location.x - plotX) / slotWidth), 0), values.count - 1)
+    }
+
+    private var accessibilitySummary: String {
+        guard let index = hoveredIndex, values.indices.contains(index), labels.indices.contains(index) else {
+            return language == .simplifiedChinese ? "聚焦后按左右键查看每日 Token，按 Enter 或空格固定选择" : "Focus the chart, use left or right arrows to inspect each day, then press Enter or Space to pin the selection"
+        }
+        let pinned = isSelectionPinned ? (language == .simplifiedChinese ? "，已固定" : ", pinned") : ""
+        return "\(labels[index]), \(QuotaFormatters.localizedTokens(Int(values[index]), language: language))\(pinned)"
+    }
+
+    private func moveSelection(_ delta: Int) {
+        guard !values.isEmpty else { return }
+        let current = hoveredIndex ?? (delta > 0 ? -1 : values.count)
+        hoveredIndex = max(0, min(values.count - 1, current + delta))
+    }
+
+    private func toggleSelection() {
+        guard !values.isEmpty else { return }
+        if hoveredIndex == nil { hoveredIndex = 0 }
+        isSelectionPinned.toggle()
     }
 
     private var axisIndices: [Int] {
@@ -2187,6 +2814,7 @@ private struct StackedBarChart: View {
     let showsSingleSegmentBreakdown: Bool
     @State private var hoveredIndex: Int?
     @State private var tooltipSize = ChartTooltipLayout.initialSize
+    @State private var isSelectionPinned = false
 
     init(
         rows: [MainPanelView.TokenChartRow],
@@ -2212,15 +2840,22 @@ private struct StackedBarChart: View {
             let plotWidth = max(proxy.size.width - 52, 1)
             let slotWidth = plotWidth / CGFloat(max(rows.count, 1))
             let barWidth = min(20, max(slotWidth * 0.6, 0.65))
-            let barRects = rows.enumerated().map { index, row in
-                let x = plotX + CGFloat(index) * slotWidth + (slotWidth - barWidth) / 2
-                let height = max(CGFloat(row.total) / CGFloat(peak) * plotHeight, min(1, plotHeight))
-                return CGRect(x: x, y: plotTopInset + plotHeight - height, width: barWidth, height: height)
+            let plot = CGRect(x: plotX, y: plotTopInset, width: plotWidth, height: plotHeight)
+            let barGeometries = rows.enumerated().map { index, row in
+                let slotX = plot.minX + CGFloat(index) * slotWidth
+                return StackedBarGeometry.make(
+                    values: row.segments.map(\.value),
+                    peak: peak,
+                    plot: plot,
+                    barX: slotX + (slotWidth - barWidth) / 2,
+                    barWidth: barWidth,
+                    hoverX: slotX + 2,
+                    hoverWidth: slotWidth - 4
+                )
             }
 
             ZStack(alignment: .topLeading) {
-                Canvas { context, size in
-                    let plot = CGRect(x: plotX, y: plotTopInset, width: plotWidth, height: plotHeight)
+                Canvas { context, _ in
                     for line in 0...3 {
                         let y = plot.minY + plot.height * CGFloat(line) / 3
                         var path = Path()
@@ -2235,40 +2870,25 @@ private struct StackedBarChart: View {
 
                     guard !rows.isEmpty else { return }
                     for (index, row) in rows.enumerated() {
-                        let x = plot.minX + CGFloat(index) * slotWidth + (slotWidth - barWidth) / 2
-                        if hoveredIndex == index {
-                            let highlightRect = CGRect(
-                                x: plot.minX + CGFloat(index) * slotWidth + 2,
-                                y: plot.minY,
-                                width: max(slotWidth - 4, 1),
-                                height: plot.height
-                            )
-                            context.fill(
-                                Path(roundedRect: highlightRect, cornerRadius: 5),
-                                with: .color(PanelTheme.text.opacity(0.045))
-                            )
-                        }
-                        var bottom = plot.maxY
-                        for segment in row.segments {
-                            let value = segment.value
+                        let geometry = barGeometries[index]
+                        for (segmentIndex, segment) in row.segments.enumerated() {
+                            let rect = geometry.segmentRects[segmentIndex]
+                            guard rect.height > 0 else { continue }
                             let isEmphasized = hoveredIndex == nil || hoveredIndex == index
                             let color = segment.color.opacity(isEmphasized ? 1 : 0.42)
-                            let height = max(CGFloat(value) / CGFloat(peak) * plot.height, min(1, plot.height))
-                            let rect = CGRect(x: x, y: bottom - height, width: barWidth, height: height)
-                            let radius = min(2, min(barWidth / 2, height / 2))
+                            let radius = min(2, min(barWidth / 2, rect.height / 2))
                             context.fill(
                                 Path(roundedRect: rect, cornerRadius: radius),
                                 with: .color(color)
                             )
-                            bottom -= height
                             var separator = Path()
-                            separator.move(to: CGPoint(x: x, y: bottom))
-                            separator.addLine(to: CGPoint(x: x + barWidth, y: bottom))
+                            separator.move(to: CGPoint(x: rect.minX, y: rect.minY))
+                            separator.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
                             context.stroke(separator, with: .color(PanelTheme.surface.opacity(0.78)), lineWidth: 0.75)
                         }
                         if hoveredIndex == index {
                             context.stroke(
-                                Path(roundedRect: barRects[index], cornerRadius: min(2, barWidth / 2)),
+                                Path(roundedRect: geometry.barRect, cornerRadius: min(2, barWidth / 2)),
                                 with: .color(PanelTheme.text.opacity(0.34)),
                                 lineWidth: 1
                             )
@@ -2297,7 +2917,7 @@ private struct StackedBarChart: View {
                         ? compactTooltipItems(detailSegments)
                         : []
                     let tooltipCenter = ChartTooltipPlacement.adjacentToBar(
-                        barRect: barRects[hoveredIndex],
+                        barRect: barGeometries[hoveredIndex].barRect,
                         tooltipSize: tooltipSize,
                         containerSize: proxy.size
                     )
@@ -2311,15 +2931,41 @@ private struct StackedBarChart: View {
                 }
             }
             .contentShape(Rectangle())
+            .focusable()
+            .focusEffectDisabled()
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(language == .simplifiedChinese ? "Token 趋势图" : "Token trend chart")
+            .accessibilityValue(accessibilitySummary)
+            .accessibilityAdjustableAction { direction in
+                moveSelection(direction == .increment ? 1 : -1)
+            }
+            .onKeyPress(.return) {
+                toggleSelection()
+                return .handled
+            }
+            .onKeyPress(.space) {
+                toggleSelection()
+                return .handled
+            }
+            .onMoveCommand { direction in
+                switch direction {
+                case .left: moveSelection(-1)
+                case .right: moveSelection(1)
+                default: break
+                }
+            }
+            .onExitCommand { hoveredIndex = nil; isSelectionPinned = false }
             .onPreferenceChange(ChartTooltipSizePreferenceKey.self) { tooltipSize = $0 }
             .onContinuousHover(coordinateSpace: .local) { phase in
                 switch phase {
                 case .active(let location):
-                    hoveredIndex = index(at: location, plotX: plotX, plotWidth: plotWidth)
+                    if !isSelectionPinned {
+                        hoveredIndex = index(at: location, plotX: plotX, plotWidth: plotWidth)
+                    }
                 case .ended:
-                    hoveredIndex = nil
+                    if !isSelectionPinned { hoveredIndex = nil }
                 @unknown default:
-                    hoveredIndex = nil
+                    if !isSelectionPinned { hoveredIndex = nil }
                 }
             }
         }
@@ -2328,26 +2974,56 @@ private struct StackedBarChart: View {
     private func compactTooltipItems(
         _ segments: [MainPanelView.TokenChartSegment]
     ) -> [ChartTooltipItem] {
-        let sorted = segments.sorted { lhs, rhs in
-            if lhs.value != rhs.value { return lhs.value > rhs.value }
-            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        let colors = Dictionary(
+            segments.map { ($0.id, $0.color) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return ChartTooltipBreakdown.compact(
+            segments.map {
+                ChartTooltipBreakdownEntry(id: $0.id, label: $0.name, value: $0.value)
+            }
+        ).map { entry in
+            ChartTooltipItem(
+                label: entry.hiddenItemCount > 0
+                    ? otherItemsLabel(entry.hiddenItemCount)
+                    : entry.label,
+                value: QuotaFormatters.localizedTokens(entry.value, language: language),
+                color: entry.hiddenItemCount > 0
+                    ? PanelTheme.chartDim
+                    : (colors[entry.id] ?? PanelTheme.chartDim)
+            )
         }
-        let maximumVisible = 10
-        let visibleLimit = sorted.count > maximumVisible ? maximumVisible - 1 : maximumVisible
-        let visible = Array(sorted.prefix(visibleLimit))
-        let remainder = sorted.dropFirst(visibleLimit)
-        var items = visible.map { segment in
-            ChartTooltipItem(label: segment.name, value: QuotaFormatters.localizedTokens(segment.value, language: language), color: segment.color)
+    }
+
+    private func otherItemsLabel(_ count: Int) -> String {
+        language == .simplifiedChinese ? "其他 \(count) 项" : "\(count) other items"
+    }
+
+    private var accessibilitySummary: String {
+        guard let index = hoveredIndex, rows.indices.contains(index) else {
+            return language == .simplifiedChinese ? "聚焦后按左右键查看每日 Token，按 Enter 或空格固定选择" : "Focus the chart, use left or right arrows to inspect each day, then press Enter or Space to pin the selection"
         }
-        if !remainder.isEmpty {
-            let total = remainder.reduce(0) { $0 + $1.value }
-            items.append(ChartTooltipItem(
-                label: "others",
-                value: QuotaFormatters.localizedTokens(total, language: language),
-                color: PanelTheme.modelFallback
-            ))
-        }
-        return items
+        let row = rows[index]
+        let details = row.segments
+            .sorted { $0.value > $1.value }
+            .prefix(6)
+            .map { "\($0.name) \(QuotaFormatters.localizedTokens($0.value, language: language))" }
+            .joined(separator: " · ")
+        let detailText = details.isEmpty ? "" : (language == .simplifiedChinese ? "，分类：\(details)" : ", categories: \(details)")
+        let pinned = isSelectionPinned ? (language == .simplifiedChinese ? "，已固定" : ", pinned") : ""
+        return "\(row.label), \(QuotaFormatters.localizedTokens(row.total, language: language))\(detailText)\(pinned)"
+    }
+
+    private func moveSelection(_ delta: Int) {
+        guard !rows.isEmpty else { return }
+        let current = hoveredIndex ?? (delta > 0 ? -1 : rows.count)
+        hoveredIndex = max(0, min(rows.count - 1, current + delta))
+    }
+
+    private func toggleSelection() {
+        guard !rows.isEmpty else { return }
+        if hoveredIndex == nil { hoveredIndex = 0 }
+        isSelectionPinned.toggle()
     }
 
     private func index(at location: CGPoint, plotX: CGFloat, plotWidth: CGFloat) -> Int? {
@@ -2366,6 +3042,7 @@ struct TokenYearHeatmap: View {
     let language: AppLanguage
     @State private var hoveredIndex: Int?
     @State private var tooltipSize = ChartTooltipLayout.initialSize
+    @State private var isSelectionPinned = false
 
     init(
         levels: [Int],
@@ -2425,15 +3102,41 @@ struct TokenYearHeatmap: View {
                 }
             }
             .contentShape(Rectangle())
+            .focusable()
+            .focusEffectDisabled()
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(language == .simplifiedChinese ? "年度 Token 热力图" : "Yearly token heatmap")
+            .accessibilityValue(accessibilitySummary)
+            .accessibilityAdjustableAction { direction in
+                moveSelection(direction == .increment ? 1 : -1)
+            }
+            .onKeyPress(.return) {
+                toggleSelection()
+                return .handled
+            }
+            .onKeyPress(.space) {
+                toggleSelection()
+                return .handled
+            }
+            .onMoveCommand { direction in
+                switch direction {
+                case .left: moveSelection(-1)
+                case .right: moveSelection(1)
+                default: break
+                }
+            }
+            .onExitCommand { hoveredIndex = nil; isSelectionPinned = false }
             .onPreferenceChange(ChartTooltipSizePreferenceKey.self) { tooltipSize = $0 }
             .onContinuousHover(coordinateSpace: .local) { phase in
                 switch phase {
                 case .active(let location):
-                    hoveredIndex = index(at: location, metrics: metrics)
+                    if !isSelectionPinned {
+                        hoveredIndex = index(at: location, metrics: metrics)
+                    }
                 case .ended:
-                    hoveredIndex = nil
+                    if !isSelectionPinned { hoveredIndex = nil }
                 @unknown default:
-                    hoveredIndex = nil
+                    if !isSelectionPinned { hoveredIndex = nil }
                 }
             }
         }
@@ -2464,6 +3167,26 @@ struct TokenYearHeatmap: View {
               location.y.truncatingRemainder(dividingBy: rowStep) <= metrics.cellHeight else { return nil }
         let index = column * 7 + row - leadingOffset
         return values.indices.contains(index) ? index : nil
+    }
+
+    private var accessibilitySummary: String {
+        guard let index = hoveredIndex, values.indices.contains(index), labels.indices.contains(index) else {
+            return language == .simplifiedChinese ? "聚焦后按左右键查看每日 Token，按 Enter 或空格固定选择" : "Focus the heatmap, use left or right arrows to inspect each day, then press Enter or Space to pin the selection"
+        }
+        let pinned = isSelectionPinned ? (language == .simplifiedChinese ? "，已固定" : ", pinned") : ""
+        return "\(labels[index]), \(QuotaFormatters.localizedTokens(values[index], language: language))\(pinned)"
+    }
+
+    private func moveSelection(_ delta: Int) {
+        guard !values.isEmpty else { return }
+        let current = hoveredIndex ?? (delta > 0 ? -1 : values.count)
+        hoveredIndex = max(0, min(values.count - 1, current + delta))
+    }
+
+    private func toggleSelection() {
+        guard !values.isEmpty else { return }
+        if hoveredIndex == nil { hoveredIndex = 0 }
+        isSelectionPinned.toggle()
     }
 
     private func color(for level: Int) -> Color {

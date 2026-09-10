@@ -13,6 +13,7 @@ struct MenuBarSlotsView: View {
     let codexRemaining: Double?
     let claudeRemaining: Double?
     let balanceAmount: Double?
+    let balanceDays: Int?
     let balanceCurrency: String?
     var isLoading = false
     var loadingFrame = 0
@@ -22,13 +23,13 @@ struct MenuBarSlotsView: View {
             if isLoading {
                 MenuBarLoadingGlyph(phase: loadingFrame)
             } else if codexRoute == .deepseek, claudeRoute == .deepseek {
-                slot(icon: .deepSeek, value: balanceText)
+                slot(icon: .deepSeek, value: balanceText, health: balanceHealth)
             } else {
                 if codexRoute != .unknown {
-                    slot(icon: .codex, value: codexValue)
+                    slot(icon: .codex, value: codexValue, health: codexHealth)
                 }
                 if claudeRoute != .unknown || claudeRemaining != nil {
-                    slot(icon: .claude, value: claudeValue)
+                    slot(icon: .claude, value: claudeValue, health: claudeHealth)
                 }
                 if codexRoute == .unknown, claudeRoute == .unknown, claudeRemaining == nil {
                     MenuBarQuotaGlyph()
@@ -54,7 +55,21 @@ struct MenuBarSlotsView: View {
         return QuotaFormatters.money(balanceAmount, currency: balanceCurrency)
     }
 
-    private func slot(icon: BrandIconKind, value: String) -> some View {
+    private var codexHealth: QuotaHealth {
+        if codexRoute == .deepseek { return balanceHealth }
+        return QuotaHealth(remaining: codexRemaining)
+    }
+
+    private var claudeHealth: QuotaHealth {
+        if claudeRoute == .deepseek { return balanceHealth }
+        return QuotaHealth(remaining: claudeRemaining)
+    }
+
+    private var balanceHealth: QuotaHealth {
+        QuotaHealth(balanceAmount: balanceAmount, estimatedDays: balanceDays)
+    }
+
+    private func slot(icon: BrandIconKind, value: String, health: QuotaHealth) -> some View {
         HStack(spacing: 4) {
             BrandIconView(
                 kind: icon,
@@ -65,6 +80,7 @@ struct MenuBarSlotsView: View {
             Text(value)
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .fontDesign(.monospaced)
+                // 菜单栏保持统一白色；健康度通过下拉面板和 VoiceOver 传达。
                 .foregroundStyle(.white)
                 .lineLimit(1)
         }

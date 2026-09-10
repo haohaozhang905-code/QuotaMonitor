@@ -615,6 +615,36 @@ struct CCSwitchUsageClientTests {
 // MARK: - 可扩展工具来源解析
 
 struct AdditionalLocalTokenClientTests {
+    @Test func reportsSourceDiagnosticsForMissingEmptyAndReadableRoots() async throws {
+        let root = try Fixtures.makeTempDir("additional-diagnostics")
+        defer { Fixtures.remove(root) }
+        let day = Fixtures.iso(Fixtures.noon(yesterdayOffset: 0))
+        let empty = root.appendingPathComponent("empty", isDirectory: true)
+        let readable = root.appendingPathComponent("readable", isDirectory: true)
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: readable, withIntermediateDirectories: true)
+        try #"{"timestamp":"\#(day)","model":"gpt-5.6-sol","usage":{"prompt_tokens":10,"completion_tokens":2}}"#
+            .write(to: readable.appendingPathComponent("session.jsonl"), atomically: true, encoding: .utf8)
+
+        let missingSource = LocalToolTokenSource(platform: .openclaw, roots: ["missing"], overrideEnvironment: "")
+        let emptySource = LocalToolTokenSource(platform: .hermes, roots: ["empty"], overrideEnvironment: "")
+        let readableSource = LocalToolTokenSource(platform: .pi, roots: ["readable"], overrideEnvironment: "")
+        let client = AdditionalLocalTokenClient(
+            sources: [missingSource, emptySource, readableSource],
+            home: root,
+            environment: [:],
+            persistentCacheURL: nil
+        )
+
+        let result = try await client.fetchScanResult()
+        let diagnostics = Dictionary(uniqueKeysWithValues: result.diagnostics.map { ($0.id, $0) })
+        #expect(diagnostics[missingSource.dataSourceID]?.state == .notDetected)
+        #expect(diagnostics[emptySource.dataSourceID]?.state == .noData)
+        #expect(diagnostics[readableSource.dataSourceID]?.state == .ready)
+        #expect(diagnostics[readableSource.dataSourceID]?.candidateFileCount == 1)
+        #expect(diagnostics[readableSource.dataSourceID]?.validRecordCount == 1)
+    }
+
     @Test func collectsJSONLJSONAndSQLiteSourcesIntoSeparatePlatforms() async throws {
         let root = try Fixtures.makeTempDir("additional-tools")
         defer { Fixtures.remove(root) }
@@ -728,39 +758,6 @@ struct KimiDesktopTokenClientTests {
         #expect(snapshot?.buckets.first?.model == "k2d6-agent")
     }
 }
-
-struct QwenWorkTokenClientTests {
-    @Test func countsModelResponsesWithoutRepeatingTurnSummary() async throws {
-        let root = try Fixtures.makeTempDir("qwen-work")
-        defer { Fixtures.remove(root) }
-        let day = Fixtures.noon(yesterdayOffset: 0)
-        let sessions = root.appendingPathComponent(".qwenworkcn/logs/sessions/project/session", isDirectory: true)
-        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
-        let timestamp = Fixtures.iso(day)
-        let lines = [
-            #"{"ts":"\#(timestamp)","type":"model.response.completed","data":{"model":"qwork-lite","input_tokens":100,"output_tokens":20,"cache_read_input_tokens":30}}"#,
-            #"{"ts":"\#(timestamp)","type":"turn.finished","data":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":30}}"#
-        ]
-        try lines.joined(separator: "\n").write(to: sessions.appendingPathComponent("segment.jsonl"), atomically: true, encoding: .utf8)
-
-        let source = LocalToolTokenSource(
-            platform: .qwenWork,
-            roots: [".qwenworkcn/logs/sessions"],
-            overrideEnvironment: "",
-            format: .qwenWork,
-            client: .desktop
-        )
-        let client = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:])
-        let snapshot = try await client.fetchSnapshots().first
-
-        #expect(snapshot?.history.first?.total == 150)
-        #expect(snapshot?.history.first?.cachedInput == 30)
-        #expect(snapshot?.buckets.first?.model == "qwork-lite")
-    }
-
-}
-
-
 
 struct QoderSessionTokenClientTests {
     @Test func readsCanonicalEventsAndDeduplicatesDesktopMessageCopies() async throws {

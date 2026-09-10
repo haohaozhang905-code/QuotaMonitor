@@ -125,6 +125,7 @@ struct DropdownQuotaLine: View {
         let label: String
         let value: String
         let detail: String
+        let health: QuotaHealth
 
         var id: String { label }
     }
@@ -159,21 +160,31 @@ struct DropdownQuotaLine: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.72)
                         Spacer(minLength: 4)
-                        Text(metric.value)
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .fontDesign(.monospaced)
-                            .foregroundStyle(PanelTheme.text)
+                        HStack(spacing: 4) {
+                            if metric.health == .warning || metric.health == .critical {
+                                Image(systemName: metric.health == .critical ? "exclamationmark.circle.fill" : "exclamationmark.circle")
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .accessibilityHidden(true)
+                            }
+                            Text(metric.value)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .fontDesign(.monospaced)
+                        }
+                        .foregroundStyle(PanelTheme.quotaValueColor(metric.health))
                     }
                     if !metric.detail.isEmpty {
                         Text(metric.detail)
                             .font(.system(size: 9, design: .monospaced))
                             .fontDesign(.monospaced)
-                            .foregroundStyle(PanelTheme.text2)
+                            // 日期与上方百分比保持同一健康度颜色，不再重复显示状态文案。
+                            .foregroundStyle(PanelTheme.quotaValueColor(metric.health))
                             .lineLimit(1)
                             .minimumScaleFactor(0.72)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(metric.label), \(metric.value), \(metric.detail)")
             }
         }
         .padding(.horizontal, DropdownLayout.horizontalPadding)
@@ -332,10 +343,6 @@ struct DropdownPopoverView: View {
     }
 
     private var updatedText: String {
-        // 刷新进度合并进「更新时间」位置，避免状态行插入导致容器高度跳动。
-        if let progress = store.localTokenRefreshProgress {
-            return language.text("menu.statusProgress", progress.completedSources, progress.totalSources)
-        }
         guard let date = presentation.updatedAt else { return language.text("menu.notUpdated") }
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
@@ -392,13 +399,24 @@ struct DropdownPopoverView: View {
                 ]
             )
         case let .sharedBalance(amount, currency, estimatedDays):
+            let health = QuotaHealth(balanceAmount: amount, estimatedDays: estimatedDays)
             DropdownQuotaLine(
                 icon: icon,
                 title: item.platform.displayName,
                 route: language.text("panel.deepSeekRouteTag"),
                 metrics: [
-                    .init(label: language.text("menu.balance"), value: QuotaFormatters.money(amount, currency: currency), detail: ""),
-                    .init(label: language.text("menu.daysLeft"), value: estimatedDays.map { language.text("panel.daysShortLabel", "\($0)") } ?? "—", detail: "")
+                    .init(
+                        label: language.text("menu.balance"),
+                        value: QuotaFormatters.money(amount, currency: currency),
+                        detail: quotaStatusText(health),
+                        health: health
+                    ),
+                    .init(
+                        label: language.text("menu.daysLeft"),
+                        value: estimatedDays.map { language.text("panel.daysShortLabel", "\($0)") } ?? "—",
+                        detail: language.text("overview.estimateNote"),
+                        health: health
+                    )
                 ]
             )
         case .connectedWithoutQuota:
@@ -419,14 +437,28 @@ struct DropdownPopoverView: View {
     }
 
     private func quotaMetric(label: String, metric: DropdownQuotaMetricPresentation?) -> DropdownQuotaLine.Metric {
+        let health = QuotaHealth(remaining: metric?.remainingPercent)
         let detail = metric?.resetsAt.map {
-            QuotaFormatters.reset(language: language.language).string(from: $0)
+            language.text(
+                "overview.resetAfter",
+                QuotaFormatters.reset($0, language: language.language)
+            )
         } ?? ""
         return .init(
             label: label,
             value: metric?.remainingPercent.map(QuotaFormatters.percent) ?? "—",
-            detail: detail
+            detail: detail,
+            health: health
         )
+    }
+
+    private func quotaStatusText(_ health: QuotaHealth) -> String {
+        switch health {
+        case .healthy: language.text("quota.status.healthy")
+        case .warning: language.text("quota.status.warning")
+        case .critical: language.text("quota.status.critical")
+        case .unknown: language.text("quota.status.pendingEstimate")
+        }
     }
 
     private func icon(for platform: TokenPlatform) -> BrandIconKind {

@@ -86,6 +86,10 @@ enum PanelTheme {
     static let hairlineSoft = dynamic(NSColor(srgbRed: 23/255, green: 25/255, blue: 28/255, alpha: 0.06), NSColor(white: 1, alpha: 0.055))
     /// 进度条轨道 / 内嵌槽
     static let track = dynamic(NSColor(srgbRed: 23/255, green: 25/255, blue: 28/255, alpha: 0.08), NSColor(white: 1, alpha: 0.07))
+    /// 输入控件使用中性静面 + 暖色焦点，避免系统默认的蓝色描边破坏主题。
+    static let inputSurface = dynamic("#FFFFFF", "#202126")
+    static let inputBorder = dynamic(NSColor(srgbRed: 23/255, green: 25/255, blue: 28/255, alpha: 0.14), NSColor(white: 1, alpha: 0.13))
+    static let inputFocus = dynamic("#9A694F", "#C59A7D")
 
     // MARK: - 图表分类色（c1–c5）与热力图（h0–h4）
 
@@ -153,65 +157,39 @@ enum PanelTheme {
     static let workbuddySoft = dynamic("#E4EFEA", "#293A34")
     static let modelFallback = dynamic("#8B877F", "#A5A19A")
 
-    // 状态色（DESIGN §7：三态压缩）
-    /// 正常 = 幽灵灰（slate）
-    static let ok = slate
-    /// 正常状态底色（过渡：雾灰静面，阶段 3 收敛为无底色文字）
-    static let okSoft = mist
-    /// 偏低 / 注意 = 桃底棕字（warn 为文字色，深色档用 chartAccent 保证可读）
-    static let warn = dynamic("#5D2A1A", "#B38668")
-    /// 偏低状态底色 = 桃面
-    static let warnSoft = peach
-    /// 危急文字 = 亮陶红（墨底 / 白底上均保证可读）
-    static let danger = dynamic("#C05B3E", "#DF9A7A")
-    /// 危急状态底色 = 恒深墨底（深浅模式均为深底，实现"墨底 + 亮字"）
-    static let dangerSoft = dynamic("#17191C", "#1B1C20")
+    // 状态色（正常 / 关注 / 危急），浅色和深色各自配对底色。
+    /// 正常使用绿色，保证状态标签一眼可识别。
+    static let ok = dynamic("#238636", "#65D27F")
+    static let success = ok
+    static let okSoft = dynamic("#E8F5EC", "#213126")
+    /// 需要关注：暖桃色文字配浅桃底。
+    static let warn = dynamic("#8A4B08", "#F0B35D")
+    static let warnSoft = dynamic("#FFF1E4", "#3B2A20")
+    /// 危急：红色文字配浅红底，避免浅色模式出现黑底红字。
+    static let danger = dynamic("#B42318", "#FF9B85")
+    static let dangerSoft = dynamic("#FDE8E5", "#3A2420")
+
+    static func quotaValueColor(_ health: QuotaHealth) -> Color {
+        switch health {
+        case .healthy, .unknown: text
+        case .warning: warn
+        case .critical: danger
+        }
+    }
 
     // 图表网格线（迁移自 grid）
     static let grid = hairline
     static let shadowSmall = Color.black.opacity(0.12)
     static let shadow = Color.black.opacity(0.10)
 
-    /// 平台与模型共用的分类色板（5 色）。
-    /// 浅色模式带可辨识的低饱和色相（墨 / 陶 / 灰蓝 / 灰紫蓝 / 暖卡其），避免整体沦为黑白灰；
-    /// 深色模式档位 1 最亮（Codex 为羊皮纸白，与既有验收一致）。
-    /// 状态色（ok/warn/danger）不纳入分类色板；平台徽标请直接用 codex/claude 等品牌色。
+    /// 平台与模型共用 Steep c1–c5。超过五类时允许稳定复用，
+    /// 但不再为柱图引入额外色相或明度档。
     static let categoryPalette: [Color] = [
-        chartPrimary,                                        // 0 墨
-        chartAccent,                                         // 1 陶
-        dynamic("#6C7A92", "#9CA8BA"),                       // 2 雾灰·灰蓝
-        dynamic("#8E97A3", "#6E7885"),                       // 3 烟灰·灰紫蓝
-        dynamic("#BFA48E", "#B08C6E")                        // 4 沙·暖卡其
-    ]
-
-    /// 25 色扩展：5 色系 × 5 明度档（索引 0–4 与 categoryPalette 一致）。
-    /// 柱子 / hover 标签 / 排行卡共用同一索引，保证同一平台或模型的颜色处处一致。
-    /// 深色模式档位 1 最亮 → 档位 5 最暗；浅色模式档位 1 最深 → 档位 5 最浅。
-    static let categoryPaletteExtended: [Color] = categoryPalette + [
-        // 档 2
-        dynamic("#2E3138", "#B7B4AD"),                       // 5 墨
-        dynamic("#82482F", "#9A7159"),                       // 6 陶
-        dynamic("#8797AC", "#7E8A99"),                       // 7 雾灰
-        dynamic("#A4ACB7", "#5C6570"),                       // 8 烟灰
-        dynamic("#D0BBAA", "#8F7763"),                       // 9 沙
-        // 档 3
-        dynamic("#4C5058", "#8F8D87"),                       // 10 墨
-        dynamic("#A86A4E", "#7D5A47"),                       // 11 陶
-        dynamic("#A3B1C4", "#636E7C"),                       // 12 雾灰
-        dynamic("#BAC1CA", "#49515B"),                       // 13 烟灰
-        dynamic("#E0D1C4", "#6F5B4B"),                       // 14 沙
-        // 档 4
-        dynamic("#7A7E86", "#66655F"),                       // 15 墨
-        dynamic("#CC9177", "#614534"),                       // 16 陶
-        dynamic("#C0CBD9", "#49525E"),                       // 17 雾灰
-        dynamic("#D0D5DC", "#373E46"),                       // 18 烟灰
-        dynamic("#EDE4DA", "#524235"),                       // 19 沙
-        // 档 5
-        dynamic("#A8ABB1", "#3F3E3A"),                       // 20 墨
-        dynamic("#E6C1AF", "#463124"),                       // 21 陶
-        dynamic("#DCE3EC", "#323A44"),                       // 22 雾灰
-        dynamic("#E5E8EC", "#262C33"),                       // 23 烟灰
-        dynamic("#F7F1EA", "#382D24")                        // 24 沙
+        chartPrimary,
+        chartAccent,
+        chartNeutral,
+        chartDim,
+        chartSand
     ]
 
     /// 浮层提示（tooltip）：比浮卡提亮一档 + 提亮描边，深色模式下与画布保持区分

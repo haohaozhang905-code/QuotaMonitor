@@ -3,10 +3,93 @@ import Testing
 @testable import QuotaMonitor
 
 struct QuotaModelsTests {
+    @Test func dataSourceIDsKeepClientAndFormatIndependent() {
+        let cli = DataSourceID(platform: "kimi", client: "cli", format: "generic", definition: "sessions")
+        let desktop = DataSourceID(platform: "kimi", client: "desktop", format: "kimiWire", definition: "sessions")
+
+        #expect(cli != desktop)
+        #expect(cli.id.contains("kimi:cli:generic"))
+        #expect(desktop.id.contains("kimi:desktop:kimiWire"))
+    }
+
+    @Test func dataSourceCatalogHasUniqueStableIDs() {
+        let ids = DataSourceCatalog.all.map(\.id)
+        let unsupportedPlatforms: Set<String> = ["traeWork", "qwenWork", "doubaoWork"]
+        #expect(ids.count > 10)
+        #expect(Set(ids).count == ids.count)
+        #expect(DataSourceCatalog.all.contains { $0.id == DataSourceCatalog.codexQuota })
+        #expect(DataSourceCatalog.all.contains { $0.id == DataSourceCatalog.claudeDesktop })
+        #expect(TokenPlatform.allCases.count == 23)
+        #expect(Set(TokenPlatform.allCases.map(\.rawValue)).isDisjoint(with: unsupportedPlatforms))
+        #expect(Set(ids.map(\.platform)).isDisjoint(with: unsupportedPlatforms))
+    }
+
+    @Test func healthSnapshotMarksActionableStatesWithoutTreatingUndetectedAsAnAlert() {
+        let descriptor = DataSourceCatalog.descriptor(
+            DataSourceCatalog.codexQuota,
+            nameKey: nil,
+            fallbackName: "Codex",
+            kind: .quota,
+            path: "~/Library/Application Support/Codex",
+            staleAfter: 180
+        )
+        let undetected = DataSourceHealthSnapshot(
+            id: descriptor.id,
+            nameKey: descriptor.nameKey,
+            fallbackName: descriptor.fallbackName,
+            kind: descriptor.kind,
+            state: .notDetected,
+            redactedPath: descriptor.redactedPath,
+            lastAttemptAt: nil,
+            lastSuccessAt: nil,
+            candidateFileCount: 0,
+            validRecordCount: 0,
+            usesLastGoodData: false,
+            isInstalled: false,
+            recoveryActions: descriptor.recoveryActions
+        )
+        let stale = DataSourceHealthSnapshot(
+            id: descriptor.id,
+            nameKey: descriptor.nameKey,
+            fallbackName: descriptor.fallbackName,
+            kind: descriptor.kind,
+            state: .stale,
+            redactedPath: descriptor.redactedPath,
+            lastAttemptAt: .now,
+            lastSuccessAt: .now.addingTimeInterval(-600),
+            candidateFileCount: 2,
+            validRecordCount: 2,
+            usesLastGoodData: true,
+            isInstalled: true,
+            recoveryActions: descriptor.recoveryActions
+        )
+
+        #expect(undetected.isActionable == false)
+        #expect(stale.isActionable == true)
+        #expect(stale.usesLastGoodData)
+    }
+
     @Test func tokenFormatterUsesLanguageSpecificUnits() {
         #expect(QuotaFormatters.localizedTokens(150_000_000, language: .english) == "150M")
         #expect(QuotaFormatters.localizedTokens(27_280_000, language: .english) == "27.3M")
         #expect(QuotaFormatters.localizedTokens(150_000_000, language: .simplifiedChinese) == "1.5亿")
+    }
+
+    @Test func resetFormatterUsesRelativeLabelsForTheNextThreeCalendarDays() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        let parser = ISO8601DateFormatter()
+        let now = try #require(parser.date(from: "2026-09-10T23:30:00Z"))
+        let today = try #require(parser.date(from: "2026-09-10T23:45:00Z"))
+        let tomorrow = try #require(parser.date(from: "2026-09-11T00:15:00Z"))
+        let dayAfterTomorrow = try #require(parser.date(from: "2026-09-12T18:51:00Z"))
+        let farther = try #require(parser.date(from: "2026-09-13T18:51:00Z"))
+
+        #expect(QuotaFormatters.reset(today, language: .simplifiedChinese, now: now, calendar: calendar) == "今天 23:45")
+        #expect(QuotaFormatters.reset(tomorrow, language: .simplifiedChinese, now: now, calendar: calendar) == "明天 00:15")
+        #expect(QuotaFormatters.reset(dayAfterTomorrow, language: .simplifiedChinese, now: now, calendar: calendar) == "后天 18:51")
+        #expect(QuotaFormatters.reset(farther, language: .simplifiedChinese, now: now, calendar: calendar) == "9月13日 18:51")
+        #expect(QuotaFormatters.reset(dayAfterTomorrow, language: .english, now: now, calendar: calendar) == "In two days 18:51")
     }
 
     @Test func canonicalModelNamesMergeAutoAndUnknownBuckets() {
@@ -268,8 +351,17 @@ struct QuotaModelsTests {
         #expect(QuotaHealth(remaining: 0.8) == .healthy)
         #expect(QuotaHealth(remaining: 0.51) == .healthy)
         #expect(QuotaHealth(remaining: 0.50) == .warning)
-        #expect(QuotaHealth(remaining: 0.11) == .warning)
-        #expect(QuotaHealth(remaining: 0.10) == .critical)
+        #expect(QuotaHealth(remaining: 0.31) == .warning)
+        #expect(QuotaHealth(remaining: 0.30) == .critical)
+        #expect(QuotaHealth(remaining: 0.11) == .critical)
+    }
+
+    @Test func balanceHealthUsesEstimatedDaysInsteadOfAbsoluteAmount() {
+        #expect(QuotaHealth(balanceAmount: 20, estimatedDays: 10) == .healthy)
+        #expect(QuotaHealth(balanceAmount: 20, estimatedDays: 7) == .warning)
+        #expect(QuotaHealth(balanceAmount: 20, estimatedDays: 2) == .critical)
+        #expect(QuotaHealth(balanceAmount: 0, estimatedDays: nil) == .critical)
+        #expect(QuotaHealth(balanceAmount: 20, estimatedDays: nil) == .unknown)
     }
 
     @Test func balanceProviderExposesAmountAndDays() {

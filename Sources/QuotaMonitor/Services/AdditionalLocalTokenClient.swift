@@ -8,8 +8,6 @@ struct LocalToolTokenSource: Hashable, Sendable {
         case generic
         /// Kimi Desktop 的 wire.jsonl 同时记录步骤结束与 usage.record；仅后者是一条可计费请求。
         case kimiWire
-        /// 千问办公同时写入 model.response.completed 与 turn.finished；前者是一条模型请求，后者是回合汇总。
-        case qwenWork
     }
 
     let platform: TokenPlatform
@@ -62,13 +60,6 @@ struct LocalToolTokenSource: Hashable, Sendable {
             client: .desktop
         ),
         .init(platform: .qwen, roots: [".qwen/projects"], overrideEnvironment: "QUOTAMONITOR_QWEN_HOME"),
-        .init(
-            platform: .qwenWork,
-            roots: [".qwenworkcn/logs/sessions"],
-            overrideEnvironment: "QUOTAMONITOR_QWEN_WORK_HOME",
-            format: .qwenWork,
-            client: .desktop
-        ),
         .init(platform: .grok, roots: [".grok/sessions", ".grok/logs"], overrideEnvironment: "GROK_HOME"),
         .init(platform: .copilot, roots: [".copilot", "Library/Application Support/Code/User/globalStorage/github.copilot-chat"], overrideEnvironment: "QUOTAMONITOR_COPILOT_HOME"),
         .init(platform: .pi, roots: [".pi/agent/sessions", ".omp/agent/sessions"], overrideEnvironment: "QUOTAMONITOR_PI_HOME"),
@@ -122,24 +113,40 @@ actor AdditionalLocalTokenClient {
     }
 
     func fetchSnapshots() throws -> [TokenSourceSnapshot] {
+        try fetchScanResult().snapshots
+    }
+
+    func fetchScanResult() throws -> AdditionalLocalTokenScanResult {
         loadPersistentCacheIfNeeded()
         var freshCache: [String: FileCache] = [:]
         var bucketsByPlatform: [TokenPlatform: [TokenUsageBucket]] = [:]
         var visited: Set<String> = []
+        var diagnostics: [DataSourceScanDiagnostic] = []
 
         for source in sources {
             try Task.checkCancellation()
+            let sourceID = source.dataSourceID
+            var foundRoot = false
+            var permissionFailure = false
+            var candidateFileCount = 0
+            var validRecordCount = 0
+            var usedLastGoodData = false
             for root in source.resolvedRoots(home: home, environment: environment) where FileManager.default.fileExists(atPath: root.path) {
+                foundRoot = true
                 guard let enumerator = FileManager.default.enumerator(
                     at: root,
                     includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
                     options: [.skipsHiddenFiles]
-                ) else { continue }
+                ) else {
+                    permissionFailure = true
+                    continue
+                }
                 for case let url as URL in enumerator {
                     try Task.checkCancellation()
                     let ext = url.pathExtension.lowercased()
                     let cacheKey = Self.cacheKey(url: url, source: source)
                     guard ["json", "jsonl", "log", "db", "sqlite", "sqlite3"].contains(ext), visited.insert(cacheKey).inserted else { continue }
+                    candidateFileCount += 1
                     guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
                           let mtime = values.contentModificationDate,
                           let size = values.fileSize else { continue }
@@ -163,6 +170,8 @@ actor AdditionalLocalTokenClient {
                             if let cached = cache[cacheKey] {
                                 freshCache[cacheKey] = cached
                                 bucketsByPlatform[source.platform, default: []].append(contentsOf: cached.buckets)
+                                validRecordCount += cached.buckets.count
+                                usedLastGoodData = true
                             }
                             continue
                         }
@@ -170,6 +179,7 @@ actor AdditionalLocalTokenClient {
                             ? TokenUsageBucket.combining((cached?.buckets ?? []) + parsed)
                             : parsed
                     }
+                    validRecordCount += buckets.count
                     let entry = FileCache(
                         mtime: mtime,
                         fileSize: size,
@@ -180,14 +190,32 @@ actor AdditionalLocalTokenClient {
                     bucketsByPlatform[source.platform, default: []].append(contentsOf: buckets)
                 }
             }
+            let state: DataSourceHealthState
+            if !foundRoot {
+                state = .notDetected
+            } else if permissionFailure {
+                state = .needsPermission
+            } else if validRecordCount > 0 {
+                state = usedLastGoodData ? .stale : .ready
+            } else {
+                state = .noData
+            }
+            diagnostics.append(DataSourceScanDiagnostic(
+                id: sourceID,
+                state: state,
+                candidateFileCount: candidateFileCount,
+                validRecordCount: validRecordCount,
+                usesLastGoodData: usedLastGoodData
+            ))
         }
         let cacheChanged = cache != freshCache
         cache = freshCache
         if cacheChanged { savePersistentCache() }
-        return TokenPlatform.allCases.compactMap { platform in
+        let snapshots: [TokenSourceSnapshot] = TokenPlatform.allCases.compactMap { platform in
             guard let buckets = bucketsByPlatform[platform], !buckets.isEmpty else { return nil }
             return TokenSourceSnapshot(buckets: buckets)
         }
+        return AdditionalLocalTokenScanResult(snapshots: snapshots, diagnostics: diagnostics)
     }
 
     private func loadPersistentCacheIfNeeded() {
@@ -215,9 +243,6 @@ actor AdditionalLocalTokenClient {
     ) -> [TokenUsageBucket]? {
         if source.format == .kimiWire {
             return parseKimiWire(url: url, source: source, fallbackDate: fallbackDate, startingAt: startingAt)
-        }
-        if source.format == .qwenWork {
-            return parseQwenWork(url: url, source: source, fallbackDate: fallbackDate, startingAt: startingAt)
         }
         switch url.pathExtension.lowercased() {
         case "db", "sqlite", "sqlite3": return parseSQLite(url: url, source: source, fallbackDate: fallbackDate)
@@ -323,40 +348,6 @@ actor AdditionalLocalTokenClient {
                 model: model,
                 provider: model.lowercased().contains("deepseek") ? .deepseek : .official,
                 totals: totals
-            ))
-        }
-        guard didRead else { return nil }
-        return TokenUsageBucket.combining(buckets)
-    }
-
-    /// 千问办公的 session segment 同时保存每个模型请求和一个回合汇总。
-    /// 只读取 model.response.completed，避免把 turn.finished 再加一遍。
-    private static func parseQwenWork(
-        url: URL,
-        source: LocalToolTokenSource,
-        fallbackDate: Date,
-        startingAt: Int
-    ) -> [TokenUsageBucket]? {
-        guard url.pathExtension.lowercased() == "jsonl" else { return [] }
-        var buckets: [TokenUsageBucket] = []
-        let didRead = JSONLReader.forEachLine(at: url, startingAt: UInt64(startingAt)) { data in
-            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  object["type"] as? String == "model.response.completed",
-                  let usage = object["data"] as? [String: Any],
-                  let totals = totals(in: usage) else { return }
-            // qwork 的 input_tokens 不含 cache_read/cache_creation，统一口径时把缓存并入 input。
-            var normalizedTotals = totals
-            normalizedTotals.input += totals.cachedInput + totals.cacheWriteInput
-            let model = TokenModelName.canonical(string(in: usage, keys: ["model"]) ?? string(in: object, keys: ["model"]))
-            let date = date(in: object) ?? fallbackDate
-            let hour = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day, .hour], from: date)) ?? date
-            buckets.append(TokenUsageBucket(
-                bucketStart: hour,
-                platform: source.platform,
-                client: source.client,
-                model: model,
-                provider: model.lowercased().contains("deepseek") ? .deepseek : .official,
-                totals: normalizedTotals
             ))
         }
         guard didRead else { return nil }

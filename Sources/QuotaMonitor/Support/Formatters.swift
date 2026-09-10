@@ -1,11 +1,39 @@
 import Foundation
 
 enum QuotaFormatters {
-    static func reset(language: AppLanguage) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = language.locale
-        formatter.dateFormat = language == .simplifiedChinese ? "M月d日 HH:mm" : "MMM d, HH:mm"
-        return formatter
+    static func reset(
+        _ date: Date,
+        language: AppLanguage,
+        now: Date = .now,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> String {
+        let timeFormatter = DateFormatter()
+        timeFormatter.locale = language.locale
+        timeFormatter.calendar = calendar
+        timeFormatter.timeZone = calendar.timeZone
+        timeFormatter.dateFormat = "HH:mm"
+        let time = timeFormatter.string(from: date)
+
+        let dayDistance = calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: now),
+            to: calendar.startOfDay(for: date)
+        ).day
+        switch (language, dayDistance) {
+        case (.simplifiedChinese, 0): return "今天 \(time)"
+        case (.simplifiedChinese, 1): return "明天 \(time)"
+        case (.simplifiedChinese, 2): return "后天 \(time)"
+        case (.english, 0): return "Today \(time)"
+        case (.english, 1): return "Tomorrow \(time)"
+        case (.english, 2): return "In two days \(time)"
+        default:
+            let formatter = DateFormatter()
+            formatter.locale = language.locale
+            formatter.calendar = calendar
+            formatter.timeZone = calendar.timeZone
+            formatter.dateFormat = language == .simplifiedChinese ? "M月d日 HH:mm" : "MMM d, HH:mm"
+            return formatter.string(from: date)
+        }
     }
 
     static func clock(language: AppLanguage) -> DateFormatter {

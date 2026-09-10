@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let claudeRoute: ClaudeRoute
         let codexRemaining: Double?
         let balanceAmount: Double?
+        let balanceDays: Int?
         let balanceCurrency: String?
         let isLoading: Bool
     }
@@ -122,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.action = #selector(statusItemClicked)
             button.sendAction(on: [.leftMouseDown, .rightMouseDown])
             button.setAccessibilityLabel(QuotaMonitorIdentity.displayName)
+            button.setAccessibilityValue(menuBarAccessibilityValue(for: menuBarRenderState))
         }
         statusItem = item
         updateMenuBarContent()
@@ -129,11 +131,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var menuBarRenderState: MenuBarRenderState {
         let codex = store.providers.first { $0.providerId.lowercased() == "codex" }
+        // 菜单栏是长期状态摘要，优先显示周额度；5 小时额度和周额度
+        // 的差异在下拉框与主面板中分别展开，避免状态栏被短周期波动带偏。
+        let codexRemaining = codex?.weekly?.remainingPercent ?? codex?.session?.remainingPercent
         return MenuBarRenderState(
             codexRoute: store.codexRoute,
             claudeRoute: store.claudeUsesDeepSeek ? .deepseek : store.claudeRouteSummary,
-            codexRemaining: codex?.weekly?.remainingPercent,
+            codexRemaining: codexRemaining,
             balanceAmount: store.deepSeekBalance,
+            balanceDays: store.deepSeekDays,
             balanceCurrency: store.deepSeekCurrency,
             isLoading: !store.hasCompletedInitialRefresh
         )
@@ -146,6 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             codexRemaining: state.codexRemaining,
             claudeRemaining: nil,
             balanceAmount: state.balanceAmount,
+            balanceDays: state.balanceDays,
             balanceCurrency: state.balanceCurrency,
             isLoading: state.isLoading,
             loadingFrame: loadingFrame
@@ -155,6 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 刷新菜单栏内容并按内容重新调整状态项宽度。
     private func updateMenuBarContent() {
         let state = menuBarRenderState
+        statusItem?.button?.setAccessibilityValue(menuBarAccessibilityValue(for: state))
         if state.isLoading {
             startMenuBarLoadingAnimationIfNeeded()
             renderMenuBarContent(for: state, loadingFrame: 0)
@@ -194,6 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func renderMenuBarContent(for state: MenuBarRenderState, loadingFrame: Int = 0) {
         guard let button = statusItem?.button else { return }
+        button.setAccessibilityValue(menuBarAccessibilityValue(for: state))
         let renderer = ImageRenderer(
             content: menuBarContent(for: state, loadingFrame: loadingFrame)
                 .padding(.horizontal, 1)
@@ -220,11 +229,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = store.providers.count
             _ = store.hasCompletedInitialRefresh
             _ = store.localTokenRefreshProgress
+            _ = store.lastUpdated
+            _ = store.lastTokenUpdatedAt
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.updateMenuBarContent()
                 self?.observeStore()
             }
+        }
+    }
+
+    private func menuBarAccessibilityValue(for state: MenuBarRenderState) -> String {
+        if state.isLoading {
+            return language.text("menu.statusLoading")
+        }
+
+        var parts: [String] = []
+        if state.codexRoute != .unknown {
+            let value: String
+            if state.codexRoute == .deepseek {
+                value = language.text("menu.deepSeekRoute")
+            } else if let remaining = state.codexRemaining {
+                value = QuotaFormatters.percent(remaining)
+            } else {
+                value = language.text("menu.quotaUnavailable")
+            }
+            let health = state.codexRoute == .deepseek
+                ? QuotaHealth(balanceAmount: state.balanceAmount, estimatedDays: state.balanceDays)
+                : QuotaHealth(remaining: state.codexRemaining)
+            parts.append("Codex \(value) · \(menuBarHealthText(health))")
+        }
+        if state.claudeRoute != .unknown {
+            let route = state.claudeRoute == .deepseek
+                ? language.text("menu.deepSeekRoute")
+                : (language.language == .simplifiedChinese ? "官方额度" : "official quota")
+            let health = state.claudeRoute == .deepseek
+                ? QuotaHealth(balanceAmount: state.balanceAmount, estimatedDays: state.balanceDays)
+                : QuotaHealth(remaining: nil)
+            parts.append("Claude \(route) · \(menuBarHealthText(health))")
+        }
+        if let balance = state.balanceAmount {
+            parts.append("\(language.text("menu.balance")) \(QuotaFormatters.money(balance, currency: state.balanceCurrency))")
+        }
+        if let progress = store.localTokenRefreshProgress {
+            parts.append(language.text("menu.statusProgress", progress.completedSources, progress.totalSources))
+        } else if let date = store.latestUpdatedAt {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm"
+            parts.append(language.text("menu.updatedAt", formatter.string(from: date)))
+        } else {
+            parts.append(language.text("menu.notUpdated"))
+        }
+        return parts.isEmpty ? language.text("menu.statusUnavailable") : parts.joined(separator: language.language == .simplifiedChinese ? "，" : ", ")
+    }
+
+    private func menuBarHealthText(_ health: QuotaHealth) -> String {
+        switch health {
+        case .healthy: language.text("quota.status.healthy")
+        case .warning: language.text("quota.status.warning")
+        case .critical: language.text("quota.status.critical")
+        case .unknown: language.text("quota.status.pendingEstimate")
         }
     }
 

@@ -13,6 +13,7 @@ final class BrandIconRenderTests: XCTestCase {
             codexRemaining: nil,
             claudeRemaining: nil,
             balanceAmount: 20.9,
+            balanceDays: 8,
             balanceCurrency: "CNY"
         )
         let renderer = ImageRenderer(content: view)

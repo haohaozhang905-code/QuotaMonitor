@@ -120,9 +120,23 @@ enum QuotaHealth: String, Sendable {
 
     init(remaining: Double?) {
         guard let remaining else { self = .unknown; return }
-        if remaining <= 0.10 { self = .critical }
+        if remaining <= 0.30 { self = .critical }
         else if remaining <= 0.50 { self = .warning }
         else { self = .healthy }
+    }
+
+    /// 金额没有统一的安全线；优先按当前消耗速度折算的可用天数判断。
+    /// 仅当余额耗尽时直接危急，尚无消耗历史时保持未知，避免跨币种误判。
+    init(balanceAmount: Double?, estimatedDays: Int?) {
+        if let balanceAmount, balanceAmount <= 0 {
+            self = .critical
+        } else if let estimatedDays {
+            if estimatedDays <= 2 { self = .critical }
+            else if estimatedDays <= 7 { self = .warning }
+            else { self = .healthy }
+        } else {
+            self = .unknown
+        }
     }
 }
 

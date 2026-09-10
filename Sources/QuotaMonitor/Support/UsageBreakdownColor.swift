@@ -9,14 +9,14 @@ enum UsageBreakdownColor {
         let hash = value.utf8.reduce(UInt32(2166136261)) { partial, byte in
             (partial ^ UInt32(byte)) &* 16777619
         }
-        return Int(hash % UInt32(PanelTheme.categoryPaletteExtended.count))
+        return Int(hash % UInt32(PanelTheme.categoryPalette.count))
     }
 
     /// 平台 / 模型 → 分类色板索引。
     /// 知名平台固定索引（与 Token 看板柱状图 chartCategory 的映射一致）；
     /// 其余平台与模型按稳定哈希索引。other 类返回 -1（调用方使用 fallback 色）。
     static func categoryIndex(for key: UsageBreakdownKey) -> Int {
-        let paletteCount = PanelTheme.categoryPaletteExtended.count
+        let paletteCount = PanelTheme.categoryPalette.count
         switch key {
         case let .platformClient(platform, client):
             switch (platform, client) {
@@ -34,6 +34,6 @@ enum UsageBreakdownColor {
     static func color(for key: UsageBreakdownKey) -> Color {
         let index = categoryIndex(for: key)
         guard index >= 0 else { return PanelTheme.modelFallback }
-        return PanelTheme.categoryPaletteExtended[index]
+        return PanelTheme.categoryPalette[index]
     }
 }
