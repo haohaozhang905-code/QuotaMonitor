@@ -27,9 +27,8 @@ Codex 的套餐名、额度重置时间、Reset Credit 到期时间是不同字�
 | Qoder CLI | `~/.qoder/logs/sessions` | 专用事件解析，使用请求标识处理重复记录 |
 | Qoder Desktop / Work | `~/Library/Application Support/Qoder/SharedClientCache/cli/projects` | 专用转录解析，使用消息标识处理重复记录；不查询 Qoder 账户积分 |
 | Kimi Desktop | `~/Library/Application Support/kimi-desktop/daimon-share/daimon/runtime/kimi-code/home/sessions` | 专用 `wire.jsonl` 解析，采集请求级 `usage.record`；不把步骤汇总重复相加 |
-| 千问办公 | `~/.qwenworkcn/logs/sessions` | 专用事件解析，读取模型请求完成记录；不重复计入回合汇总 |
 
-Kimi Desktop 可通过 `QUOTAMONITOR_KIMI_DESKTOP_HOME` 增加目录，千问办公使用 `QUOTAMONITOR_QWEN_WORK_HOME`。Codex 认证与 Token 扫描都读取启动环境中的 `CODEX_HOME`：设置后，Token 解析器扫描该目录下的 `sessions` 和 `archived_sessions`。当前文件事件监听仍包含默认 `~/.codex` 路径，自定义根目录可依赖周期或手动刷新，不保证同样的事件触发时效。
+Kimi Desktop 可通过 `QUOTAMONITOR_KIMI_DESKTOP_HOME` 增加目录。Codex 认证与 Token 扫描都读取启动环境中的 `CODEX_HOME`：设置后，Token 解析器扫描该目录下的 `sessions` 和 `archived_sessions`。当前文件事件监听仍包含默认 `~/.codex` 路径，自定义根目录可依赖周期或手动刷新，不保证同样的事件触发时效。
 
 ## 通用适配与有条件缓存
 
@@ -59,7 +58,7 @@ Kimi Desktop 可通过 `QUOTAMONITOR_KIMI_DESKTOP_HOME` 增加目录，千问办
 
 Cursor 的普通聊天转录不作为用量来源；其结构化工作区数据也必须有可识别字段。Antigravity 依赖已有的 tokscale 同步缓存。QuotaMonitor 不负责登录或同步这些工具的云端数据，也不会自动安装 tokscale。
 
-本表与上一表合计对应当前 `TokenPlatform` 的 24 个平台标识；Claude Code / Desktop 和 Kimi CLI / Desktop 按客户端区分，不额外算成不同平台。“24”是代码适配目录数量，不能解释为 24 个平台已完整实机验证，更不代表 24 个额度接口。
+本表与上一表对应当前代码中的 23 个 Token 平台标识；Claude Code / Desktop 和 Kimi CLI / Desktop 按客户端区分，不额外算成不同平台。这个数字只表示代码入口，不能解释为所有平台已完整实机验证，更不代表 23 个额度接口。
 
 环境变量指定的是额外扫描目录，会与默认目录一起读取；相同来源、相同路径会做遍历去重。变量必须传入 QuotaMonitor 启动进程，具体方式见[安装指南](INSTALL.md)。上述名称并非每个工具上游的统一配置标准，请以本项目定义为准。
 
@@ -70,7 +69,7 @@ Cursor 的普通聊天转录不作为用量来源；其结构化工作区数据�
 - **细节：** 缓存和推理 Token 按来源保留为明细，不因存在明细就重复相加。未知字段不能靠文本长度或上下文上限补估。
 - **模型：** 名称规范为小写，空值、`auto`、`unknown` 归为 `unknown`。这类记录可有用量，但无法可靠归属实际模型。
 - **时间：** 按本机时区形成小时 / 日期桶；缺少时间字段的部分通用记录可能采用文件修改时间，时间分布因此可能不精确。
-- **去重：** Codex fork、Qoder 请求标识、Kimi / 千问的请求与回合边界有专用处理；通用适配不保证对所有复制、嵌套或汇总记录自动去重。
+- **去重：** Codex fork、Qoder 请求标识、Kimi 的请求与步骤边界有专用处理；通用适配不保证对所有复制、嵌套或汇总记录自动去重。
 - **DeepSeek：** 按可识别模型 / 路由归集，模型名包含 `deepseek` 的记录会被识别为相关用量；自定义别名可能无法识别。它是跨工具子集，不能再加到全平台总量。
 - **预计天数：** DeepSeek 余额除以近 7 个自然日的平均估算消耗，最多显示 30 天；受本地记录覆盖和价格配置影响，不等同于账单、实际可用期限或承诺。
 
@@ -81,7 +80,8 @@ Cursor 的普通聊天转录不作为用量来源；其结构化工作区数据�
 3. 通用解析支持部分 JSON、JSONL、日志和 SQLite 结构，不是任意数据库解析器。普通 JSON 路径仅接受不超过 32 MiB 的内容；该限制不代表所有专用解析器都有相同大小上限，也不代表内存峰值上限。
 4. 多数来源有超时和取消机制；Codex 的大历史扫描使用独立处理策略。首次扫描可能较慢，超时 / 失败可能保留旧结果。网络额度同样不是无延迟状态。
 5. 应用优先保留暂时不可读文件的上一份有效统计，但缓存不是永久档案；删除源文件、重建缓存或上游改格式会影响总量。
-6. 当前不采集豆包工作或 Trae Work；不查询 OpenRouter、MiniMax、火山引擎、Qoder 账户积分或任意自定义兼容端点的余额，也不提供 Ollama 本地用量适配。
+6. 当前不采集 TraeWork、千问办公或豆包工作：TraeWork 依赖私有云接口和需要钥匙串保存的短期凭据；千问办公没有稳定、非零、可复核的请求级 Token 字段；豆包工作的本地数据和私有接口无法提供精确 Token 总量。三者都不使用文本长度或窗口比例估算。
+7. 当前也不查询 OpenRouter、MiniMax、火山引擎、Qoder 账户积分或任意自定义兼容端点的余额，不提供 Ollama 本地用量适配。
 
 ## 代码依据
 

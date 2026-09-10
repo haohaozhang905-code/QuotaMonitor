@@ -4,10 +4,17 @@
 
 <h1 align="center">QuotaMonitor</h1>
 
-<p align="center">在 Mac 菜单栏查看 Codex 剩余额度、DeepSeek 余额和多款 AI 工具的本地 Token 消耗。</p>
+<p align="center">同时用 Codex、Claude、WorkBuddy 写代码，却总在切窗口查额度？<br>QuotaMonitor 把 Codex 剩余额度、DeepSeek 余额和 20+ AI 工具的本地 Token 消耗，集中到 Mac 菜单栏——抬眼就能看，点击查详情。</p>
 
 <p align="center">
-  <a href="docs/INSTALL.md">安装与上手</a> ·
+  <strong>📍 菜单栏常驻</strong> · 不用切窗口，抬眼看 Codex 周额度和 DeepSeek 余额<br>
+  <strong>🔒 纯本地运行</strong> · 用量在本机解析，不上传对话、不需要注册账号<br>
+  <strong>📊 多工具统一视图</strong> · Codex、Claude、WorkBuddy、Qoder、Kimi 等 Token 趋势和用量分布，一个看板看完
+</p>
+
+<p align="center">
+  <a href="#开始使用">快速上手</a> ·
+  <a href="docs/INSTALL.md">安装与排查</a> ·
   <a href="docs/DATA_SOURCES.md">工具支持清单</a> ·
   <a href="PRIVACY.md">隐私说明</a> ·
   <a href="https://github.com/haohaozhang905-code/QuotaMonitor/issues">反馈问题</a>
@@ -21,46 +28,60 @@
 
 ## 从状态栏，到完整看板
 
-**抬眼看状态，点击查详情，需要时再展开分析。** QuotaMonitor 提供三种形态，让不同深度的信息各有入口。
-
-![QuotaMonitor 三种形态：放大展示状态栏中的额度和余额，点击展开下拉框，再通过“打开主面板”进入完整概览](docs/images/three-surfaces-annotated.png)
+**抬眼看状态，点击查详情，需要时再展开分析。** QuotaMonitor 提供三种形态，让额度、余额和 Token 用量各有合适的查看入口。
 
 | 形态 | 什么时候用 | 能看到什么 |
 | --- | --- | --- |
-| **① 状态栏** | 工作时抬眼查看 | Codex 剩余额度、已识别 DeepSeek 路由的余额 |
-| **② 下拉框** | 点击菜单栏入口，快速确认 | 今日 Token、额度与重置时间、平台和模型用量摘要 |
-| **③ 主面板** | 想了解用量变化与分布 | 概览、今日分时趋势，以及更完整的 Token 看板 |
+| **① 状态栏** | 工作时抬眼查看 | Codex 周额度、已识别 DeepSeek 路由的余额 |
+| **② 下拉框** | 点击菜单栏入口，快速确认 | 今日 Token、较昨日变化、5 小时 / 周额度、重置时间及用量摘要 |
+| **③ 主面板** | 想了解风险、趋势与来源状态 | 风险优先概览、Token 看板、数据来源诊断与显示设置 |
 
-### 主面板：看趋势，也看用量分布
+以下展示均为真实运行截图；页面会跟随 GitHub 的浅色或深色主题自动切换。截图中的额度、余额、Token 数量和时间只代表拍摄当时的账户与本机记录。
+
+### ① 状态栏 → ② 下拉框
+
+状态栏保留最需要随时看到的两个数字；点击后展开下拉框，在不打开主窗口的情况下查看额度、重置时间、今日 Token，以及平台和模型摘要。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/menu-dropdown-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/menu-dropdown-light.png">
+  <img src="docs/images/menu-dropdown-light.png" width="420" alt="QuotaMonitor 状态栏与下拉框：显示 Codex 周额度、DeepSeek 余额、今日 Token、重置时间和用量摘要">
+</picture>
+
+### ③ 主面板：先看风险，再看当日概览
+
+概览页把当前最需要关注的额度放在顶部，同时展示今日 Token、较昨日变化、Codex 重置卡、额度窗口、共享余额和今日分时趋势。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.png">
+  <img src="docs/images/overview-light.png" alt="QuotaMonitor 主面板概览：风险提示、今日 Token、Codex 与 Claude 状态和分时趋势">
+</picture>
+
+### Token 看板：看趋势，也看用量分布
 
 选择近 **7 / 30 / 90 日或累计**范围，按平台或模型查看 Token 趋势；结合用量排行和 **365 天热力图**，回看哪些工具用得多、哪段时间用得集中。
 
-![Token 看板重点标注：时间范围、按平台或模型切换的局部放大，以及用量占比](docs/images/token-charts-annotated.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/token-dashboard-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/token-dashboard-light.png">
+  <img src="docs/images/token-dashboard-light.png" alt="QuotaMonitor Token 看板：时间范围、按平台或模型切换、趋势图、用量排行和年度热力图">
+</picture>
 
-展示图基于作者提供的真实运行截图，经 AI 辅助排版、局部放大与标注制作；放大镜和引导线为图片说明元素。截图数值为拍摄时的账户与本机记录，具体界面细节可查看下方原图。
+### 设置：确认启动行为和数据来源
+
+设置页集中管理登录后启动、界面语言、浅色 / 深色外观和 Dock 图标策略；数据来源区逐项显示额度与 Token 是否可读，以及需要处理的原因。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/settings-light.png">
+  <img src="docs/images/settings-light.png" alt="QuotaMonitor 设置页：启动、语言、外观、Dock 图标和数据来源状态">
+</picture>
 
 <details>
-<summary>查看未经标注的原始截图（含设置页）</summary>
+<summary>浅色 / 深色完整截图一览</summary>
 
-**状态栏与下拉框**
-
-<img src="docs/images/menu-bar-preview.png" width="360" alt="原始截图：状态栏与下拉框">
-
-**主面板概览**
-
-![原始截图：主面板概览](docs/images/overview-preview.png)
-
-**Token 趋势与用量分布**
-
-![原始截图：Token 看板](docs/images/token-dashboard-preview.png)
-
-**年度热力图**
-
-![原始截图：用量分布与年度热力图](docs/images/token-breakdown-preview.png)
-
-**设置**
-
-![原始截图：语言、登录启动与 Dock 图标设置](docs/images/settings-preview.png)
+<img src="docs/images/screenshots-overview.png" alt="QuotaMonitor 全部页面的浅色与深色模式截图一览：上排为浅色模式，下排为深色模式，从左到右依次为状态栏与下拉框、概览、Token 看板、设置">
 
 </details>
 
@@ -70,15 +91,50 @@
 
 - **额度还剩多少？** 查看 Codex 5 小时 / 周额度及重置时间；使用已识别的 DeepSeek 路由时查看共享账户余额。
 - **最近用了多少？** 按今日、近 7 / 30 / 90 日或累计范围查看本机 Token 总量和趋势。
-- **主要用在哪？** 在“按平台”和“按模型”之间切换，查看工具与模型的使用分布。
+- **主要用在哪？** 在"按平台"和"按模型"之间切换，查看工具与模型的使用分布。
 
 应用运行在 macOS 菜单栏中，无需额外注册 QuotaMonitor 账号。代码按 MIT 协议开放；你使用的 AI 服务和协助安装的 Agent 可能有各自的费用。
 
 **适用环境：macOS 14+，Apple silicon 或 Intel Mac。** 当前没有 Windows、Linux、iOS 或 Android 客户端；Mac 上的可用数据取决于对应工具实际生成的记录。
 
+## 支持哪些 AI 工具
+
+当前能查询的远端额度 / 余额为 **Codex 和 DeepSeek**；本地 Token 统计代码覆盖 **23 个平台标识**，包括 Codex、Claude Code、Claude Desktop（经 cc-switch）、WorkBuddy、Qoder、Kimi Desktop 等专用解析，以及 OpenCode、Cline、Grok Build、GitHub Copilot、Zed 等通用目录适配。
+
+> "支持"表示代码已接入相应入口，不代表所有工具版本都完成真实环境验证，也不代表安装工具后一定已经产生可读日志。Token 统计只覆盖本机实际存在、且包含明确用量字段的日志或数据库记录。
+
+完整的平台 × 数据采集矩阵、路径、环境变量、统计口径与验证边界，见 **[工具支持清单](docs/DATA_SOURCES.md)**。
+
+TraeWork、千问办公和豆包工作当前不纳入采集，原因见工具支持清单中的覆盖边界说明。
+
+## 开始使用
+
+1. **启动 QuotaMonitor。** 在 Mac 顶部菜单栏找到入口，点击查看下拉面板，再进入主面板。
+2. **按需要准备数据源。** 查询 Codex 额度需先在同一 macOS 用户下登录 Codex；统计其他工具的本地 Token 不要求先购买或登录 Codex。DeepSeek 余额需要当前已配置的 Codex / Claude / cc-switch DeepSeek 路由和可读取凭据。
+3. **查看"概览"。** 顶部警示优先显示当前最需要关注的额度；下方可确认重置时间、路由、共享余额和 Codex 重置卡。重置卡只展示接口返回的可用数量与到期时间，不会自动兑换。
+4. **打开"Token 看板"。** 选择时间范围，切换平台或模型查看趋势与排行。首次使用会扫描已有日志；已有缓存时先显示缓存，再后台更新。
+5. **按需调整设置。** 支持简体中文 / English、跟随系统 / 浅色 / 深色外观、登录后自动启动、Dock 图标策略和数据源重新扫描。额度约每 60 秒刷新，本地 Token 约每 5 分钟刷新；文件变化还会触发合并后的更新，界面并非逐请求实时流。
+
+额度、余额与本地 Token 是不同指标。Token 数量不能直接换算为订阅剩余额度或实际账单金额。
+
+## 使用前，你可能关心这些
+
+| 顾虑 | 当前已做的处理 | 仍需了解 |
+| --- | --- | --- |
+| 会不会耗电、拖慢 Mac？ | 使用持久化缓存、变化文件复用、可续读日志的增量解析、合并文件事件、单实例保护和菜单栏按状态重绘；已移除历史高耗电的无限脉冲动画 | 首次扫描、大文件改写和持续生成日志仍会占用 CPU、磁盘与内存；没有跨机型长期续航数据，不承诺"零耗电"。持续异常请按安装指南排查 |
+| 会不会泄露聊天或 API Key？ | 用量在本机解析，不把对话正文保存到统计缓存或上传；没有项目自建的账号、广告或遥测后端 | 解析器会读取可能含正文的日志；认证信息会用于向对应服务商发起查询。缓存含路径、模型及部分去重标识，不属于匿名数据；本项目未宣称通过独立安全审计 |
+| 会消耗我的模型 Token 吗？ | 应用采集本地记录、查询额度或余额，不向模型提交生成任务 | 网络查询仍存在；AI 服务及安装时所用 Agent 的收费由各自提供方决定 |
+| 会修改聊天记录、自动切换路由吗？ | 本地采集读取源日志，数据库使用只读查询；应用保存自身缓存与偏好，不自动修改工具路由或兑换额度 | Codex 官方 app-server 回退由 Codex 自己管理认证；启用登录后自动启动会新增相应系统登录项 |
+| 为什么和官方账单不一样？ | 按来源处理缓存 Token、模型归一化及已知重复记录 | 只覆盖本机可读日志，不包含其他设备和未落盘请求；订阅额度规则、计费口径与 Token 总量也不同 |
+| 没联网还能看吗？ | 本地日志和已有统计缓存可用于查看用量 | Codex 额度、DeepSeek 余额无法离线更新；失败后可能保留旧结果，请留意更新时间 |
+| 必须给所有文件权限吗？ | 应用按定义的数据目录读取，不要求把凭据复制到聊天中 | 为读取其他工具目录，当前应用未启用 App Sandbox；文件与钥匙串访问仍受 macOS 权限控制。不要为排障盲目开启全部权限 |
+| 换账号或删除日志会怎样？ | 额度根据当前可读取的认证和路由更新；可保留上一份有效统计以抵御临时读取失败 | 本地历史没有完整的多账号隔离，也不是永久备份；删除源日志后重扫可能改变总量。旧缓存不应被当作当前账号账单 |
+
+详细数据流与凭据用途见 [隐私说明](PRIVACY.md)，启动失败、空数据和持续高占用的处理见 [安装指南](docs/INSTALL.md)。
+
 ## 如何安装
 
-截至 **2026-09-07**，本仓库尚未发布可下载的 Release 安装包，当前可从源码构建。后续安装包以 [GitHub Releases](https://github.com/haohaozhang905-code/QuotaMonitor/releases) 中实际提供的附件为准，源码 ZIP 不等同于可直接安装的应用。
+截至 **2026-09-10**，本仓库尚未发布可下载的 Release 安装包，当前可从源码构建（约 2 分钟）。后续安装包以 [GitHub Releases](https://github.com/haohaozhang905-code/QuotaMonitor/releases) 中实际提供的附件为准，源码 ZIP 不等同于可直接安装的应用。
 
 ### 交给你的编程 Agent
 
@@ -90,103 +146,18 @@
 
 自行操作、更新或卸载，请看 **[完整安装与排查指南](docs/INSTALL.md)**。
 
-## 开始使用
+## 想自己魔改？
 
-1. **启动 QuotaMonitor。** 在 Mac 顶部菜单栏找到入口，点击查看下拉面板，再进入主面板。
-2. **按需要准备数据源。** 查询 Codex 额度需先在同一 macOS 用户下登录 Codex；统计其他工具的本地 Token 不要求先购买或登录 Codex。DeepSeek 余额需要当前已配置的 Codex / Claude / cc-switch DeepSeek 路由和可读取凭据。
-3. **查看“额度监控”。** 确认剩余额度、重置时间和路由；Reset Credits 仅展示接口返回的数量与到期时间，不会自动兑换。
-4. **打开“Token 看板”。** 选择时间范围，切换平台或模型查看趋势与排行。首次使用会扫描已有日志；已有缓存时先显示缓存，再后台更新。
-5. **按需调整设置。** 支持简体中文 / English、登录后自动启动和手动刷新。额度约每 60 秒刷新，本地 Token 约每 5 分钟刷新；文件变化还会触发合并后的更新，界面并非逐请求实时流。
+QuotaMonitor 按 **MIT 协议**开放，拿到源码后随便改——不用问，不用报备，改完自己用或者再分发都行。常见的魔改方向：
 
-额度、余额与本地 Token 是不同指标。Token 数量不能直接换算为订阅剩余额度或实际账单金额。
+- **加一个没覆盖的 AI 工具**：在 `Models/TokenUsageDimensions.swift` 注册平台标识，在 `Services/AdditionalLocalTokenClient.swift` 加目录适配；特殊格式另建专用 client。
+- **改视觉**：配色、字体、图表布局在 `Views/PanelTheme.swift`、`Views/MainPanelView.swift`、`Views/DropdownViews.swift` 里调，深浅色一起改。
+- **加功能**：低额度提醒、CSV 导出、预算告警、自定义供应商余额接口——都有明确的代码入口和验收要点。
+- **接入其他服务商余额**：参考 `Services/DeepSeekBalanceClient.swift` 的实现模式。
 
-## 支持哪些 AI 工具
+**不会写 Swift 也没关系**——把需求丢给你的编程 Agent（Codex、Claude Code 等），它能帮你读代码、改代码、跑测试。[定制与二次开发指南](docs/CUSTOMIZATION.md)里准备了三个可直接复制给 Agent 的需求模板（新增工具、改界面、开发额度提醒），以及推荐的修改流程和验收清单。
 
-### 平台 × 数据采集矩阵
-
-下表把“能查剩余额度 / 余额”和“能统计本地 Token 消耗”分开列出。`—` 表示当前没有该平台的额度接口接入；Token 统计也只覆盖本机实际存在、且包含明确用量字段的日志或数据库记录。
-
-| 平台 / 服务 | 剩余额度或余额 | Token 消耗采集位置 | 需要知道的条件 |
-| --- | --- | --- | --- |
-| **Codex** | ✅ 官方额度窗口、重置时间、Reset Credits | `~/.codex/sessions`、`~/.codex/archived_sessions` | 需要当前 macOS 用户已登录 Codex；认证优先读取 Keychain，旧版 `auth.json` 兼容 |
-| **Claude Code** | — 官方额度暂未接入 | `~/.claude/projects` | 读取本地 Transcript 的结构化 usage；不要求 cc-switch |
-| **Claude Desktop** | — | `~/.cc-switch/cc-switch.db` 的 `proxy_request_logs` | 只有 cc-switch 实际捕获的桌面请求可统计；cc-switch 未运行时可能显示未采集 |
-| **WorkBuddy** | — | `~/.workbuddy/traces` | 兼容旧版 Trace 汇总和新版 generation usage；没有明确字段不纳入 |
-| **Qoder** | — | `~/.qoder/logs/sessions`；`~/Library/Application Support/Qoder/SharedClientCache/cli/projects` | CLI 与 Desktop / Work 使用不同日志格式，并按请求 / 消息标识去重；不查询账户积分 |
-| **Kimi CLI / Kimi Code** | — | `~/.kimi/sessions`、`~/.kimi-code/sessions` | 依赖本地会话记录 |
-| **Kimi Desktop** | — | `~/Library/Application Support/kimi-desktop/daimon-share/daimon/runtime/kimi-code/home/sessions` | 只采集 `usage.record` 请求记录，不把步骤汇总重复相加 |
-| **Qwen CLI** | — | `~/.qwen/projects` | 依赖本地结构化 Token 字段 |
-| **千问办公** | — | `~/.qwenworkcn/logs/sessions` | 读取模型请求完成记录，不重复计入回合汇总 |
-| **OpenCode** | — | `~/.local/share/opencode/storage/message`、`~/.local/share/opencode` | 通用 JSON / JSONL 解析；需要明确 usage 字段 |
-| **Hermes Agent** | — | `~/.hermes` | 通用结构化记录解析 |
-| **OpenClaw** | — | `~/.openclaw/agents` | 通用结构化记录解析；支持 `QUOTAMONITOR_OPENCLAW_HOME` |
-| **Cursor** | — | `~/.config/tokscale/cursor-cache`、`~/Library/Application Support/Cursor/User/workspaceStorage` | 只读同步缓存或结构化工作区记录；普通聊天转录不会被当作 Token |
-| **Antigravity** | — | `~/.config/tokscale/antigravity-cache` | 需要已有 tokscale 结构化缓存，QuotaMonitor 不负责生成缓存 |
-| **Cline** | — | `~/.cline/data/sessions`、`~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/tasks` | 需要本地任务记录包含明确 usage 字段 |
-| **Grok Build** | — | `~/.grok/sessions`、`~/.grok/logs` | 通用结构化记录解析 |
-| **GitHub Copilot** | — | `~/.copilot`、`~/Library/Application Support/Code/User/globalStorage/github.copilot-chat` | 依赖本机可读取的结构化记录 |
-| **Pi / Oh My Pi** | — | `~/.pi/agent/sessions`、`~/.omp/agent/sessions` | 通用结构化记录解析 |
-| **Zed** | — | `~/.local/share/zed/threads` | 通用结构化记录解析 |
-| **Kilo Code** | — | `~/Library/Application Support/Code/User/globalStorage/kilocode.kilo-code/tasks` | 通用结构化记录解析 |
-| **MiMo Code** | — | `~/.local/share/mimocode` | 通用结构化记录解析 |
-| **ZCode / GLM** | — | `~/.zcode/projects`、`~/.zcode/cli` | 通用结构化记录解析 |
-| **Kiro** | — | `~/.kiro/sessions/cli`、`~/Library/Application Support/Kiro/User/globalStorage` | 通用结构化记录解析 |
-| **CodeBuddy** | — | `~/.codebuddy/projects` | 通用结构化记录解析 |
-| **Proma** | — | `~/.proma/agent-sessions` | 通用结构化记录解析 |
-| **Reasonix** | — | `~/.reasonix/stats`、`~/.reasonix/sessions`、`~/.reasonix/projects` | 通用结构化记录解析 |
-| **DeepSeek（路由 / 服务商）** | ✅ 官方账户余额、近 7 日消耗估算可用天数 | 使用各工具日志中可识别的 DeepSeek 模型 / 路由记录 | 这是跨工具的服务商维度，不是另一份平台 Token；预计天数不是余额有效期 |
-
-路径、环境变量、统计口径和验证边界见[工具支持清单](docs/DATA_SOURCES.md)。以上“支持”表示代码已接入相应入口，不代表所有工具版本都完成真实环境验证，也不代表安装工具后一定已经产生可读日志。
-
-### 额度与余额
-
-| 服务 | 当前能力 | 使用条件与边界 |
-| --- | --- | --- |
-| Codex | 读取官方服务返回的额度窗口、重置时间及可用 Reset Credits | 需要有效本地登录；字段以服务返回为准，接口和认证格式可能随上游版本变化 |
-| DeepSeek | 读取官方账户余额，估算可用天数 | 需要已识别的 DeepSeek 路由及对应凭据；预计天数由近期本地用量估算，不是余额有效期 |
-| Claude 官方额度 | 尚未完成真实会员账号验证 | 当前刷新链路未接入 Claude 官方额度采集；不列为可用功能，也不据此判断上游接口是否存在 |
-
-### 本地 Token 统计
-
-| 类别 | 工具 | 当前条件 |
-| --- | --- | --- |
-| 专用解析 | Codex、Claude Code、WorkBuddy、Qoder | 读取各自本地日志；已实现针对特定结构的解析和去重，仍受版本、权限及日志完整性影响 |
-| 桌面端请求记录 | Claude Desktop | 当前版本通过 cc-switch 请求日志采集；只有该链路实际记录的请求才可统计 |
-| 专用事件格式 | Kimi Desktop、千问办公 | 读取本机事件日志中的请求级用量；适配依赖相应日志格式 |
-| 额外工具目录 | OpenCode、Hermes Agent、OpenClaw、Cline、Kimi CLI / Kimi Code、Qwen CLI、Grok Build、GitHub Copilot、Pi / Oh My Pi、Zed、Kilo Code、MiMo Code、ZCode / GLM、Kiro、CodeBuddy、Proma、Reasonix | 已加入通用解析目录；需要存在可识别的结构化 Token 字段，未逐一完成所有版本的真实环境验证 |
-| 有条件的本地缓存 | Cursor、Antigravity | Cursor 读取同步缓存或结构化工作区记录；Antigravity 读取已有 tokscale 缓存。本应用不会为它们自动生成同步缓存 |
-
-以上描述的是本地用量适配范围，**不代表所有工具都能查询剩余额度，或装好后必然有数据**。当前不纳入豆包工作和 Trae Work；DeepSeek 是模型 / 服务商维度，不作为另一份工具用量重复相加。
-
-具体路径、环境变量、统计口径与验证边界见 **[工具支持清单](docs/DATA_SOURCES.md)**。
-
-## 使用前，你可能关心这些
-
-| 顾虑 | 当前已做的处理 | 仍需了解 |
-| --- | --- | --- |
-| 会不会耗电、拖慢 Mac？ | 使用持久化缓存、变化文件复用、可续读日志的增量解析、合并文件事件、单实例保护和菜单栏按状态重绘；已移除历史高耗电的无限脉冲动画 | 首次扫描、大文件改写和持续生成日志仍会占用 CPU、磁盘与内存；没有跨机型长期续航数据，不承诺“零耗电”。持续异常请按安装指南排查 |
-| 会不会泄露聊天或 API Key？ | 用量在本机解析，不把对话正文保存到统计缓存或上传；没有项目自建的账号、广告或遥测后端 | 解析器会读取可能含正文的日志；认证信息会用于向对应服务商发起查询。缓存含路径、模型及部分去重标识，不属于匿名数据；本项目未宣称通过独立安全审计 |
-| 会消耗我的模型 Token 吗？ | 应用采集本地记录、查询额度或余额，不向模型提交生成任务 | 网络查询仍存在；AI 服务及安装时所用 Agent 的收费由各自提供方决定 |
-| 会修改聊天记录、自动切换路由吗？ | 本地采集读取源日志，数据库使用只读查询；应用保存自身缓存与偏好，不自动修改工具路由或兑换额度 | Codex 官方 app-server 回退由 Codex 自己管理认证；启用登录后自动启动会新增相应系统登录项 |
-| 为什么和官方账单不一样？ | 按来源处理缓存 Token、模型归一化及已知重复记录 | 只覆盖本机可读日志，不包含其他设备和未落盘请求；订阅额度规则、计费口径与 Token 总量也不同 |
-| 没联网还能看吗？ | 本地日志和已有统计缓存可用于查看用量 | Codex 额度、DeepSeek 余额无法离线更新；失败后可能保留旧结果，请留意更新时间 |
-| 必须给所有文件权限吗？ | 应用按定义的数据目录读取，不要求把凭据复制到聊天中 | 为读取其他工具目录，当前应用未启用 App Sandbox；文件与钥匙串访问仍受 macOS 权限控制。不要为排障盲目开启全部权限 |
-| 换账号或删除日志会怎样？ | 额度根据当前可读取的认证和路由更新；可保留上一份有效统计以抵御临时读取失败 | 本地历史没有完整的多账号隔离，也不是永久备份；删除源日志后重扫可能改变总量。旧缓存不应被当作当前账号账单 |
-
-详细数据流与凭据用途见 [隐私说明](PRIVACY.md)，启动失败、空数据和持续高占用的处理见 [安装指南](docs/INSTALL.md)。
-
-## 当前不足与可改造方向
-
-当前优先满足个人 Mac 上的额度观察和本地用量回看，以下能力仍有边界：
-
-- **安装分发：** 尚无 Release 安装包；源码安装需要 Swift 6 工具链。后续可完善正式签名、公证和干净环境安装验证。
-- **覆盖与准确性：** 尚无覆盖全部工具版本的兼容性测试矩阵；通用解析器不保证所有来源自动去重，部分大 JSON 和非标准字段可能跳过。
-- **数据完整性：** 不支持完整的云端账单同步、跨设备汇总或多账号隔离；没有日志就无法还原相应用量。
-- **易用性：** 暂无逐个数据源的可视化目录配置与启停向导；自定义目录依赖启动环境或代码调整。
-- **可扩展能力：** 低额度通知、CSV 导出、预算告警、自定义供应商余额接口等可以继续开发，当前不作为内置功能提供。
-- **平台与维护：** SwiftUI / AppKit 实现面向 macOS；Windows / Linux 需要移植界面和系统集成。接口与日志格式变化需要持续维护。
-
-想增加工具、换界面或设计提醒？[定制与二次开发指南](docs/CUSTOMIZATION.md)提供代码入口、验证方法和可直接交给 Agent 的改造需求示例。
+改出了有意思的东西？欢迎提 PR 回馈社区，或者自己 fork 了玩。
 
 ## 开发与贡献
 
@@ -197,7 +168,7 @@ swift test
 ./script/security_check.sh
 ```
 
-本地构建、安装到“应用程序”并启动验证：
+本地构建、安装到"应用程序"并启动验证：
 
 ```bash
 QUOTAMONITOR_ALLOW_ADHOC=1 QUOTAMONITOR_SIGNING_IDENTITY=- ./script/build_and_run.sh --verify
@@ -215,7 +186,7 @@ QUOTAMONITOR_ALLOW_ADHOC=1 QUOTAMONITOR_SIGNING_IDENTITY=- ./script/build_and_ru
 
 欢迎提交 [Issue](https://github.com/haohaozhang905-code/QuotaMonitor/issues) 或 Pull Request。说明应用版本 / 提交号、macOS 与工具版本、预期行为、实际结果和复现步骤；分享截图或样例前去除凭据与对话正文。安全问题请走 [SECURITY.md](SECURITY.md) 中的私密渠道。
 
-贡献规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。本项目为独立工具，与所列 AI 服务商无隶属关系。
+当前不足与可改造方向见 **[路线图](docs/ROADMAP.md)**。贡献规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。本项目为独立工具，与所列 AI 服务商无隶属关系。
 
 ## License
 
