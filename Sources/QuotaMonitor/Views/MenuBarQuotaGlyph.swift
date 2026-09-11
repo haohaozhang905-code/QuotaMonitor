@@ -18,6 +18,7 @@ struct MenuBarQuotaGlyph: View {
         if let url = QuotaResourceBundle.current.url(forResource: "menubar-icon", withExtension: "png"),
            let img = NSImage(contentsOf: url) {
             img.size = NSSize(width: 18, height: 18)
+            img.isTemplate = true
             return img
         }
         return templateImage
@@ -69,7 +70,7 @@ struct MenuBarLoadingGlyph: View {
             let center = CGPoint(x: size.width / 2, y: size.height / 2 + 1)
             context.fill(
                 Path(ellipseIn: CGRect(x: center.x - 1.6, y: center.y - 1.6, width: 3.2, height: 3.2)),
-                with: .color(.white)
+                with: .color(.black)
             )
             for level in 0..<2 {
                 let radius = CGFloat(4.2 + Double(level) * 3.2)
@@ -92,7 +93,7 @@ struct MenuBarLoadingGlyph: View {
                 )
                 context.stroke(
                     upper,
-                    with: .color(.white.opacity(opacity)),
+                    with: .color(.black.opacity(opacity)),
                     style: StrokeStyle(lineWidth: 1.8, lineCap: .round)
                 )
                 context.stroke(

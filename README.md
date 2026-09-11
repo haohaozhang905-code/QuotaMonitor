@@ -8,6 +8,7 @@
 
 <p align="center">
   <strong>📍 菜单栏常驻</strong> · 不用切窗口，抬眼看 Codex 周额度和 DeepSeek 余额<br>
+  <strong>🔔 到线提醒</strong> · 额度接近风险线、DeepSeek 余额偏低或 Token 跨过里程碑时及时通知<br>
   <strong>🔒 纯本地运行</strong> · 用量在本机解析，不上传对话、不需要注册账号<br>
   <strong>📊 多工具统一视图</strong> · Codex、Claude、WorkBuddy、Qoder、Kimi 等 Token 趋势和用量分布，一个看板看完
 </p>
@@ -16,6 +17,7 @@
   <a href="#开始使用">快速上手</a> ·
   <a href="docs/INSTALL.md">安装与排查</a> ·
   <a href="docs/DATA_SOURCES.md">工具支持清单</a> ·
+  <a href="docs/REMINDER_PRODUCT_DESIGN.md">提醒机制方案</a> ·
   <a href="PRIVACY.md">隐私说明</a> ·
   <a href="https://github.com/haohaozhang905-code/QuotaMonitor/issues">反馈问题</a>
 </p>
@@ -26,15 +28,16 @@
   <img src="https://img.shields.io/badge/License-MIT-22c55e" alt="MIT License">
 </p>
 
-## 从状态栏，到完整看板
+## 从状态栏，到提醒与完整看板
 
-**抬眼看状态，点击查详情，需要时再展开分析。** QuotaMonitor 提供三种形态，让额度、余额和 Token 用量各有合适的查看入口。
+**抬眼看状态，及时接收提醒，点击查详情，需要时再展开分析。** QuotaMonitor 提供四种形态，让额度、余额和 Token 用量各有合适的查看入口。
 
 | 形态 | 什么时候用 | 能看到什么 |
 | --- | --- | --- |
 | **① 状态栏** | 工作时抬眼查看 | Codex 周额度、已识别 DeepSeek 路由的余额 |
 | **② 下拉框** | 点击菜单栏入口，快速确认 | 今日 Token、较昨日变化、5 小时 / 周额度、重置时间及用量摘要 |
 | **③ 主面板** | 想了解风险、趋势与来源状态 | 风险优先概览、Token 看板、数据来源诊断与显示设置 |
+| **④ 提醒通知** | 额度触达风险线或 Token 跨过里程碑 | macOS 原生通知，或菜单栏下方的应用内提醒卡片；多项分别显示 |
 
 以下展示均为真实运行截图；页面会跟随 GitHub 的浅色或深色主题自动切换。截图中的额度、余额、Token 数量和时间只代表拍摄当时的账户与本机记录。
 
@@ -78,6 +81,12 @@
   <img src="docs/images/settings-light.png" alt="QuotaMonitor 设置页：启动、语言、外观、Dock 图标和数据来源状态">
 </picture>
 
+### ④ 提醒通知：额度到线，Token 跨过里程碑
+
+QuotaMonitor 会在 Codex 5 小时 / 周额度剩余不超过 30%、DeepSeek 余额低于 ¥5，或本机当天 Token 用量达到每个 1 亿里程碑时提醒。系统通知已获 macOS 授权时使用原生通知；没有授权或投递失败时，自动回退到菜单栏下方的应用内卡片。同一轮同时触发多个事项时，每个事项分别通知，不合并成一条。
+
+<img src="docs/images/reminder-notifications.png" width="640" alt="QuotaMonitor macOS 通知中心：分别显示 Codex 5 小时额度提醒和多条 Token 用量提醒">
+
 <details>
 <summary>浅色 / 深色完整截图一览</summary>
 
@@ -92,6 +101,7 @@
 - **额度还剩多少？** 查看 Codex 5 小时 / 周额度及重置时间；使用已识别的 DeepSeek 路由时查看共享账户余额。
 - **最近用了多少？** 按今日、近 7 / 30 / 90 日或累计范围查看本机 Token 总量和趋势。
 - **主要用在哪？** 在"按平台"和"按模型"之间切换，查看工具与模型的使用分布。
+- **需要提醒吗？** 额度、DeepSeek 余额和 Token 里程碑各自触发提醒；系统通知不可用时仍显示应用内提醒。
 
 应用运行在 macOS 菜单栏中，无需额外注册 QuotaMonitor 账号。代码按 MIT 协议开放；你使用的 AI 服务和协助安装的 Agent 可能有各自的费用。
 
@@ -113,7 +123,7 @@ TraeWork、千问办公和豆包工作当前不纳入采集，原因见工具支
 2. **按需要准备数据源。** 查询 Codex 额度需先在同一 macOS 用户下登录 Codex；统计其他工具的本地 Token 不要求先购买或登录 Codex。DeepSeek 余额需要当前已配置的 Codex / Claude / cc-switch DeepSeek 路由和可读取凭据。
 3. **查看"概览"。** 顶部警示优先显示当前最需要关注的额度；下方可确认重置时间、路由、共享余额和 Codex 重置卡。重置卡只展示接口返回的可用数量与到期时间，不会自动兑换。
 4. **打开"Token 看板"。** 选择时间范围，切换平台或模型查看趋势与排行。首次使用会扫描已有日志；已有缓存时先显示缓存，再后台更新。
-5. **按需调整设置。** 支持简体中文 / English、跟随系统 / 浅色 / 深色外观、登录后自动启动、Dock 图标策略和数据源重新扫描。额度约每 60 秒刷新，本地 Token 约每 5 分钟刷新；文件变化还会触发合并后的更新，界面并非逐请求实时流。
+5. **按需调整设置。** 支持简体中文 / English、跟随系统 / 浅色 / 深色外观、登录后自动启动、Dock 图标策略、额度与用量提醒和数据源重新扫描。新安装默认开启额度与用量提醒及系统通知偏好；如果 macOS 没有授权系统通知，会自动使用应用内提醒。额度约每 60 秒刷新，本地 Token 约每 5 分钟刷新；文件变化还会触发合并后的更新，界面并非逐请求实时流。提醒的阈值、去重和通知降级规则见[提醒机制方案](docs/REMINDER_PRODUCT_DESIGN.md)。
 
 额度、余额与本地 Token 是不同指标。Token 数量不能直接换算为订阅剩余额度或实际账单金额。
 
@@ -129,6 +139,7 @@ TraeWork、千问办公和豆包工作当前不纳入采集，原因见工具支
 | 没联网还能看吗？ | 本地日志和已有统计缓存可用于查看用量 | Codex 额度、DeepSeek 余额无法离线更新；失败后可能保留旧结果，请留意更新时间 |
 | 必须给所有文件权限吗？ | 应用按定义的数据目录读取，不要求把凭据复制到聊天中 | 为读取其他工具目录，当前应用未启用 App Sandbox；文件与钥匙串访问仍受 macOS 权限控制。不要为排障盲目开启全部权限 |
 | 换账号或删除日志会怎样？ | 额度根据当前可读取的认证和路由更新；可保留上一份有效统计以抵御临时读取失败 | 本地历史没有完整的多账号隔离，也不是永久备份；删除源日志后重扫可能改变总量。旧缓存不应被当作当前账号账单 |
+| 提醒会不会连续打扰？ | 同一风险周期只提醒一次；同一轮多个事项分别显示，应用内卡片默认 8 秒自动消失，悬停可暂停 | macOS 原生通知的停留、声音和通知中心保留由系统设置决定；应用内提醒是无权限时的回退渠道 |
 
 详细数据流与凭据用途见 [隐私说明](PRIVACY.md)，启动失败、空数据和持续高占用的处理见 [安装指南](docs/INSTALL.md)。
 
@@ -152,10 +163,10 @@ QuotaMonitor 按 **MIT 协议**开放，拿到源码后随便改——不用问�
 
 - **加一个没覆盖的 AI 工具**：在 `Models/TokenUsageDimensions.swift` 注册平台标识，在 `Services/AdditionalLocalTokenClient.swift` 加目录适配；特殊格式另建专用 client。
 - **改视觉**：配色、字体、图表布局在 `Views/PanelTheme.swift`、`Views/MainPanelView.swift`、`Views/DropdownViews.swift` 里调，深浅色一起改。
-- **加功能**：低额度提醒、CSV 导出、预算告警、自定义供应商余额接口——都有明确的代码入口和验收要点。
+- **加功能**：扩展提醒规则、CSV 导出、预算告警、自定义供应商余额接口——都有明确的代码入口和验收要点。
 - **接入其他服务商余额**：参考 `Services/DeepSeekBalanceClient.swift` 的实现模式。
 
-**不会写 Swift 也没关系**——把需求丢给你的编程 Agent（Codex、Claude Code 等），它能帮你读代码、改代码、跑测试。[定制与二次开发指南](docs/CUSTOMIZATION.md)里准备了三个可直接复制给 Agent 的需求模板（新增工具、改界面、开发额度提醒），以及推荐的修改流程和验收清单。
+**不会写 Swift 也没关系**——把需求丢给你的编程 Agent（Codex、Claude Code 等），它能帮你读代码、改代码、跑测试。[定制与二次开发指南](docs/CUSTOMIZATION.md)里准备了三个可直接复制给 Agent 的需求模板（新增工具、改界面、扩展提醒），以及推荐的修改流程和验收清单。
 
 改出了有意思的东西？欢迎提 PR 回馈社区，或者自己 fork 了玩。
 

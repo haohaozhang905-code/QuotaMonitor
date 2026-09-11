@@ -4,7 +4,10 @@ set -euo pipefail
 MODE="${1:-run}"
 APP_NAME="QuotaMonitor"
 BINARY_NAME="QuotaMonitor"
-BUNDLE_ID="com.cmsjcm.QuotaMonitorStatus"
+# 与 assemble_app.sh 保持一致。本机 macOS 26.6 的历史标识被系统屏蔽后
+# 开关无法恢复，只能更换（应急方案）；换身份会导致通知权限、登录项、
+# 偏好设置被识别为新应用。优先尝试「系统设置 → 菜单栏」重新开启。
+BUNDLE_ID="com.cmsjcm.QuotaMonitorStatus3"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_BUNDLE="/Applications/$APP_NAME.app"
 APP_MACOS="$APP_BUNDLE/Contents/MacOS"

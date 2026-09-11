@@ -89,6 +89,67 @@ struct OverviewRiskResolution: Equatable, Sendable {
     }
 }
 
+/// 额度状态的唯一判定入口。概览页、额度卡片和状态栏下拉框都使用这套规则，
+/// 避免同一个百分比在不同界面显示成不同颜色。
+struct QuotaRiskAssessment: Equatable, Sendable {
+    let level: OverviewRiskLevel
+    let coverageRatio: Double?
+    let urgencyScore: Double
+}
+
+enum QuotaRiskPolicy {
+    static let criticalCoverageRatio = 0.5
+    static let reminderCoverageRatio = 1.0
+    static let fallbackCriticalRemaining = 0.30
+    static let fallbackReminderRemaining = 0.50
+
+    static func assess(
+        remainingPercent: Double?,
+        resetsAt: Date?,
+        periodDuration: TimeInterval?,
+        now: Date
+    ) -> QuotaRiskAssessment? {
+        guard let remainingPercent else { return nil }
+        let remaining = min(max(remainingPercent, 0), 1)
+        let coverage = coverageRatio(
+            remainingPercent: remaining,
+            resetsAt: resetsAt,
+            periodDuration: periodDuration,
+            now: now
+        )
+        let level: OverviewRiskLevel
+        if remaining == 0 || coverage.map({ $0 < criticalCoverageRatio }) == true {
+            level = .critical
+        } else if coverage.map({ $0 < reminderCoverageRatio }) == true {
+            level = .reminder
+        } else if coverage == nil, remaining <= fallbackCriticalRemaining {
+            level = .critical
+        } else if coverage == nil, remaining <= fallbackReminderRemaining {
+            level = .reminder
+        } else {
+            level = .healthy
+        }
+        return .init(
+            level: level,
+            coverageRatio: coverage,
+            urgencyScore: coverage ?? remaining
+        )
+    }
+
+    private static func coverageRatio(
+        remainingPercent: Double,
+        resetsAt: Date?,
+        periodDuration: TimeInterval?,
+        now: Date
+    ) -> Double? {
+        guard let resetsAt, let periodDuration, periodDuration > 0 else { return nil }
+        let remainingTime = resetsAt.timeIntervalSince(now)
+        guard remainingTime > 0, remainingTime <= periodDuration * 1.05 else { return nil }
+        let remainingWindowFraction = min(max(remainingTime / periodDuration, 0.01), 1)
+        return remainingPercent / remainingWindowFraction
+    }
+}
+
 enum OverviewRiskResolver {
     private static let quotaRecoveryStates: Set<DataSourceHealthState> = [
         .failed, .needsPermission, .unsupportedFormat, .stale
@@ -202,36 +263,23 @@ enum OverviewRiskResolver {
             return balanceSignal(candidate, level: level, urgency: Double(days) / 7)
         }
 
-        guard let remaining = candidate.remainingPercent else { return nil }
-        let clampedRemaining = min(max(remaining, 0), 1)
-        let coverage = coverageRatio(
-            remainingPercent: clampedRemaining,
+        guard let assessment = QuotaRiskPolicy.assess(
+            remainingPercent: candidate.remainingPercent,
             resetsAt: candidate.resetsAt,
             periodDuration: candidate.periodDuration,
             now: now
-        )
-        let level: OverviewRiskLevel
-        if clampedRemaining == 0 || coverage.map({ $0 < 0.5 }) == true {
-            level = .critical
-        } else if coverage.map({ $0 < 1 }) == true {
-            level = .reminder
-        } else if coverage == nil, clampedRemaining <= 0.30 {
-            level = .critical
-        } else if coverage == nil, clampedRemaining <= 0.50 {
-            level = .reminder
-        } else {
-            level = .healthy
-        }
+        ) else { return nil }
+        let clampedRemaining = min(max(candidate.remainingPercent ?? 0, 0), 1)
         return .init(
             provider: candidate.provider,
             metric: candidate.metric,
-            level: level,
+            level: assessment.level,
             remainingPercent: clampedRemaining,
             resetsAt: candidate.resetsAt,
             balanceAmount: nil,
             estimatedDays: nil,
-            coverageRatio: coverage,
-            urgencyScore: coverage ?? clampedRemaining
+            coverageRatio: assessment.coverageRatio,
+            urgencyScore: assessment.urgencyScore
         )
     }
 
@@ -251,19 +299,6 @@ enum OverviewRiskResolver {
             coverageRatio: nil,
             urgencyScore: urgency
         )
-    }
-
-    private static func coverageRatio(
-        remainingPercent: Double,
-        resetsAt: Date?,
-        periodDuration: TimeInterval?,
-        now: Date
-    ) -> Double? {
-        guard let resetsAt, let periodDuration, periodDuration > 0 else { return nil }
-        let remainingTime = resetsAt.timeIntervalSince(now)
-        guard remainingTime > 0, remainingTime <= periodDuration * 1.05 else { return nil }
-        let remainingWindowFraction = min(max(remainingTime / periodDuration, 0.01), 1)
-        return remainingPercent / remainingWindowFraction
     }
 
     private static func isMoreUrgent(_ lhs: OverviewRiskSignal, _ rhs: OverviewRiskSignal) -> Bool {

@@ -4,14 +4,33 @@ import ServiceManagement
 
 @MainActor @Observable
 final class LoginItemManager {
+    static let initializedKey = "QuotaMonitor.launchAtLoginInitialized"
+
     private(set) var status: SMAppService.Status = .notRegistered
     private(set) var errorMessage: String?
 
     private let service = SMAppService.mainApp
+    private let defaults: UserDefaults
     private let logger = Logger(subsystem: "com.cmsjcm.QuotaMonitor", category: "login-item")
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        registerByDefaultIfNeeded()
         refresh()
+    }
+
+    /// 新安装默认注册登录启动；只尝试一次，之后尊重用户在应用或系统设置中的选择。
+    private func registerByDefaultIfNeeded() {
+        guard defaults.object(forKey: Self.initializedKey) == nil else { return }
+        defaults.set(true, forKey: Self.initializedKey)
+        guard service.status == .notRegistered else { return }
+        do {
+            try service.register()
+            logger.info("Login item registered by first-run default")
+        } catch {
+            errorMessage = error.localizedDescription
+            logger.error("Default login item registration failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     var isRegistered: Bool {
@@ -38,6 +57,7 @@ final class LoginItemManager {
     }
 
     func setEnabled(_ enabled: Bool) {
+        defaults.set(true, forKey: Self.initializedKey)
         errorMessage = nil
         do {
             if enabled {

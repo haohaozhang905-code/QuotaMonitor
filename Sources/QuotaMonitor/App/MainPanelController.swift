@@ -36,7 +36,13 @@ final class MainPanelController: NSObject, NSWindowDelegate {
     let window: NSWindow
     private let dockIconSettings: DockIconSettings
 
-    init(store: QuotaStore, language: LanguageSettings, dockIconSettings: DockIconSettings, appearanceSettings: AppearanceSettings) {
+    init(
+        store: QuotaStore,
+        language: LanguageSettings,
+        dockIconSettings: DockIconSettings,
+        appearanceSettings: AppearanceSettings,
+        reminderSettings: ReminderSettings
+    ) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 980, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -73,7 +79,8 @@ final class MainPanelController: NSObject, NSWindowDelegate {
             store: store,
             language: language,
             dockIconSettings: dockIconSettings,
-            appearanceSettings: appearanceSettings
+            appearanceSettings: appearanceSettings,
+            reminderSettings: reminderSettings
         ))
         hosting.frame = NSRect(origin: .zero, size: window.contentRect(forFrameRect: window.frame).size)
         hosting.autoresizingMask = [.width, .height]

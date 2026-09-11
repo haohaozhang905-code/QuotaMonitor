@@ -356,6 +356,32 @@ struct QuotaModelsTests {
         #expect(QuotaHealth(remaining: 0.11) == .critical)
     }
 
+    @Test func quotaHealthUsesTheSameTimeCoverageRuleAsOverviewRisk() {
+        let now = Date(timeIntervalSince1970: 1_788_880_000)
+        let line = UsageLine(
+            type: "progress",
+            label: "Weekly",
+            used: 0.16,
+            limit: 1,
+            resetsAt: now.addingTimeInterval(6.5 * 24 * 60 * 60),
+            periodDurationMs: 7 * 24 * 60 * 60 * 1_000,
+            value: nil,
+            subtitle: nil
+        )
+
+        let overview = OverviewRiskResolver.resolve(
+            input: .init(
+                candidates: [.quota(provider: .codex, metric: .weekly, line: line)],
+                unavailableQuotaSourceCount: 0,
+                hasConnectedQuotaRoute: true
+            ),
+            now: now
+        )
+
+        #expect(overview.level == .reminder)
+        #expect(QuotaHealth(quotaLine: line, now: now) == .warning)
+    }
+
     @Test func balanceHealthUsesEstimatedDaysInsteadOfAbsoluteAmount() {
         #expect(QuotaHealth(balanceAmount: 20, estimatedDays: 10) == .healthy)
         #expect(QuotaHealth(balanceAmount: 20, estimatedDays: 7) == .warning)

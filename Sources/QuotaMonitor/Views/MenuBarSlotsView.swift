@@ -74,14 +74,14 @@ struct MenuBarSlotsView: View {
             BrandIconView(
                 kind: icon,
                 size: icon == .codex ? 17 : 14,
-                monochromeColor: .white
+                monochromeColor: .black
             )
                 .frame(width: 18, height: 18)
             Text(value)
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .fontDesign(.monospaced)
-                // 菜单栏保持统一白色；健康度通过下拉面板和 VoiceOver 传达。
-                .foregroundStyle(.white)
+                // 渲染为黑色模板，最终前景色由 macOS 根据菜单栏背景自动处理。
+                .foregroundStyle(.black)
                 .lineLimit(1)
         }
     }

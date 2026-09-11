@@ -4,6 +4,7 @@ import SwiftUI
 extension Notification.Name {
     static let quotaMonitorOpenSettings = Notification.Name("QuotaMonitor.openSettings")
     static let quotaMonitorToggleZoom = Notification.Name("QuotaMonitor.toggleZoom")
+    static let quotaMonitorOpenReminder = Notification.Name("QuotaMonitor.openReminder")
 }
 
 // MARK: - 余额状态
@@ -147,6 +148,7 @@ struct MainPanelView: View {
     @Bindable var language: LanguageSettings
     @Bindable var dockIconSettings: DockIconSettings
     @Bindable var appearanceSettings: AppearanceSettings
+    @Bindable var reminderSettings: ReminderSettings
     @State private var loginItem = LoginItemManager()
     @State private var selectedPage: DashboardPage = .overview
     @State private var tokenPeriod: TokenPeriod = .sevenDays
@@ -174,9 +176,11 @@ struct MainPanelView: View {
         .ignoresSafeArea(.container, edges: .top)
         .onAppear { loginItem.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: .quotaMonitorOpenSettings)) { _ in
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
-                selectedPage = .settings
-            }
+            selectPage(.settings)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .quotaMonitorOpenReminder)) { notification in
+            let destination = (notification.object as? String).flatMap(ReminderDestination.init(rawValue:)) ?? .overview
+            selectPage(destination == .tokens ? .tokens : .overview)
         }
     }
 
@@ -253,6 +257,21 @@ struct MainPanelView: View {
         reduceMotion ? .identity : .opacity.combined(with: .offset(x: 5))
     }
 
+    private func selectPage(_ page: DashboardPage) {
+        guard selectedPage != page else { return }
+        if page == .settings {
+            // 设置页包含已开启的原生开关。禁用这一次页面切换动画，避免开关
+            // 在插入视图时从“关闭”补间到真实状态，造成状态被修改的错觉。
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { selectedPage = page }
+        } else {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                selectedPage = page
+            }
+        }
+    }
+
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             Color.clear
@@ -272,10 +291,7 @@ struct MainPanelView: View {
             VStack(spacing: 3) {
                 ForEach(DashboardPage.allCases, id: \.self) { page in
                     Button {
-                        guard selectedPage != page else { return }
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
-                            selectedPage = page
-                        }
+                        selectPage(page)
                     } label: {
                         HStack(spacing: 10) {
                             Image(systemName: page.iconName)
@@ -358,9 +374,7 @@ struct MainPanelView: View {
         }
         return Button {
             guard isActionable else { return }
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
-                selectedPage = .settings
-            }
+            selectPage(.settings)
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: risk.level == .healthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
@@ -692,8 +706,8 @@ struct MainPanelView: View {
     private var codexOverviewFacts: [OverviewQuotaFact] {
         if QuotaPresentationPolicy.mode(for: store.codexRoute) == .sharedBalance { return sharedOverviewFacts }
         return [
-            quotaFact(label: language.text("panel.sessionLeft"), metric: .session, line: codexProvider?.session),
-            quotaFact(label: language.text("overview.weekQuota"), metric: .weekly, line: codexProvider?.weekly)
+            quotaFact(label: language.text("panel.sessionLeft"), line: codexProvider?.session),
+            quotaFact(label: language.text("overview.weekQuota"), line: codexProvider?.weekly)
         ]
     }
 
@@ -716,8 +730,8 @@ struct MainPanelView: View {
         ]
     }
 
-    private func quotaFact(label: String, metric: OverviewRiskMetric, line: UsageLine?) -> OverviewQuotaFact {
-        let health = codexQuotaHealth(metric: metric, line: line)
+    private func quotaFact(label: String, line: UsageLine?) -> OverviewQuotaFact {
+        let health = QuotaHealth(quotaLine: line)
         return .init(
             label: label,
             value: line?.remainingPercent.map(QuotaFormatters.percent) ?? "--",
@@ -753,19 +767,6 @@ struct MainPanelView: View {
             ),
             now: .now
         )
-    }
-
-    private func codexQuotaHealth(metric: OverviewRiskMetric, line: UsageLine?) -> QuotaHealth {
-        guard let line else { return .unknown }
-        let resolution = OverviewRiskResolver.resolve(
-            input: .init(
-                candidates: [.quota(provider: .codex, metric: metric, line: line)],
-                unavailableQuotaSourceCount: 0,
-                hasConnectedQuotaRoute: true
-            ),
-            now: .now
-        )
-        return quotaHealth(for: resolution.level)
     }
 
     private func balanceState(for level: OverviewRiskLevel) -> BalanceState {
@@ -1475,6 +1476,24 @@ struct MainPanelView: View {
                         .accessibilityLabel(language.text("settings.launchAtLogin"))
                         .accessibilityHint(language.text("settings.launchAtLogin.hint"))
                     }
+                    settingsRow(title: language.text("settings.reminders"), detail: language.text("settings.reminders.detail")) {
+                        Toggle("", isOn: $reminderSettings.isEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .tint(PanelTheme.chartAccent)
+                            .accessibilityLabel(language.text("settings.reminders"))
+                    }
+                    settingsRow(
+                        title: language.text("settings.systemNotifications"),
+                        detail: language.text(systemNotificationDetailKey)
+                    ) {
+                        Toggle("", isOn: $reminderSettings.prefersSystemNotifications)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .tint(PanelTheme.chartAccent)
+                            .disabled(!reminderSettings.isEnabled)
+                            .accessibilityLabel(language.text("settings.systemNotifications"))
+                    }
                     settingsRow(title: language.text("settings.language"), detail: language.text("settings.language.detail")) {
                         PanelSegmentedControl(
                             options: AppLanguage.allCases,
@@ -1511,6 +1530,14 @@ struct MainPanelView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             trustedSourcesCard
+        }
+    }
+
+    private var systemNotificationDetailKey: String {
+        switch reminderSettings.systemAuthorizationState {
+        case .unknown, .notRequested: "settings.systemNotifications.detail"
+        case .authorized: "settings.systemNotifications.authorized"
+        case .denied: "settings.systemNotifications.denied"
         }
     }
 

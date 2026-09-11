@@ -437,7 +437,11 @@ struct DropdownPopoverView: View {
     }
 
     private func quotaMetric(label: String, metric: DropdownQuotaMetricPresentation?) -> DropdownQuotaLine.Metric {
-        let health = QuotaHealth(remaining: metric?.remainingPercent)
+        let health = QuotaHealth(
+            remaining: metric?.remainingPercent,
+            resetsAt: metric?.resetsAt,
+            periodDurationMs: metric?.periodDurationMs
+        )
         let detail = metric?.resetsAt.map {
             language.text(
                 "overview.resetAfter",

@@ -4,10 +4,17 @@ set -eo pipefail
 CONFIGURATION="${1:-debug}"
 APP_NAME="QuotaMonitor"
 BINARY_NAME="QuotaMonitor"
-# macOS 26 Control Center keeps a separate per-bundle menu-bar ledger. The
-# previous bundle identity was left permanently blocked on this machine, so
-# use a fresh identity while retaining the app's existing data directories.
-BUNDLE_ID="com.cmsjcm.QuotaMonitorStatus"
+# macOS 26 会在「系统设置 → 菜单栏」中按应用标识管理状态项开关。在本机
+# (macOS 26.6) 上，历史标识的状态项被系统屏蔽后开关无法恢复，因此逐个
+# 更换了标识（QuotaMonitor → QuotaMonitorStatus → QuotaMonitorStatus2
+# → QuotaMonitorStatus3）。
+# 注意：换身份是本机应急兼容手段，不是通用机制。每次更换系统都会把 App
+# 识别为新应用，通知权限、登录项、偏好设置随之分裂。可先尝试「系统设置
+# → 菜单栏」重新开启 QuotaMonitor（本机 2026-09-11 实测关闭→开启并重启
+# 后仍被屏蔽，多数情况下无效），无效时才更换 BUNDLE_ID。
+# 若该文件被还原到旧版本（如 git checkout），BUNDLE_ID 会退回已被本机
+# 屏蔽的历史身份，状态项会再次消失。
+BUNDLE_ID="com.cmsjcm.QuotaMonitorStatus3"
 VERSION="${QUOTAMONITOR_VERSION:-0.1.8}"
 BUILD_NUMBER="${QUOTAMONITOR_BUILD_NUMBER:-10}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

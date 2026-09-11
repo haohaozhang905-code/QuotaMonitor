@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UserNotifications
 
 @main
 struct QuotaMonitorApp: App {
@@ -16,15 +17,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let language = LanguageSettings()
     let dockIconSettings = DockIconSettings()
     let appearanceSettings = AppearanceSettings()
+    let reminderSettings = ReminderSettings()
 
     private var statusItem: NSStatusItem?
     private var panelController: MainPanelController?
+    private var reminderCoordinator: ReminderCoordinator?
+    private var reminderDeliveryController: ReminderDeliveryController?
     private var refreshTask: Task<Void, Never>?
     private var menuBarUpdateTask: Task<Void, Never>?
     private var menuBarAnimationTask: Task<Void, Never>?
     private var dropdownPanel: NSPanel?
     private var dropdownEventMonitors: [Any] = []
     private var renderedMenuBarState: MenuBarRenderState?
+    private var lastEvaluatedReminderRevision = 0
 
     private struct MenuBarRenderState: Equatable {
         let codexRoute: CodexRoute
@@ -52,8 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             store: store,
             language: language,
             dockIconSettings: dockIconSettings,
-            appearanceSettings: appearanceSettings
+            appearanceSettings: appearanceSettings,
+            reminderSettings: reminderSettings
         )
+        setupReminders()
         observeStore()
         refreshTask = Task { await store.start() }
         // 调试/验收用：设置 CODEXQUOTA_SHOW_PANEL=1 时启动即展示主面板。
@@ -66,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTask?.cancel()
         menuBarUpdateTask?.cancel()
         menuBarAnimationTask?.cancel()
+        reminderDeliveryController?.closeToastPanel()
         closeDropdownPanel(animated: false)
     }
 
@@ -101,7 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         // 不使用系统自动生成的 Item-0 名称，避免继承旧 MenuBarExtra/状态栏
         // 的隐藏偏好；固定名称也让后续重启保持同一个 QuotaMonitor 状态项。
-        item.autosaveName = "QuotaMonitor.StatusItem"
+        item.autosaveName = "QuotaMonitor.StatusItem2"
         item.isVisible = true
         if let button = item.button {
             button.title = ""
@@ -210,7 +218,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
         let image = renderer.nsImage ?? MenuBarQuotaGlyph.image
-        image.isTemplate = false
+        // 交给 macOS 根据菜单栏明暗自动着色，避免浅色菜单栏上白色内容“隐形”。
+        image.isTemplate = true
         button.image = image
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleNone
@@ -231,9 +240,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = store.localTokenRefreshProgress
             _ = store.lastUpdated
             _ = store.lastTokenUpdatedAt
+            _ = store.reminderRevision
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.updateMenuBarContent()
+                self?.evaluateRemindersIfNeeded()
                 self?.observeStore()
             }
         }
@@ -472,4 +483,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panelController?.show()
     }
 
+    private func setupReminders() {
+        let delivery = ReminderDeliveryController(settings: reminderSettings)
+        delivery.statusItemButton = statusItem?.button
+        delivery.openReminder = { [weak self] presentation in
+            self?.showMainPanel()
+            NotificationCenter.default.post(
+                name: .quotaMonitorOpenReminder,
+                object: presentation.destination.rawValue
+            )
+        }
+        reminderDeliveryController = delivery
+
+        let coordinator = ReminderCoordinator(settings: reminderSettings, language: language)
+        coordinator.onEvents = { [weak delivery] _, presentations in
+            delivery?.deliver(presentations: presentations)
+        }
+        reminderCoordinator = coordinator
+        reminderSettings.onSystemNotificationPreferenceChange = { [weak delivery] enabled in
+            delivery?.handleSystemNotificationPreference(enabled)
+        }
+        reminderSettings.onEnabledChange = { [weak delivery] enabled in
+            guard !enabled else { return }
+            delivery?.closeToastPanel()
+        }
+        UNUserNotificationCenter.current().delegate = self
+        if reminderSettings.prefersSystemNotifications {
+            delivery.handleSystemNotificationPreference(true)
+        } else {
+            Task { await delivery.refreshAuthorizationState() }
+        }
+    }
+
+    private func evaluateRemindersIfNeeded() {
+        guard store.reminderRevision != lastEvaluatedReminderRevision else { return }
+        lastEvaluatedReminderRevision = store.reminderRevision
+        reminderCoordinator?.evaluate(store: store)
+    }
+
+}
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .list])
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let rawDestination = response.notification.request.content.userInfo["destination"] as? String
+        completionHandler()
+        Task { @MainActor [weak self] in
+            let destination = rawDestination.flatMap(ReminderDestination.init(rawValue:)) ?? .overview
+            self?.showMainPanel()
+            NotificationCenter.default.post(name: .quotaMonitorOpenReminder, object: destination.rawValue)
+        }
+    }
 }

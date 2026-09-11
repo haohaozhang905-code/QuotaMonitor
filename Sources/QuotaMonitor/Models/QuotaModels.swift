@@ -119,10 +119,44 @@ enum QuotaHealth: String, Sendable {
     case unknown = "未知"
 
     init(remaining: Double?) {
-        guard let remaining else { self = .unknown; return }
-        if remaining <= 0.30 { self = .critical }
-        else if remaining <= 0.50 { self = .warning }
-        else { self = .healthy }
+        self.init(
+            remaining: remaining,
+            resetsAt: nil,
+            periodDurationMs: nil
+        )
+    }
+
+    init(
+        remaining: Double?,
+        resetsAt: Date?,
+        periodDurationMs: Double?,
+        now: Date = .now
+    ) {
+        guard let assessment = QuotaRiskPolicy.assess(
+            remainingPercent: remaining,
+            resetsAt: resetsAt,
+            periodDuration: periodDurationMs.map { $0 / 1_000 },
+            now: now
+        ) else {
+            self = .unknown
+            return
+        }
+        switch assessment.level {
+        case .healthy: self = .healthy
+        case .reminder: self = .warning
+        case .critical: self = .critical
+        case .trustWarning, .unavailable: self = .unknown
+        }
+    }
+
+    /// 有可靠重置周期时按“剩余额度能否撑到重置”判断；缺少周期时回退到固定阈值。
+    init(quotaLine: UsageLine?, now: Date = .now) {
+        self.init(
+            remaining: quotaLine?.remainingPercent,
+            resetsAt: quotaLine?.resetsAt,
+            periodDurationMs: quotaLine?.periodDurationMs,
+            now: now
+        )
     }
 
     /// 金额没有统一的安全线；优先按当前消耗速度折算的可用天数判断。

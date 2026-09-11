@@ -1,6 +1,6 @@
 # 当前不足与可改造方向
 
-[返回 README](../README.md) · [安装与排查](INSTALL.md) · [工具支持清单](DATA_SOURCES.md) · [定制与二次开发](CUSTOMIZATION.md)
+[返回 README](../README.md) · [提醒机制方案](REMINDER_PRODUCT_DESIGN.md) · [安装与排查](INSTALL.md) · [工具支持清单](DATA_SOURCES.md) · [定制与二次开发](CUSTOMIZATION.md)
 
 当前优先满足个人 Mac 上的额度观察和本地用量回看，以下能力仍有边界。欢迎提交 Issue 或 Pull Request 参与改进。
 
@@ -28,7 +28,8 @@
 
 以下功能可以继续开发，当前不作为内置功能提供：
 
-- 低额度通知
+- 提醒阈值、分项开关与静默时段自定义
+- 应用内提醒历史与逐条已读
 - CSV 导出
 - 预算告警
 - 自定义供应商余额接口

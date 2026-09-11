@@ -120,6 +120,7 @@ struct TokenDashboardPresentation: Equatable, Sendable {
 struct DropdownQuotaMetricPresentation: Equatable, Sendable {
     let remainingPercent: Double?
     let resetsAt: Date?
+    let periodDurationMs: Double?
 }
 
 /// 额度的连接状态与读取状态独立表达，避免用 `--` 掩盖真实原因。
@@ -404,7 +405,8 @@ struct QuotaPresentationSnapshot: Equatable, Sendable {
     private static func metricPresentation(_ line: UsageLine) -> DropdownQuotaMetricPresentation {
         DropdownQuotaMetricPresentation(
             remainingPercent: line.remainingPercent,
-            resetsAt: line.resetsAt
+            resetsAt: line.resetsAt,
+            periodDurationMs: line.periodDurationMs
         )
     }
 

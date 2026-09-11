@@ -47,6 +47,8 @@ final class QuotaStore {
     private(set) var localTokenRefreshProgress: LocalTokenRefreshProgress?
     private(set) var lastTokenUpdatedAt: Date?
     private(set) var hasCompletedInitialRefresh = false
+    /// 额度或 Token 完成一轮刷新后递增，提醒协调器只在完整快照上判断规则。
+    private(set) var reminderRevision = 0
     private(set) var codexResetCredits: CodexResetCredits?
     private(set) var tokenHistory: [DailyTokenUsage] = []
     /// 按日期、平台、客户端和模型拆分的原始聚合桶，供 Token 看板的模型维度查询。
@@ -324,7 +326,10 @@ final class QuotaStore {
     func refresh() async {
         guard !isRefreshing else { return }
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer {
+            isRefreshing = false
+            reminderRevision &+= 1
+        }
 
         let previousCodexRoute = codexRoute
         let previousClaudeRoute = claudeRoute
@@ -663,6 +668,7 @@ final class QuotaStore {
             "sources codex=\(Self.todayTotal(self.tokenHistory)) claude=\(Self.todayTotal(self.claudeHistory)) desktop=\(Self.todayTotal(self.claudeDesktopHistory)) workbuddy=\(Self.todayTotal(self.workBuddyHistory)) additional=\(Self.todayTotal(self.totalTokenHistory) - Self.todayTotal(Self.combineByDay([self.tokenHistory, self.claudeHistory, self.claudeDesktopHistory, self.workBuddyHistory]))) deepseek=\(Self.todayTotal(self.deepSeekHistory)) desktopStale=\(self.claudeDesktopStale)"
         )
         refreshTokenDerivedState()
+        reminderRevision &+= 1
     }
 
     /// 防止单个损坏或超大的本地日志让整个刷新状态长期保持 active。
