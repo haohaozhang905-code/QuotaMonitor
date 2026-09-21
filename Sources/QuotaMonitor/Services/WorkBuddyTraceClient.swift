@@ -9,7 +9,7 @@ import Foundation
 ///
 /// 统一口径：total = totalInputTokens + totalOutputTokens（input 已含缓存），
 /// cached 单独列示，与 Codex 会话口径一致。
-actor WorkBuddyTraceClient {
+actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
     private struct GenerationUsageRecord: Codable, Equatable {
         let offset: Int
         let date: Date?
@@ -17,25 +17,12 @@ actor WorkBuddyTraceClient {
         let totals: TokenTotals
     }
 
-    private struct FileCache: Codable, Equatable {
+    private struct FileCache: LocalTokenScanCacheEntry {
         let mtime: Date
         let fileSize: Int
-        let totalsByDay: [String: TokenTotals]
-        let deepSeekByDay: [String: TokenTotals]
         let modelByDay: [String: TokenTotals]
         let processedByteCount: Int?
         let generationUsages: [GenerationUsageRecord]?
-
-        func matches(mtime candidateMtime: Date, fileSize candidateSize: Int) -> Bool {
-            fileSize == candidateSize
-                && abs(mtime.timeIntervalSinceReferenceDate - candidateMtime.timeIntervalSinceReferenceDate) < 0.001
-        }
-    }
-
-    private struct PersistedCache: Codable {
-        let version: Int
-        let rootPath: String
-        let entries: [String: FileCache]
     }
 
     private struct TraceSummary: Decodable {
@@ -68,134 +55,44 @@ actor WorkBuddyTraceClient {
 
     init(root: URL? = nil) {
         self.root = root ?? Self.defaultRoot()
-        self.persistentCacheURL = root == nil ? Self.defaultPersistentCacheURL() : nil
+        self.persistentCacheURL = root == nil
+            ? LocalTokenScanSupport.defaultCacheURL(fileName: "workbuddy-trace-cache-v1.json")
+            : nil
     }
 
-    func fetch() -> [DailyTokenUsage] {
-        (try? fetchSnapshot().history) ?? []
-    }
-
-    /// 只统计模型列表包含 deepseek 的 trace。
-    func fetch(modelFilter: String?) -> [DailyTokenUsage] {
-        guard modelFilter?.lowercased().contains("deepseek") == true else { return fetch() }
-        return (try? fetchSnapshot().deepSeekHistory) ?? []
-    }
-
-    func fetchBuckets() -> [TokenUsageBucket] {
-        (try? fetchSnapshot().buckets) ?? []
-    }
-
-    func fetchSnapshot() throws -> TokenSourceSnapshot {
-        TokenSourceSnapshot(buckets: try scanBuckets())
-    }
-
-    private func scanBuckets() throws -> [TokenUsageBucket] {
-        loadPersistentCacheIfNeeded()
-        var newCache: [URL: FileCache] = [:]
-        var buckets: [TokenUsageBucket] = []
-        var enumerationError: Error?
-        guard let enumerator = FileManager.default.enumerator(
+    func snapshotBuckets() throws -> [TokenUsageBucket] {
+        LocalTokenScanSupport.loadCacheIfNeeded(
+            into: &cache, didLoad: &didLoadPersistentCache,
+            at: persistentCacheURL, version: 2, root: root
+        )
+        let result = try LocalTokenScanSupport.scanSingleRoot(
             at: root,
-            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-            options: [.skipsHiddenFiles],
-            errorHandler: { _, error in
-                enumerationError = error
-                return false
-            }
-        ) else {
-            if !FileManager.default.fileExists(atPath: root.path) { return [] }
-            throw TokenSourceReadError.unreadableRoot(root)
-        }
-        for case let url as URL in enumerator where url.lastPathComponent.hasPrefix("trace_") && url.pathExtension == "json" {
-            try Task.checkCancellation()
-            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
-                  let mtime = values.contentModificationDate,
-                  let fileSize = values.fileSize else {
-                if let cached = cache[url] {
-                    newCache[url] = cached
-                    buckets.append(contentsOf: Self.makeBuckets(from: cached.modelByDay))
-                }
-                continue
-            }
-            let modelByDay: [String: TokenTotals]
-            if let cached = cache[url], cached.matches(mtime: mtime, fileSize: fileSize) {
-                newCache[url] = cached
-                modelByDay = cached.modelByDay
-            } else if let entry = parseFile(
-                url,
-                mtime: mtime,
-                fileSize: fileSize,
-                cached: cache[url]
-            ) {
-                newCache[url] = entry
-                modelByDay = entry.modelByDay
-            } else if let cached = cache[url] {
-                // 写入边界暂时不完整时继续展示该文件上一份有效结果。
-                newCache[url] = cached
-                modelByDay = cached.modelByDay
-            } else {
-                // 空 trace 或不含 usage 的 trace 也记入缓存；文件不变时不再反复解析。
-                let entry = FileCache(
+            cache: cache,
+            accepts: { $0.lastPathComponent.hasPrefix("trace_") && $0.pathExtension == "json" },
+            parse: { [self] url, mtime, fileSize, _, cached in
+                parseFile(url, mtime: mtime, fileSize: fileSize, cached: cached)
+            },
+            emptyEntry: { mtime, fileSize in
+                FileCache(
                     mtime: mtime,
                     fileSize: fileSize,
-                    totalsByDay: [:],
-                    deepSeekByDay: [:],
                     modelByDay: [:],
                     processedByteCount: fileSize,
                     generationUsages: []
                 )
-                newCache[url] = entry
-                modelByDay = [:]
+            },
+            output: {
+                LocalTokenScanSupport.modelBuckets(
+                    from: $0.modelByDay,
+                    platform: .workbuddy,
+                    client: .desktop,
+                    invalidDatePolicy: .useNow
+                )
             }
-            buckets.append(contentsOf: Self.makeBuckets(from: modelByDay))
-        }
-        if enumerationError != nil { throw TokenSourceReadError.unreadableRoot(root) }
-        let cacheChanged = cache != newCache
-        cache = newCache
-        if cacheChanged { savePersistentCache() }
-        return TokenUsageBucket.combining(buckets)
-    }
-
-    private static func makeBuckets(from modelByDay: [String: TokenTotals]) -> [TokenUsageBucket] {
-        modelByDay.compactMap { key, totals in
-            let parts = key.split(separator: "\u{1F}", maxSplits: 1).map(String.init)
-            guard parts.count == 2 else { return nil }
-            let model = TokenModelName.canonical(parts[1])
-            return TokenUsageBucket(
-                bucketStart: TokenUsageBucket.date(fromBucketKey: parts[0]) ?? day(from: parts[0]),
-                platform: .workbuddy,
-                client: .desktop,
-                model: model,
-                provider: model.lowercased().contains("deepseek") ? .deepseek : .official,
-                totals: totals
-            )
-        }
-    }
-
-    private func loadPersistentCacheIfNeeded() {
-        guard !didLoadPersistentCache else { return }
-        didLoadPersistentCache = true
-        guard let persistentCacheURL,
-              let data = try? Data(contentsOf: persistentCacheURL),
-              let persisted = try? JSONDecoder().decode(PersistedCache.self, from: data),
-              persisted.version == 2,
-              persisted.rootPath == root.standardizedFileURL.path else { return }
-        cache = Dictionary(uniqueKeysWithValues: persisted.entries.map {
-            (URL(fileURLWithPath: $0.key), $0.value)
-        })
-    }
-
-    private func savePersistentCache() {
-        guard let persistentCacheURL else { return }
-        let payload = PersistedCache(
-            version: 2,
-            rootPath: root.standardizedFileURL.path,
-            entries: Dictionary(uniqueKeysWithValues: cache.map { ($0.key.path, $0.value) })
         )
-        guard let data = try? JSONEncoder().encode(payload) else { return }
-        let directory = persistentCacheURL.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? data.write(to: persistentCacheURL, options: .atomic)
+        cache = result.cache
+        LocalTokenScanSupport.saveCacheIfChanged(cache, changed: result.changed, at: persistentCacheURL, version: 2, root: root)
+        return TokenUsageBucket.combining(result.output)
     }
 
     private func parseFile(
@@ -212,8 +109,8 @@ actor WorkBuddyTraceClient {
               let traceData = traceJSON.data(using: .utf8),
               let summary = try? Self.traceDecoder().decode(TraceSummary.self, from: traceData) else { return nil }
 
-            let dayKey = Self.dayKey(for: summary.startedAt)
-            let bucketKey = TokenUsageBucket.bucketKey(for: summary.startedAt)
+        let dayKey = Self.dayKey(for: summary.startedAt)
+        let bucketKey = TokenUsageBucket.bucketKey(for: summary.startedAt)
         if summary.totalTokens > 0 {
             var totals = TokenTotals()
             totals.input = summary.modelInfo?.totalInputTokens
@@ -221,12 +118,9 @@ actor WorkBuddyTraceClient {
             totals.output = summary.modelInfo?.totalOutputTokens ?? 0
             totals.cachedInput = summary.modelInfo?.totalCachedTokens ?? 0
             let model = summary.modelInfo?.models?.joined(separator: " + ") ?? "unknown"
-            let isDeepSeek = model.lowercased().contains("deepseek")
             return FileCache(
                 mtime: mtime,
                 fileSize: fileSize,
-                totalsByDay: [dayKey: totals],
-                deepSeekByDay: isDeepSeek ? [dayKey: totals] : [:],
                 modelByDay: ["\(bucketKey)\u{1F}\(model)": totals],
                 processedByteCount: fileSize,
                 generationUsages: nil
@@ -260,25 +154,17 @@ actor WorkBuddyTraceClient {
             )
         }
         let usages = usagesByOffset.values.sorted { $0.offset < $1.offset }
-        var totalsByDay: [String: TokenTotals] = [:]
-        var deepSeekByDay: [String: TokenTotals] = [:]
         var modelByDay: [String: TokenTotals] = [:]
         for usage in usages {
             let usageDay = usage.date.map(Self.dayKey(for:)) ?? dayKey
             let model = usage.model.isEmpty ? "unknown" : usage.model
-            totalsByDay[usageDay, default: TokenTotals()] = totalsByDay[usageDay, default: TokenTotals()].adding(usage.totals)
             let usageBucket = usage.date.map(TokenUsageBucket.bucketKey(for:)) ?? usageDay
             let modelKey = "\(usageBucket)\u{1F}\(model)"
             modelByDay[modelKey, default: TokenTotals()] = modelByDay[modelKey, default: TokenTotals()].adding(usage.totals)
-            if model.lowercased().contains("deepseek") {
-                deepSeekByDay[usageDay, default: TokenTotals()] = deepSeekByDay[usageDay, default: TokenTotals()].adding(usage.totals)
-            }
         }
         return FileCache(
             mtime: mtime,
             fileSize: fileSize,
-            totalsByDay: totalsByDay,
-            deepSeekByDay: deepSeekByDay,
             modelByDay: modelByDay,
             processedByteCount: fileSize,
             generationUsages: usages
@@ -568,11 +454,7 @@ actor WorkBuddyTraceClient {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let raw = try decoder.singleValueContainer().decode(String.self)
-            let fractional = ISO8601DateFormatter()
-            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let date = fractional.date(from: raw) { return date }
-            let basic = ISO8601DateFormatter()
-            if let date = basic.date(from: raw) { return date }
+            if let date = LocalTokenScanSupport.iso8601Date(from: raw) { return date }
             throw DecodingError.dataCorruptedError(
                 in: try decoder.singleValueContainer(),
                 debugDescription: "Invalid trace timestamp"
@@ -585,22 +467,10 @@ actor WorkBuddyTraceClient {
         DailyTokenUsage.dayKey(for: date)
     }
 
-    private static func day(from key: String) -> Date {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone.current
-        return formatter.date(from: key) ?? .now
-    }
-
     private static func defaultRoot() -> URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".workbuddy", isDirectory: true)
             .appendingPathComponent("traces", isDirectory: true)
     }
 
-    private static func defaultPersistentCacheURL() -> URL? {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("com.cmsjcm.QuotaMonitor", isDirectory: true)
-            .appendingPathComponent("workbuddy-trace-cache-v1.json")
-    }
 }

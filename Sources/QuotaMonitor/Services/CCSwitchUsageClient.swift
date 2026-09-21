@@ -2,12 +2,6 @@ import Foundation
 import AppKit
 import SQLite3
 
-/// cc-switch 本地数据库的单日聚合结果。
-struct CCSwitchDailyUsage: Sendable {
-    let all: [DailyTokenUsage]
-    let deepSeek: [DailyTokenUsage]
-}
-
 /// 从 cc-switch 的请求日志读取 Claude / Claude 桌面版 token 用量。
 ///
 /// 数据来源：`~/.cc-switch/cc-switch.db` 的 `proxy_request_logs` 表，
@@ -46,29 +40,14 @@ actor CCSwitchUsageClient {
             totals.cachedInput = row.cacheReadTokens
             totals.cacheWriteInput = row.cacheCreationTokens
             totals.output = row.outputTokens
-            let model = TokenModelName.canonical(row.model)
             let createdAt = Date(timeIntervalSince1970: Double(row.createdAt))
             let hour = Calendar.current.date(
                 from: Calendar.current.dateComponents([.year, .month, .day, .hour], from: createdAt)
             ) ?? createdAt
-            return TokenUsageBucket(
-                bucketStart: hour,
-                platform: .claude,
-                client: client,
-                model: model,
-                provider: model.lowercased().contains("deepseek") ? .deepseek : .official,
-                totals: totals
+            return TokenUsageBucket.modelBucket(
+                at: hour, platform: .claude, client: client, model: row.model, totals: totals
             )
         })
-    }
-
-    func fetch(appType: String) -> CCSwitchDailyUsage? {
-        guard let snapshot = fetchSnapshot(appType: appType) else { return nil }
-        return CCSwitchDailyUsage(all: snapshot.history, deepSeek: snapshot.deepSeekHistory)
-    }
-
-    func fetchBuckets(appType: String, client: TokenClient = .desktop) -> [TokenUsageBucket]? {
-        fetchSnapshot(appType: appType, client: client)?.buckets
     }
 
     private func queryRows(appType: String) -> [Row]? {

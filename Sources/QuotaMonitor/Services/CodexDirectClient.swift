@@ -36,31 +36,10 @@ struct CodexDirectClient: Sendable {
         let windows = [usage.rateLimit?.primaryWindow, usage.rateLimit?.secondaryWindow]
             .compactMap { $0 }
             .compactMap { usageLine(from: $0, now: now) }
-        guard !windows.isEmpty else { throw DirectError.malformedUsage }
-
-        let uniqueLines = windows.reduce(into: [String: UsageLine]()) { result, line in
-            result[line.label] = line
-        }.values.sorted { $0.label < $1.label }
-
-        let provider = ProviderUsage(
-            providerId: "codex",
-            displayName: "Codex",
-            plan: usage.planType?.uppercased(),
-            lines: uniqueLines,
-            fetchedAt: now
-        )
+        let provider = try makeProvider(planType: usage.planType, windows: windows, fetchedAt: now)
 
         let endpointCredits = creditsData.flatMap { try? JSONDecoder().decode(CreditEnvelope.self, from: $0) }
-        let creditPayload = endpointCredits ?? usage.rateLimitResetCredits
-        let resetCredits = creditPayload.flatMap { payload -> CodexResetCredits? in
-            guard let count = payload.availableCount else { return nil }
-            let expirations = payload.credits
-                .filter { $0.redeemedAt == nil }
-                .compactMap { parseISO8601($0.expiresAt) }
-                .filter { $0 > now }
-                .sorted()
-            return CodexResetCredits(availableCount: count, expirations: expirations, fetchedAt: now)
-        }
+        let resetCredits = makeResetCredits(endpointCredits ?? usage.rateLimitResetCredits, fetchedAt: now)
 
         return CodexDirectSnapshot(provider: provider, resetCredits: resetCredits)
     }
@@ -76,29 +55,41 @@ struct CodexDirectClient: Sendable {
         let windows = [result.rateLimits.primary, result.rateLimits.secondary]
             .compactMap { $0 }
             .compactMap { appServerUsageLine(from: $0, now: now) }
-        guard !windows.isEmpty else { throw DirectError.malformedUsage }
+        let provider = try makeProvider(planType: result.planType, windows: windows, fetchedAt: now)
+        let resetCredits = makeResetCredits(
+            result.rateLimitResetCredits, fetchedAt: now, requiresAvailableStatus: true
+        )
+        return CodexDirectSnapshot(provider: provider, resetCredits: resetCredits)
+    }
 
-        let uniqueLines = windows.reduce(into: [String: UsageLine]()) { values, line in
-            values[line.label] = line
+    private func makeProvider(planType: String?, windows: [UsageLine], fetchedAt: Date) throws -> ProviderUsage {
+        guard !windows.isEmpty else { throw DirectError.malformedUsage }
+        let lines = windows.reduce(into: [String: UsageLine]()) { result, line in
+            result[line.label] = line
         }.values.sorted { $0.label < $1.label }
-        let provider = ProviderUsage(
+        return ProviderUsage(
             providerId: "codex",
             displayName: "Codex",
-            plan: result.planType?.uppercased(),
-            lines: uniqueLines,
-            fetchedAt: now
+            plan: planType?.uppercased(),
+            lines: lines,
+            fetchedAt: fetchedAt
         )
+    }
 
-        let resetCredits = result.rateLimitResetCredits.flatMap { payload -> CodexResetCredits? in
+    private func makeResetCredits(
+        _ payload: CreditEnvelope?,
+        fetchedAt: Date,
+        requiresAvailableStatus: Bool = false
+    ) -> CodexResetCredits? {
+        payload.flatMap { payload in
             guard let count = payload.availableCount else { return nil }
             let expirations = payload.credits
-                .filter { $0.redeemedAt == nil && $0.status?.lowercased() == "available" }
+                .filter { $0.redeemedAt == nil && (!requiresAvailableStatus || $0.status?.lowercased() == "available") }
                 .compactMap { parseISO8601($0.expiresAt) }
-                .filter { $0 > now }
+                .filter { $0 > fetchedAt }
                 .sorted()
-            return CodexResetCredits(availableCount: count, expirations: expirations, fetchedAt: now)
+            return CodexResetCredits(availableCount: count, expirations: expirations, fetchedAt: fetchedAt)
         }
-        return CodexDirectSnapshot(provider: provider, resetCredits: resetCredits)
     }
 
     private static func runAppServerRateLimits(executable: String, timeout: TimeInterval) throws -> AppServerRateLimits {
@@ -171,27 +162,11 @@ struct CodexDirectClient: Sendable {
     }
 
     private func usageLine(from window: DirectWindow, now: Date) -> UsageLine? {
-        guard let usedPercent = window.usedPercent else { return nil }
-        let duration = window.limitWindowSeconds
-        let resetAt = window.resetAt.map(Date.init(timeIntervalSince1970:))
-        let isShortWindow: Bool
-        if let duration {
-            isShortWindow = duration <= 12 * 60 * 60
-        } else if let resetAt {
-            isShortWindow = resetAt.timeIntervalSince(now) <= 12 * 60 * 60
-        } else {
-            return nil
-        }
-
-        return UsageLine(
-            type: "progress",
-            label: isShortWindow ? "Session" : "Weekly",
-            used: min(max(usedPercent, 0), 100),
-            limit: 100,
-            resetsAt: resetAt,
-            periodDurationMs: duration.map { $0 * 1_000 },
-            value: nil,
-            subtitle: nil
+        Self.makeUsageLine(
+            usedPercent: window.usedPercent,
+            durationSeconds: window.limitWindowSeconds,
+            resetTimestamp: window.resetAt,
+            now: now
         )
     }
 
@@ -246,11 +221,23 @@ struct CodexDirectClient: Sendable {
     }
 
     private func appServerUsageLine(from window: AppServerWindow, now: Date) -> UsageLine? {
-        let duration = window.windowDurationMins.map { $0 * 60 }
-        let resetAt = window.resetsAt.map(Date.init(timeIntervalSince1970:))
-        guard let usedPercent = window.usedPercent,
-              duration != nil || resetAt != nil else { return nil }
-        let isShortWindow = duration.map { $0 <= 12 * 60 * 60 }
+        Self.makeUsageLine(
+            usedPercent: window.usedPercent,
+            durationSeconds: window.windowDurationMins.map { $0 * 60 },
+            resetTimestamp: window.resetsAt,
+            now: now
+        )
+    }
+
+    static func makeUsageLine(
+        usedPercent: Double?,
+        durationSeconds: Double?,
+        resetTimestamp: Double?,
+        now: Date
+    ) -> UsageLine? {
+        let resetAt = resetTimestamp.map(Date.init(timeIntervalSince1970:))
+        guard let usedPercent, durationSeconds != nil || resetAt != nil else { return nil }
+        let isShortWindow = durationSeconds.map { $0 <= 12 * 60 * 60 }
             ?? resetAt.map { $0.timeIntervalSince(now) <= 12 * 60 * 60 }
             ?? false
         return UsageLine(
@@ -259,7 +246,7 @@ struct CodexDirectClient: Sendable {
             used: min(max(usedPercent, 0), 100),
             limit: 100,
             resetsAt: resetAt,
-            periodDurationMs: duration.map { $0 * 1_000 },
+            periodDurationMs: durationSeconds.map { $0 * 1_000 },
             value: nil,
             subtitle: nil
         )

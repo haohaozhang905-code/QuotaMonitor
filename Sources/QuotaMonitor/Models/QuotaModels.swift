@@ -17,10 +17,6 @@ extension JSONDecoder.DateDecodingStrategy {
     }
 }
 
-struct UsageResponse: Decodable, Sendable {
-    let providers: [ProviderUsage]
-}
-
 struct ProviderUsage: Codable, Equatable, Identifiable, Sendable {
     let providerId: String
     let displayName: String
@@ -106,10 +102,6 @@ struct UsageLine: Codable, Equatable, Identifiable, Sendable {
         return min(max(used / limit, 0), 1)
     }
     var remainingPercent: Double? { usedPercent.map { 1 - $0 } }
-    var remainingCount: Int? {
-        guard let used, let limit else { return nil }
-        return max(Int((limit - used).rounded(.down)), 0)
-    }
 }
 
 enum QuotaHealth: String, Sendable {
@@ -119,25 +111,7 @@ enum QuotaHealth: String, Sendable {
     case unknown = "未知"
 
     init(remaining: Double?) {
-        self.init(
-            remaining: remaining,
-            resetsAt: nil,
-            periodDurationMs: nil
-        )
-    }
-
-    init(
-        remaining: Double?,
-        resetsAt: Date?,
-        periodDurationMs: Double?,
-        now: Date = .now
-    ) {
-        guard let assessment = QuotaRiskPolicy.assess(
-            remainingPercent: remaining,
-            resetsAt: resetsAt,
-            periodDuration: periodDurationMs.map { $0 / 1_000 },
-            now: now
-        ) else {
+        guard let assessment = QuotaRiskPolicy.assess(remainingPercent: remaining) else {
             self = .unknown
             return
         }
@@ -149,14 +123,9 @@ enum QuotaHealth: String, Sendable {
         }
     }
 
-    /// 有可靠重置周期时按“剩余额度能否撑到重置”判断；缺少周期时回退到固定阈值。
-    init(quotaLine: UsageLine?, now: Date = .now) {
-        self.init(
-            remaining: quotaLine?.remainingPercent,
-            resetsAt: quotaLine?.resetsAt,
-            periodDurationMs: quotaLine?.periodDurationMs,
-            now: now
-        )
+    /// 额度颜色只使用界面显示的整数百分比，与 30%/5% 提醒档保持一致。
+    init(quotaLine: UsageLine?, now _: Date = .now) {
+        self.init(remaining: quotaLine?.remainingPercent)
     }
 
     /// 金额没有统一的安全线；优先按当前消耗速度折算的可用天数判断。

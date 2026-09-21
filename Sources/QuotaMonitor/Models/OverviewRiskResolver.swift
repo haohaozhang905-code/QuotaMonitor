@@ -26,7 +26,6 @@ struct OverviewRiskCandidate: Equatable, Sendable {
     let metric: OverviewRiskMetric
     let remainingPercent: Double?
     let resetsAt: Date?
-    let periodDuration: TimeInterval?
     let balanceAmount: Double?
     let estimatedDays: Int?
 
@@ -40,10 +39,16 @@ struct OverviewRiskCandidate: Equatable, Sendable {
             metric: metric,
             remainingPercent: line.remainingPercent,
             resetsAt: line.resetsAt,
-            periodDuration: line.periodDurationMs.map { $0 / 1_000 },
             balanceAmount: nil,
             estimatedDays: nil
         )
+    }
+
+    static func quotaLines(from usage: ProviderUsage, provider: OverviewRiskProvider) -> [Self] {
+        [
+            usage.session.map { quota(provider: provider, metric: .session, line: $0) },
+            usage.weekly.map { quota(provider: provider, metric: .weekly, line: $0) }
+        ].compactMap { $0 }
     }
 
     static func balance(amount: Double?, estimatedDays: Int?) -> Self {
@@ -52,7 +57,6 @@ struct OverviewRiskCandidate: Equatable, Sendable {
             metric: .sharedBalance,
             remainingPercent: nil,
             resetsAt: nil,
-            periodDuration: nil,
             balanceAmount: amount,
             estimatedDays: estimatedDays
         )
@@ -67,7 +71,6 @@ struct OverviewRiskSignal: Equatable, Sendable {
     let resetsAt: Date?
     let balanceAmount: Double?
     let estimatedDays: Int?
-    let coverageRatio: Double?
     let urgencyScore: Double
 }
 
@@ -93,60 +96,32 @@ struct OverviewRiskResolution: Equatable, Sendable {
 /// 避免同一个百分比在不同界面显示成不同颜色。
 struct QuotaRiskAssessment: Equatable, Sendable {
     let level: OverviewRiskLevel
-    let coverageRatio: Double?
     let urgencyScore: Double
 }
 
 enum QuotaRiskPolicy {
-    static let criticalCoverageRatio = 0.5
-    static let reminderCoverageRatio = 1.0
-    static let fallbackCriticalRemaining = 0.30
-    static let fallbackReminderRemaining = 0.50
+    static let criticalDisplayedPercent = 5
+    static let reminderDisplayedPercent = 30
 
-    static func assess(
-        remainingPercent: Double?,
-        resetsAt: Date?,
-        periodDuration: TimeInterval?,
-        now: Date
-    ) -> QuotaRiskAssessment? {
+    static func displayedPercent(_ remainingPercent: Double) -> Int {
+        Int((min(max(remainingPercent, 0), 1) * 100).rounded())
+    }
+
+    static func assess(remainingPercent: Double?) -> QuotaRiskAssessment? {
         guard let remainingPercent else { return nil }
-        let remaining = min(max(remainingPercent, 0), 1)
-        let coverage = coverageRatio(
-            remainingPercent: remaining,
-            resetsAt: resetsAt,
-            periodDuration: periodDuration,
-            now: now
-        )
+        let percent = displayedPercent(remainingPercent)
         let level: OverviewRiskLevel
-        if remaining == 0 || coverage.map({ $0 < criticalCoverageRatio }) == true {
+        if percent <= criticalDisplayedPercent {
             level = .critical
-        } else if coverage.map({ $0 < reminderCoverageRatio }) == true {
-            level = .reminder
-        } else if coverage == nil, remaining <= fallbackCriticalRemaining {
-            level = .critical
-        } else if coverage == nil, remaining <= fallbackReminderRemaining {
+        } else if percent <= reminderDisplayedPercent {
             level = .reminder
         } else {
             level = .healthy
         }
         return .init(
             level: level,
-            coverageRatio: coverage,
-            urgencyScore: coverage ?? remaining
+            urgencyScore: Double(percent) / 100
         )
-    }
-
-    private static func coverageRatio(
-        remainingPercent: Double,
-        resetsAt: Date?,
-        periodDuration: TimeInterval?,
-        now: Date
-    ) -> Double? {
-        guard let resetsAt, let periodDuration, periodDuration > 0 else { return nil }
-        let remainingTime = resetsAt.timeIntervalSince(now)
-        guard remainingTime > 0, remainingTime <= periodDuration * 1.05 else { return nil }
-        let remainingWindowFraction = min(max(remainingTime / periodDuration, 0.01), 1)
-        return remainingPercent / remainingWindowFraction
     }
 }
 
@@ -156,7 +131,7 @@ enum OverviewRiskResolver {
     ]
 
     @MainActor
-    static func resolve(store: QuotaStore, now: Date = .now) -> OverviewRiskResolution {
+    static func resolve(store: QuotaStore) -> OverviewRiskResolution {
         let sourceHealth = Dictionary(
             uniqueKeysWithValues: store.dataSourceHealth.map { ($0.id, $0) }
         )
@@ -180,24 +155,14 @@ enum OverviewRiskResolver {
         } ?? true
         if store.codexRoute == .official, codexQuotaIsReliable,
            let provider = store.providers.first(where: { $0.providerId.lowercased() == "codex" }) {
-            if let session = provider.session {
-                candidates.append(.quota(provider: .codex, metric: .session, line: session))
-            }
-            if let weekly = provider.weekly {
-                candidates.append(.quota(provider: .codex, metric: .weekly, line: weekly))
-            }
+            candidates.append(contentsOf: OverviewRiskCandidate.quotaLines(from: provider, provider: .codex))
         }
 
         // 当前 Claude 官方额度没有独立来源；若未来 provider 开始返回真实额度，
         // 这里会自动纳入，而不会从 Token 日志反推或伪造额度。
         if [.official, .mixed].contains(store.claudeRouteSummary),
            let provider = store.providers.first(where: { $0.providerId.lowercased() == "claude" }) {
-            if let session = provider.session {
-                candidates.append(.quota(provider: .claude, metric: .session, line: session))
-            }
-            if let weekly = provider.weekly {
-                candidates.append(.quota(provider: .claude, metric: .weekly, line: weekly))
-            }
+            candidates.append(contentsOf: OverviewRiskCandidate.quotaLines(from: provider, provider: .claude))
         }
 
         let deepSeekBalanceIsReliable = sourceHealth[DataSourceCatalog.deepSeekBalance].map {
@@ -213,14 +178,13 @@ enum OverviewRiskResolver {
                 candidates: candidates,
                 unavailableQuotaSourceCount: unavailableSourceCount,
                 hasConnectedQuotaRoute: store.codexRoute != .unknown || store.claudeRouteSummary != .unknown
-            ),
-            now: now
+            )
         )
     }
 
     /// 纯计算入口：额度事实先于辅助 Token 来源状态，便于覆盖所有边界场景。
-    static func resolve(input: OverviewRiskInput, now: Date) -> OverviewRiskResolution {
-        let signals = input.candidates.compactMap { signal(for: $0, now: now) }
+    static func resolve(input: OverviewRiskInput) -> OverviewRiskResolution {
+        let signals = input.candidates.compactMap(signal)
         if let primary = signals.min(by: isMoreUrgent) {
             return .init(
                 level: primary.level,
@@ -247,7 +211,7 @@ enum OverviewRiskResolver {
         )
     }
 
-    private static func signal(for candidate: OverviewRiskCandidate, now: Date) -> OverviewRiskSignal? {
+    private static func signal(for candidate: OverviewRiskCandidate) -> OverviewRiskSignal? {
         if candidate.metric == .sharedBalance {
             if let amount = candidate.balanceAmount, amount <= 0 {
                 return balanceSignal(candidate, level: .critical, urgency: 0)
@@ -263,12 +227,7 @@ enum OverviewRiskResolver {
             return balanceSignal(candidate, level: level, urgency: Double(days) / 7)
         }
 
-        guard let assessment = QuotaRiskPolicy.assess(
-            remainingPercent: candidate.remainingPercent,
-            resetsAt: candidate.resetsAt,
-            periodDuration: candidate.periodDuration,
-            now: now
-        ) else { return nil }
+        guard let assessment = QuotaRiskPolicy.assess(remainingPercent: candidate.remainingPercent) else { return nil }
         let clampedRemaining = min(max(candidate.remainingPercent ?? 0, 0), 1)
         return .init(
             provider: candidate.provider,
@@ -278,7 +237,6 @@ enum OverviewRiskResolver {
             resetsAt: candidate.resetsAt,
             balanceAmount: nil,
             estimatedDays: nil,
-            coverageRatio: assessment.coverageRatio,
             urgencyScore: assessment.urgencyScore
         )
     }
@@ -296,7 +254,6 @@ enum OverviewRiskResolver {
             resetsAt: nil,
             balanceAmount: candidate.balanceAmount,
             estimatedDays: candidate.estimatedDays,
-            coverageRatio: nil,
             urgencyScore: urgency
         )
     }

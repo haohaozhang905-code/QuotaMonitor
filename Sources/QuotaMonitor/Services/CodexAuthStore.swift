@@ -2,6 +2,20 @@ import CryptoKit
 import Foundation
 import Security
 
+enum CodexEnvironment {
+    static var homeDirectory: URL {
+        resolveHome(
+            environment: ProcessInfo.processInfo.environment,
+            userHome: FileManager.default.homeDirectoryForCurrentUser
+        )
+    }
+
+    static func resolveHome(environment: [String: String], userHome: URL) -> URL {
+        environment["CODEX_HOME"].map(URL.init(fileURLWithPath:))
+            ?? userHome.appendingPathComponent(".codex", isDirectory: true)
+    }
+}
+
 /// 读取 Codex CLI 的当前认证状态。
 ///
 /// 新版 Codex 默认将认证信息保存到 macOS Keychain，并在成功保存后删除
@@ -44,7 +58,7 @@ enum CodexAuthStore {
     private static let maximumPayloadSize = 262_144
 
     static func load() throws -> Credentials {
-        let home = codexHome()
+        let home = CodexEnvironment.homeDirectory
         if let accessToken = ProcessInfo.processInfo.environment["CODEX_ACCESS_TOKEN"], !accessToken.isEmpty {
             return Credentials(
                 tokens: Credentials.Tokens(accessToken: accessToken, accountId: nil),
@@ -104,12 +118,6 @@ enum CodexAuthStore {
     private static func decode(_ data: Data) throws -> Credentials {
         guard data.count <= maximumPayloadSize else { throw AuthError.unavailable }
         return try JSONDecoder().decode(Credentials.self, from: data)
-    }
-
-    private static func codexHome() -> URL {
-        ProcessInfo.processInfo.environment["CODEX_HOME"]
-            .map(URL.init(fileURLWithPath:))
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex", isDirectory: true)
     }
 
     enum AuthError: Error {

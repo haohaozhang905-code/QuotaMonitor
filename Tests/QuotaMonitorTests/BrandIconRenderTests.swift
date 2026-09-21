@@ -33,7 +33,7 @@ final class BrandIconRenderTests: XCTestCase {
     /// 渲染各品牌图标为 PNG（便于人工核对），同时断言输出非空、非全透明。
     @MainActor
     func testRenderBrandIconsToPNG() throws {
-        let kinds: [BrandIconKind] = [.codex, .claude, .claudeCode, .deepSeek, .workBuddy]
+        let kinds: [BrandIconKind] = [.codex, .claude, .claudeCode, .deepSeek, .workBuddy, .generic]
         for kind in kinds {
             let renderer = ImageRenderer(
                 content: BrandIconView(kind: kind, size: 128)

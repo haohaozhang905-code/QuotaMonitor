@@ -3,6 +3,30 @@ import Testing
 @testable import QuotaMonitor
 
 struct QuotaModelsTests {
+    @Test func codexQuotaLineBuilderClassifiesAndBoundsBothWindowShapes() {
+        let now = Date(timeIntervalSince1970: 1_789_200_000)
+        let session = CodexDirectClient.makeUsageLine(
+            usedPercent: 125, durationSeconds: 5 * 60 * 60,
+            resetTimestamp: now.addingTimeInterval(60).timeIntervalSince1970, now: now
+        )
+        let weekly = CodexDirectClient.makeUsageLine(
+            usedPercent: 30, durationSeconds: nil,
+            resetTimestamp: now.addingTimeInterval(6 * 24 * 60 * 60).timeIntervalSince1970, now: now
+        )
+        #expect(session?.label == "Session")
+        #expect(session?.used == 100)
+        #expect(session?.periodDurationMs == 18_000_000)
+        #expect(weekly?.label == "Weekly")
+        #expect(CodexDirectClient.makeUsageLine(usedPercent: 30, durationSeconds: nil, resetTimestamp: nil, now: now) == nil)
+    }
+
+    @Test func codexHomeUsesConfiguredDirectoryOrDefault() {
+        let userHome = URL(fileURLWithPath: "/tmp/quotamonitor-user", isDirectory: true)
+        let customHome = URL(fileURLWithPath: "/tmp/quotamonitor-codex")
+        #expect(CodexEnvironment.resolveHome(environment: ["CODEX_HOME": customHome.path], userHome: userHome) == customHome)
+        #expect(CodexEnvironment.resolveHome(environment: [:], userHome: userHome) == userHome.appendingPathComponent(".codex", isDirectory: true))
+    }
+
     @Test func dataSourceIDsKeepClientAndFormatIndependent() {
         let cli = DataSourceID(platform: "kimi", client: "cli", format: "generic", definition: "sessions")
         let desktop = DataSourceID(platform: "kimi", client: "desktop", format: "kimiWire", definition: "sessions")
@@ -14,14 +38,60 @@ struct QuotaModelsTests {
 
     @Test func dataSourceCatalogHasUniqueStableIDs() {
         let ids = DataSourceCatalog.all.map(\.id)
+        let groups = DataSourceCatalog.capabilityGroups
         let unsupportedPlatforms: Set<String> = ["traeWork", "qwenWork", "doubaoWork"]
         #expect(ids.count > 10)
         #expect(Set(ids).count == ids.count)
+        #expect(Set(groups.map(\.id)).count == groups.count)
+        #expect(Set(groups.flatMap { $0.quotaSourceIDs + $0.routeDependentQuotaSourceIDs + $0.tokenSourceIDs }).isSubset(of: Set(ids)))
         #expect(DataSourceCatalog.all.contains { $0.id == DataSourceCatalog.codexQuota })
         #expect(DataSourceCatalog.all.contains { $0.id == DataSourceCatalog.claudeDesktop })
+        #expect(groups.first { $0.id == "codex" }?.quotaSourceIDs == [DataSourceCatalog.codexQuota])
+        #expect(groups.first { $0.id == "claude" }?.routeDependentQuotaSourceIDs == [DataSourceCatalog.deepSeekBalance])
+        #expect(groups.first { $0.id == "claude" }?.tokenSourceIDs == [DataSourceCatalog.claudeCode, DataSourceCatalog.claudeDesktop])
         #expect(TokenPlatform.allCases.count == 23)
         #expect(Set(TokenPlatform.allCases.map(\.rawValue)).isDisjoint(with: unsupportedPlatforms))
         #expect(Set(ids.map(\.platform)).isDisjoint(with: unsupportedPlatforms))
+    }
+
+    @Test func dataSourceCatalogOwnsInstallationProbesAndQoderUninstallPolicy() throws {
+        let descriptors = DataSourceCatalog.all
+        let qoder = try #require(descriptors.first { $0.id == DataSourceCatalog.qoder })
+        let home = URL(fileURLWithPath: "/tmp/example-home", isDirectory: true)
+
+        #expect(descriptors.allSatisfy { descriptor in
+            switch descriptor.installationProbe {
+            case let .paths(paths): !paths.isEmpty
+            case .codexRoute, .deepSeekRoute: true
+            case let .localTool(source): !source.roots.isEmpty
+            }
+        })
+        #expect(qoder.usesObservedDataAsInstallationEvidence == false)
+
+        guard case let .paths(qoderPaths) = qoder.installationProbe else {
+            Issue.record("Qoder installation checks must be explicitly registered as filesystem paths")
+            return
+        }
+        #expect(qoderPaths.contains("Applications/Qoder.app"))
+        #expect(qoderPaths.contains("/Applications/Qoder.app"))
+        #expect(qoderPaths.contains(".local/bin/qoder"))
+        #expect(qoderPaths.contains("/opt/homebrew/bin/qoder"))
+        #expect(qoderPaths.contains("/usr/local/bin/qoder"))
+        #expect(!qoderPaths.contains("Library/Application Support/Qoder/SharedClientCache/cli/projects"))
+
+        let resolved = DataSourceInstallationProbe.paths(["Applications/Qoder.app", "/Applications/Qoder.app"])
+            .existingPaths(home: home, environment: [:])
+        #expect(resolved.map(\.path) == [
+            "/tmp/example-home/Applications/Qoder.app",
+            "/Applications/Qoder.app"
+        ])
+    }
+
+    @Test func platformBrandMarksHaveOneNeutralFallback() {
+        #expect(TokenPlatform.codex.brandIconKind == .codex)
+        #expect(TokenPlatform.claude.brandIconKind == .claude)
+        #expect(TokenPlatform.workbuddy.brandIconKind == .workBuddy)
+        #expect(TokenPlatform.kimi.brandIconKind == .generic)
     }
 
     @Test func healthSnapshotMarksActionableStatesWithoutTreatingUndetectedAsAnAlert() {
@@ -349,14 +419,14 @@ struct QuotaModelsTests {
 
     @Test func healthThresholds() {
         #expect(QuotaHealth(remaining: 0.8) == .healthy)
-        #expect(QuotaHealth(remaining: 0.51) == .healthy)
-        #expect(QuotaHealth(remaining: 0.50) == .warning)
-        #expect(QuotaHealth(remaining: 0.31) == .warning)
-        #expect(QuotaHealth(remaining: 0.30) == .critical)
-        #expect(QuotaHealth(remaining: 0.11) == .critical)
+        #expect(QuotaHealth(remaining: 0.306) == .healthy)
+        #expect(QuotaHealth(remaining: 0.304) == .warning)
+        #expect(QuotaHealth(remaining: 0.06) == .warning)
+        #expect(QuotaHealth(remaining: 0.054) == .critical)
+        #expect(QuotaHealth(remaining: 0) == .critical)
     }
 
-    @Test func quotaHealthUsesTheSameTimeCoverageRuleAsOverviewRisk() {
+    @Test func quotaHealthIgnoresResetTimingAndMatchesFixedReminderTiers() {
         let now = Date(timeIntervalSince1970: 1_788_880_000)
         let line = UsageLine(
             type: "progress",
@@ -374,12 +444,11 @@ struct QuotaModelsTests {
                 candidates: [.quota(provider: .codex, metric: .weekly, line: line)],
                 unavailableQuotaSourceCount: 0,
                 hasConnectedQuotaRoute: true
-            ),
-            now: now
+            )
         )
 
-        #expect(overview.level == .reminder)
-        #expect(QuotaHealth(quotaLine: line, now: now) == .warning)
+        #expect(overview.level == .healthy)
+        #expect(QuotaHealth(quotaLine: line, now: now) == .healthy)
     }
 
     @Test func balanceHealthUsesEstimatedDaysInsteadOfAbsoluteAmount() {
@@ -473,7 +542,6 @@ struct QuotaModelsTests {
             currency: "USD"
         )
         #expect(abs((usdCost ?? 0) - 0.3933125) < 0.0000001)
-        #expect(TokenCostEstimator.cacheHitRate(tokens: DailyTokenUsage(day: .now, totals: totals)) == 0.5)
     }
 
     @Test func moneyFormatterTrimsTrailingZeros() {

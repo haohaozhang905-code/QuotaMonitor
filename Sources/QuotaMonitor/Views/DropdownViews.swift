@@ -1,4 +1,9 @@
+import AppKit
 import SwiftUI
+
+final class TransparentDropdownHostingView<Content: View>: NSHostingView<Content> {
+    override var isOpaque: Bool { false }
+}
 
 /// 下拉框宽度（与设计稿一致）。
 enum DropdownLayout {
@@ -16,12 +21,12 @@ struct DropdownHeader: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(title)
                     .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(PanelTheme.text)
+                    .foregroundStyle(PanelTheme.dropdownText)
                 Spacer(minLength: 8)
                 Text(updated)
                     .font(.system(size: 10, design: .monospaced))
                     .fontDesign(.monospaced)
-                    .foregroundStyle(PanelTheme.text2)
+                    .foregroundStyle(PanelTheme.dropdownTextSecondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, DropdownLayout.horizontalPadding)
@@ -43,10 +48,10 @@ struct DropdownHero: View {
             Text(value)
                 .font(.system(size: 34, weight: .semibold, design: .monospaced))
                 .fontDesign(.monospaced)
-                .foregroundStyle(PanelTheme.text)
+                .foregroundStyle(PanelTheme.dropdownText)
             Text(label)
                 .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(PanelTheme.text2)
+                .foregroundStyle(PanelTheme.dropdownTextSecondary)
             if let comparison {
                 Text(comparison)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -75,7 +80,7 @@ enum DropdownStatusTone {
 
     var color: Color {
         switch self {
-        case .neutral: PanelTheme.text2
+        case .neutral: PanelTheme.dropdownTextSecondary
         case .success: PanelTheme.ok
         case .warning: PanelTheme.warn
         case .danger: PanelTheme.danger
@@ -95,7 +100,7 @@ struct DropdownStatusRow: View {
                 .frame(width: 6, height: 6)
             Text(text)
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(PanelTheme.text2)
+                .foregroundStyle(PanelTheme.dropdownTextSecondary)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, DropdownLayout.horizontalPadding)
@@ -113,7 +118,7 @@ struct DropdownSectionHeader: View {
     var body: some View {
         Text(title)
             .font(.system(size: 11, weight: .semibold, design: .monospaced))
-            .foregroundStyle(PanelTheme.text2)
+            .foregroundStyle(PanelTheme.dropdownTextSecondary)
             .padding(.horizontal, DropdownLayout.horizontalPadding)
             .padding(.vertical, 3)
             .frame(width: DropdownLayout.width, alignment: .leading)
@@ -142,11 +147,11 @@ struct DropdownQuotaLine: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(PanelTheme.text)
+                        .foregroundStyle(PanelTheme.dropdownText)
                     if let route {
                         Text(route)
                             .font(.system(size: 9, design: .monospaced))
-                            .foregroundStyle(PanelTheme.text2)
+                            .foregroundStyle(PanelTheme.dropdownTextSecondary)
                     }
                 }
             }
@@ -156,7 +161,7 @@ struct DropdownQuotaLine: View {
                     HStack(alignment: .firstTextBaseline) {
                         Text(metric.label)
                             .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(PanelTheme.text2)
+                            .foregroundStyle(PanelTheme.dropdownTextSecondary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.72)
                         Spacer(minLength: 4)
@@ -170,14 +175,14 @@ struct DropdownQuotaLine: View {
                                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                                 .fontDesign(.monospaced)
                         }
-                        .foregroundStyle(PanelTheme.quotaValueColor(metric.health))
+                        .foregroundStyle(PanelTheme.dropdownQuotaValueColor(metric.health))
                     }
                     if !metric.detail.isEmpty {
                         Text(metric.detail)
                             .font(.system(size: 9, design: .monospaced))
                             .fontDesign(.monospaced)
                             // 日期与上方百分比保持同一健康度颜色，不再重复显示状态文案。
-                            .foregroundStyle(PanelTheme.quotaValueColor(metric.health))
+                            .foregroundStyle(PanelTheme.dropdownQuotaValueColor(metric.health))
                             .lineLimit(1)
                             .minimumScaleFactor(0.72)
                     }
@@ -204,7 +209,7 @@ struct DropdownQuotaStatusLine: View {
             BrandIconView(kind: icon, size: 18)
             Text(title)
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(PanelTheme.text)
+                .foregroundStyle(PanelTheme.dropdownText)
             Spacer(minLength: 8)
             Text(status)
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -229,18 +234,18 @@ struct DropdownCompactRow: View {
             Text(name)
                 .font(.system(size: 11, design: .monospaced))
                 .fontDesign(.monospaced)
-                .foregroundStyle(PanelTheme.text2)
+                .foregroundStyle(PanelTheme.dropdownTextSecondary)
                 .lineLimit(1)
             Spacer(minLength: 8)
             Text(amount)
                 .font(.system(size: 10, design: .monospaced))
                 .fontDesign(.monospaced)
-                .foregroundStyle(PanelTheme.text)
+                .foregroundStyle(PanelTheme.dropdownText)
                 .frame(width: 70, alignment: .trailing)
             Text(share)
                 .font(.system(size: 9, design: .monospaced))
                 .fontDesign(.monospaced)
-                .foregroundStyle(PanelTheme.text2)
+                .foregroundStyle(PanelTheme.dropdownTextSecondary)
                 .frame(width: 42, alignment: .trailing)
         }
         .padding(.horizontal, DropdownLayout.horizontalPadding)
@@ -255,7 +260,7 @@ struct DropdownEmptyRow: View {
     var body: some View {
         Text(text)
             .font(.system(size: 11, design: .monospaced))
-            .foregroundStyle(PanelTheme.text2)
+            .foregroundStyle(PanelTheme.dropdownTextSecondary)
             .padding(.horizontal, DropdownLayout.horizontalPadding)
             .padding(.vertical, 5)
             .frame(width: DropdownLayout.width, alignment: .leading)
@@ -334,7 +339,16 @@ struct DropdownPopoverView: View {
                 .padding(.bottom, 5)
         }
         .frame(width: DropdownLayout.width)
-        .background(PanelTheme.surfaceFloat, in: RoundedRectangle(cornerRadius: DropdownLayout.cornerRadius, style: .continuous))
+        .background {
+            // 直接使用系统 popover 材质，让桌面颜色参与材质计算；不再叠加
+            // 固定纸色蒙层，避免深浅色下都退化成近似实色卡片。
+            GlassSurface(
+                material: .popover,
+                tint: .clear,
+                opaqueFallback: PanelTheme.surfaceFloat,
+                keepsActiveState: true
+            )
+        }
         .clipShape(RoundedRectangle(cornerRadius: DropdownLayout.cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DropdownLayout.cornerRadius, style: .continuous)
@@ -383,7 +397,7 @@ struct DropdownPopoverView: View {
 
     @ViewBuilder
     private func quotaLine(_ item: DropdownQuotaPresentation) -> some View {
-        let icon = icon(for: item.platform)
+        let icon = item.platform.brandIconKind
         switch item.state {
         case let .official(plan, session, weekly):
             let sessionLabel = item.platform == .codex
@@ -437,11 +451,7 @@ struct DropdownPopoverView: View {
     }
 
     private func quotaMetric(label: String, metric: DropdownQuotaMetricPresentation?) -> DropdownQuotaLine.Metric {
-        let health = QuotaHealth(
-            remaining: metric?.remainingPercent,
-            resetsAt: metric?.resetsAt,
-            periodDurationMs: metric?.periodDurationMs
-        )
+        let health = QuotaHealth(remaining: metric?.remainingPercent)
         let detail = metric?.resetsAt.map {
             language.text(
                 "overview.resetAfter",
@@ -456,6 +466,10 @@ struct DropdownPopoverView: View {
         )
     }
 
+    private func percentText(_ value: Double) -> String {
+        String(format: "%.1f%%", value * 100)
+    }
+
     private func quotaStatusText(_ health: QuotaHealth) -> String {
         switch health {
         case .healthy: language.text("quota.status.healthy")
@@ -463,19 +477,6 @@ struct DropdownPopoverView: View {
         case .critical: language.text("quota.status.critical")
         case .unknown: language.text("quota.status.pendingEstimate")
         }
-    }
-
-    private func icon(for platform: TokenPlatform) -> BrandIconKind {
-        switch platform {
-        case .codex: .codex
-        case .claude: .claude
-        case .workbuddy: .workBuddy
-        default: .deepSeek
-        }
-    }
-
-    private func percentText(_ value: Double) -> String {
-        String(format: "%.1f%%", value * 100)
     }
 }
 
@@ -507,10 +508,10 @@ private struct DropdownActionButton: View {
                 Spacer(minLength: 8)
                 Text(shortcut)
                     .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(PanelTheme.text2)
+                    .foregroundStyle(PanelTheme.dropdownTextSecondary)
                     .frame(width: 30, alignment: .trailing)
             }
-            .foregroundStyle(role == .destructive ? PanelTheme.danger : PanelTheme.text)
+            .foregroundStyle(role == .destructive ? PanelTheme.danger : PanelTheme.dropdownText)
             .padding(.horizontal, DropdownLayout.horizontalPadding)
             .frame(height: 30)
             .background {

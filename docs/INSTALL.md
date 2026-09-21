@@ -158,12 +158,14 @@ QUOTAMONITOR_OPENCLAW_HOME="/absolute/path/to/openclaw-data" /Applications/Quota
 1. 在设置中关闭“登录后自动启动”，从菜单栏退出 QuotaMonitor。
 2. 将 `/Applications/QuotaMonitor.app` 移到废纸篓。
 3. 若要清除用量缓存，在 Finder 的“前往文件夹”中打开 `~/Library/Caches/com.cmsjcm.QuotaMonitor/`，确认内容后将该应用缓存目录移到废纸篓。重新安装后需要重新扫描。
-4. 缓存外还可能有应用偏好设置：当前应用标识为 `com.cmsjcm.QuotaMonitorStatus3`，旧版使用过 `com.cmsjcm.QuotaMonitorStatus2`、`com.cmsjcm.QuotaMonitorStatus`、`com.cmsjcm.QuotaMonitor`、`com.cmsjcm.QuotaDot`。如需彻底清理，让 Agent 检查属于这些应用标识的偏好项目后再处理。
+4. 缓存外还可能有应用偏好设置：当前应用标识为 `com.cmsjcm.QuotaMonitorStatus4`，旧版使用过 `com.cmsjcm.QuotaMonitorStatus3`、`com.cmsjcm.QuotaMonitorStatus2`、`com.cmsjcm.QuotaMonitorStatus`、`com.cmsjcm.QuotaMonitor`、`com.cmsjcm.QuotaDot`。如需彻底清理，让 Agent 检查属于这些应用标识的偏好项目后再处理。
 
 不要为卸载 QuotaMonitor 删除 `~/.codex`、`~/.claude` 或其他 AI 工具目录；它们属于原工具，可能含完整会话及认证信息。源码文件夹可自行保留；删除源码前先保存你的改造内容。
 
 ### macOS 26 状态栏说明
 
-macOS 26 新增了“系统设置 → 菜单栏”中的应用状态项开关。系统关闭该开关后，QuotaMonitor 仍可能在后台运行，但状态栏入口会被隐藏；应用无法绕过这项系统选择。可先尝试在该页面重新开启 QuotaMonitor（注意：本机 2026-09-11 实测关闭→开启并重启 Control Center 与应用后，Status2 仍被屏蔽，多数情况下无效）。
+macOS 26 会持久化应用状态项的隐藏/blocked 状态，且目前没有公开 API 可读取或重置“菜单栏”中的系统级允许状态。QuotaMonitor 不再为单个 `NSStatusItem` 设置自定义 `autosaveName`，避免额外继承已屏蔽的固定名称；这无法绕过用户或系统对整个应用的屏蔽。
 
-若开关开启后状态项仍不显示（本机 macOS 26.6 曾出现多个历史应用标识被系统屏蔽、开关无法恢复的现象），才使用 `script/assemble_app.sh` 更换 `BUNDLE_ID` 后重装的应急方案。**这是当前机器的兼容性应急手段，不是通用机制，也不应作为正式发布的长期方案**：每次更换应用标识，系统都会把通知权限、登录项和偏好设置识别为另一款应用。更换后请同步更新 `script/build_and_run.sh` 中的 `BUNDLE_ID`，保持两处一致。
+`./script/build_and_run.sh --verify` 会同时检查进程和 Control Center 的 `appStatusItems` 日志；只要新状态项进入 blocked list，验证就直接失败。`script/security_check.sh` 也会阻止重新引入 `autosaveName`。
+
+如果状态项仍不显示，先检查“系统设置 → 菜单栏”中的 QuotaMonitor 开关。更换 `BUNDLE_ID` 只保留为最后的本机应急方案，因为它会让通知权限和登录项被系统视为另一款应用。本地构建脚本会在目标偏好域尚未存在时，迁移上一个标识的语言、外观和提醒账本等偏好，但无法迁移 macOS 的通知授权。

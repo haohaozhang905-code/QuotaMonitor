@@ -77,20 +77,11 @@ struct LocalToolTokenSource: Hashable, Sendable {
 /// 面向新工具的保守通用解析器：读取本机 JSON、JSONL 和 SQLite 中结构化 usage，
 /// 只采集 token 字段、模型和时间；不保留提示词、回答或项目内容。
 actor AdditionalLocalTokenClient {
-    private struct FileCache: Codable, Equatable {
+    private struct FileCache: LocalTokenScanCacheEntry {
         let mtime: Date
         let fileSize: Int
         let buckets: [TokenUsageBucket]
         let processedByteCount: Int?
-
-        func matches(mtime candidate: Date, fileSize size: Int) -> Bool {
-            fileSize == size && abs(mtime.timeIntervalSinceReferenceDate - candidate.timeIntervalSinceReferenceDate) < 0.001
-        }
-    }
-
-    private struct PersistedCache: Codable {
-        let version: Int
-        let entries: [String: FileCache]
     }
 
     private let sources: [LocalToolTokenSource]
@@ -109,15 +100,14 @@ actor AdditionalLocalTokenClient {
         self.sources = sources
         self.home = home ?? FileManager.default.homeDirectoryForCurrentUser
         self.environment = environment
-        self.persistentCacheURL = persistentCacheURL ?? Self.defaultPersistentCacheURL()
-    }
-
-    func fetchSnapshots() throws -> [TokenSourceSnapshot] {
-        try fetchScanResult().snapshots
+        self.persistentCacheURL = persistentCacheURL
+            ?? LocalTokenScanSupport.defaultCacheURL(fileName: "additional-local-token-cache-v1.json")
     }
 
     func fetchScanResult() throws -> AdditionalLocalTokenScanResult {
-        loadPersistentCacheIfNeeded()
+        LocalTokenScanSupport.loadKeyedCacheIfNeeded(
+            into: &cache, didLoad: &didLoadCache, at: persistentCacheURL, version: 3
+        )
         var freshCache: [String: FileCache] = [:]
         var bucketsByPlatform: [TokenPlatform: [TokenUsageBucket]] = [:]
         var visited: Set<String> = []
@@ -133,11 +123,7 @@ actor AdditionalLocalTokenClient {
             var usedLastGoodData = false
             for root in source.resolvedRoots(home: home, environment: environment) where FileManager.default.fileExists(atPath: root.path) {
                 foundRoot = true
-                guard let enumerator = FileManager.default.enumerator(
-                    at: root,
-                    includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-                    options: [.skipsHiddenFiles]
-                ) else {
+                guard let enumerator = LocalTokenScanSupport.enumerator(at: root) else {
                     permissionFailure = true
                     continue
                 }
@@ -147,20 +133,23 @@ actor AdditionalLocalTokenClient {
                     let cacheKey = Self.cacheKey(url: url, source: source)
                     guard ["json", "jsonl", "log", "db", "sqlite", "sqlite3"].contains(ext), visited.insert(cacheKey).inserted else { continue }
                     candidateFileCount += 1
-                    guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
-                          let mtime = values.contentModificationDate,
-                          let size = values.fileSize else { continue }
+                    guard let metadata = LocalTokenScanSupport.fileMetadata(at: url) else { continue }
+                    let (mtime, size) = metadata
                     let cached = cache[cacheKey]
                     let buckets: [TokenUsageBucket]
                     if let cached = cache[cacheKey], cached.matches(mtime: mtime, fileSize: size) {
                         buckets = cached.buckets
                     } else {
                         let isLineFile = ["jsonl", "log"].contains(ext)
-                        let canContinue = isLineFile
-                            && cached?.processedByteCount == cached?.fileSize
-                            && size > (cached?.fileSize ?? 0)
-                            && JSONLReader.isLineBoundary(at: cached?.fileSize ?? 0, in: url)
-                        let startingAt = canContinue ? cached?.fileSize ?? 0 : 0
+                        let appendOffset = isLineFile
+                            ? LocalTokenScanSupport.appendOffset(
+                                currentFileSize: size,
+                                cachedFileSize: cached?.fileSize,
+                                processedByteCount: cached?.processedByteCount,
+                                file: url
+                            )
+                            : nil
+                        let startingAt = Int(appendOffset ?? 0)
                         guard let parsed = Self.parse(
                             url: url,
                             source: source,
@@ -175,7 +164,7 @@ actor AdditionalLocalTokenClient {
                             }
                             continue
                         }
-                        buckets = canContinue
+                        buckets = appendOffset != nil
                             ? TokenUsageBucket.combining((cached?.buckets ?? []) + parsed)
                             : parsed
                     }
@@ -210,29 +199,14 @@ actor AdditionalLocalTokenClient {
         }
         let cacheChanged = cache != freshCache
         cache = freshCache
-        if cacheChanged { savePersistentCache() }
+        LocalTokenScanSupport.saveKeyedCacheIfChanged(
+            cache, changed: cacheChanged, at: persistentCacheURL, version: 3
+        )
         let snapshots: [TokenSourceSnapshot] = TokenPlatform.allCases.compactMap { platform in
             guard let buckets = bucketsByPlatform[platform], !buckets.isEmpty else { return nil }
             return TokenSourceSnapshot(buckets: buckets)
         }
         return AdditionalLocalTokenScanResult(snapshots: snapshots, diagnostics: diagnostics)
-    }
-
-    private func loadPersistentCacheIfNeeded() {
-        guard !didLoadCache else { return }
-        didLoadCache = true
-        guard let persistentCacheURL,
-              let data = try? Data(contentsOf: persistentCacheURL),
-              let payload = try? JSONDecoder().decode(PersistedCache.self, from: data),
-              payload.version == 3 else { return }
-        cache = payload.entries
-    }
-
-    private func savePersistentCache() {
-        guard let persistentCacheURL,
-              let data = try? JSONEncoder().encode(PersistedCache(version: 3, entries: cache)) else { return }
-        try? FileManager.default.createDirectory(at: persistentCacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: persistentCacheURL, options: .atomic)
     }
 
     private static func parse(
@@ -439,9 +413,4 @@ actor AdditionalLocalTokenClient {
         return statement
     }
 
-    private static func defaultPersistentCacheURL() -> URL? {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("com.cmsjcm.QuotaMonitor", isDirectory: true)
-            .appendingPathComponent("additional-local-token-cache-v1.json")
-    }
 }

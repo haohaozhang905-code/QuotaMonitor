@@ -58,7 +58,9 @@ final class MainPanelController: NSObject, NSWindowDelegate {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
-        window.backgroundColor = NSColor(PanelTheme.background)
+        // 让侧栏材质能够取样窗口后方；内容列仍由 SwiftUI 绘制不透明画布。
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.hasShadow = true
         window.level = .normal
         window.delegate = self

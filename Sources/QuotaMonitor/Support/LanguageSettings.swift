@@ -7,7 +7,6 @@ enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
     var locale: Locale { Locale(identifier: rawValue) }
-    var shortLabel: String { self == .simplifiedChinese ? "EN" : "ZH" }
 
     static var systemDefault: AppLanguage {
         Locale.preferredLanguages.first?.lowercased().hasPrefix("zh") == true ? .simplifiedChinese : .english
@@ -19,13 +18,16 @@ final class LanguageSettings {
     static let storageKey = "QuotaMonitor.appLanguage"
     private static let legacyStorageKeys = ["CodexQuota.appLanguage", "QuotaDot.appLanguage"]
 
+    @ObservationIgnored private let defaults: UserDefaults
+
     var language: AppLanguage {
-        didSet { UserDefaults.standard.set(language.rawValue, forKey: Self.storageKey) }
+        didSet { defaults.set(language.rawValue, forKey: Self.storageKey) }
     }
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         language = ([Self.storageKey] + Self.legacyStorageKeys)
-            .compactMap { UserDefaults.standard.string(forKey: $0) }
+            .compactMap { defaults.string(forKey: $0) }
             .first
             .flatMap(AppLanguage.init(rawValue:)) ?? .systemDefault
     }
@@ -35,6 +37,10 @@ final class LanguageSettings {
     }
 
     func text(_ key: String, _ arguments: CVarArg...) -> String {
+        text(key, arguments: arguments)
+    }
+
+    func text(_ key: String, arguments: [CVarArg]) -> String {
         let localized = localizedBundle.localizedString(forKey: key, value: key, table: nil)
         guard !arguments.isEmpty else { return localized }
         return String(format: localized, locale: language.locale, arguments: arguments)

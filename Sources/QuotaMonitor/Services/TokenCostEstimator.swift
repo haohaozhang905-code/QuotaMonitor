@@ -40,28 +40,6 @@ enum TokenCostEstimator {
         return total / 1_000_000
     }
 
-    static func estimatedCost(tokens: DailyTokenUsage, model: String? = nil, currency: String = "CNY") -> Double? {
-        estimatedCost(
-            tokens: TokenTotals(
-                input: tokens.input,
-                cachedInput: tokens.cachedInput,
-                cacheWriteInput: tokens.cacheWriteInput,
-                output: tokens.output,
-                reasoning: tokens.reasoning
-            ),
-            model: model,
-            currency: currency
-        )
-    }
-
-    /// 缓存命中率：命中 ÷ (未命中 + 命中)。
-    static func cacheHitRate(tokens: DailyTokenUsage) -> Double? {
-        let hit = tokens.cachedInput
-        let total = tokens.input
-        guard total > 0 else { return nil }
-        return Double(hit) / Double(total)
-    }
-
     /// 余额能支撑的天数：余额 ÷ 最近七个自然日的日均消耗，向下取整，封顶 30。
     /// 每个桶使用自己的模型定价；没有请求的日期也进入七日分母。
     static func daysSupported(

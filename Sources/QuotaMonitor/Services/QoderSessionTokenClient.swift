@@ -22,20 +22,12 @@ actor QoderSessionTokenClient {
         let bucket: TokenUsageBucket
     }
 
-    private struct FileCache: Codable, Equatable {
+    private struct FileCache: LocalTokenScanCacheEntry {
         let mtime: Date
         let fileSize: Int
         let records: [UsageRecord]
         let processedByteCount: Int?
 
-        func matches(mtime candidate: Date, fileSize size: Int) -> Bool {
-            fileSize == size && abs(mtime.timeIntervalSinceReferenceDate - candidate.timeIntervalSinceReferenceDate) < 0.001
-        }
-    }
-
-    private struct PersistedCache: Codable {
-        let version: Int
-        let entries: [String: FileCache]
     }
 
     private let roots: [Root]
@@ -53,88 +45,54 @@ actor QoderSessionTokenClient {
                 client: .desktop
             )
         ]
-        self.persistentCacheURL = persistentCacheURL ?? Self.defaultPersistentCacheURL()
+        self.persistentCacheURL = persistentCacheURL
+            ?? LocalTokenScanSupport.defaultCacheURL(fileName: "qoder-session-token-cache-v1.json")
     }
 
     func fetchSnapshot() throws -> TokenSourceSnapshot {
-        loadPersistentCacheIfNeeded()
+        LocalTokenScanSupport.loadCacheIfNeeded(
+            into: &cache, didLoad: &didLoadPersistentCache,
+            at: persistentCacheURL, version: 1
+        )
         var newCache: [URL: FileCache] = [:]
         var records: [UsageRecord] = []
         var visited: Set<URL> = []
 
         for root in roots where FileManager.default.fileExists(atPath: root.url.path) {
-            guard let enumerator = FileManager.default.enumerator(
+            let result = try LocalTokenScanSupport.scanSingleRoot(
                 at: root.url,
-                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-                options: [.skipsHiddenFiles]
-            ) else { continue }
-            for case let url as URL in enumerator where url.pathExtension.lowercased() == "jsonl" {
-                try Task.checkCancellation()
-                guard visited.insert(url).inserted,
-                      let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
-                      let mtime = values.contentModificationDate,
-                      let fileSize = values.fileSize else { continue }
-                let cached = cache[url]
-                let entry: FileCache
-                if let cached = cache[url], cached.matches(mtime: mtime, fileSize: fileSize) {
-                    entry = cached
-                } else {
-                    let canContinue = cached?.processedByteCount == cached?.fileSize
-                        && fileSize > (cached?.fileSize ?? 0)
-                        && JSONLReader.isLineBoundary(at: cached?.fileSize ?? 0, in: url)
-                    let startingAt = canContinue ? cached?.fileSize ?? 0 : 0
+                cache: cache,
+                accepts: { $0.pathExtension.lowercased() == "jsonl" && visited.insert($0).inserted },
+                parse: { url, mtime, fileSize, offset, cached in
                     guard let parsed = Self.parse(
                         url: url,
                         format: root.format,
                         client: root.client,
                         fallbackDate: mtime,
-                        startingAt: startingAt
-                    ) else {
-                        if let cached {
-                            newCache[url] = cached
-                            records.append(contentsOf: cached.records)
-                        }
-                        continue
-                    }
-                    let combinedRecords = canContinue
-                        ? (cached?.records ?? []) + parsed
-                        : parsed
-                    entry = FileCache(
+                        startingAt: Int(offset ?? 0)
+                    ) else { return nil }
+                    return FileCache(
                         mtime: mtime,
                         fileSize: fileSize,
-                        records: combinedRecords,
+                        records: offset == nil ? parsed : (cached?.records ?? []) + parsed,
                         processedByteCount: fileSize
                     )
-                }
-                newCache[url] = entry
-                records.append(contentsOf: entry.records)
-            }
+                },
+                enumerationFailure: .skipRoot,
+                preserveCachedEntryWhenMetadataIsUnavailable: false,
+                output: { $0.records }
+            )
+            newCache.merge(result.cache) { first, _ in first }
+            records.append(contentsOf: result.output)
         }
 
         let changed = cache != newCache
         cache = newCache
-        if changed { savePersistentCache() }
+        LocalTokenScanSupport.saveCacheIfChanged(cache, changed: changed, at: persistentCacheURL, version: 1)
 
         var seen: Set<String> = []
         let buckets = records.compactMap { seen.insert($0.id).inserted ? $0.bucket : nil }
         return TokenSourceSnapshot(buckets: buckets)
-    }
-
-    private func loadPersistentCacheIfNeeded() {
-        guard !didLoadPersistentCache else { return }
-        didLoadPersistentCache = true
-        guard let persistentCacheURL,
-              let data = try? Data(contentsOf: persistentCacheURL),
-              let payload = try? JSONDecoder().decode(PersistedCache.self, from: data),
-              payload.version == 1 else { return }
-        cache = Dictionary(uniqueKeysWithValues: payload.entries.map { (URL(fileURLWithPath: $0.key), $0.value) })
-    }
-
-    private func savePersistentCache() {
-        guard let persistentCacheURL,
-              let data = try? JSONEncoder().encode(PersistedCache(version: 1, entries: Dictionary(uniqueKeysWithValues: cache.map { ($0.key.path, $0.value) }))) else { return }
-        try? FileManager.default.createDirectory(at: persistentCacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: persistentCacheURL, options: .atomic)
     }
 
     private static func parse(
@@ -183,15 +141,9 @@ actor QoderSessionTokenClient {
     }
 
     private static func makeBucket(totals: TokenTotals, model: String?, date: Date, client: TokenClient) -> TokenUsageBucket {
-        let model = TokenModelName.canonical(model)
         let hour = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day, .hour], from: date)) ?? date
-        return TokenUsageBucket(
-            bucketStart: hour,
-            platform: .qoder,
-            client: client,
-            model: model,
-            provider: model.lowercased().contains("deepseek") ? .deepseek : .official,
-            totals: totals
+        return TokenUsageBucket.modelBucket(
+            at: hour, platform: .qoder, client: client, model: model, totals: totals
         )
     }
 
@@ -220,18 +172,9 @@ actor QoderSessionTokenClient {
     private static func date(in object: [String: Any]) -> Date? {
         for key in ["timestamp", "ts"] {
             guard let raw = object[key] as? String else { continue }
-            let fractional = ISO8601DateFormatter()
-            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let date = fractional.date(from: raw) { return date }
-            let basic = ISO8601DateFormatter()
-            if let date = basic.date(from: raw) { return date }
+            if let date = LocalTokenScanSupport.iso8601Date(from: raw) { return date }
         }
         return nil
     }
 
-    private static func defaultPersistentCacheURL() -> URL? {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("com.cmsjcm.QuotaMonitor", isDirectory: true)
-            .appendingPathComponent("qoder-session-token-cache-v1.json")
-    }
 }

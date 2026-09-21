@@ -9,8 +9,23 @@ struct ReminderToastView: View {
     let onClose: () -> Void
     let onHoverChange: (Bool) -> Void
 
+    private var accentColor: Color? {
+        switch presentation.tone {
+        case .neutral: nil
+        case .warning: PanelTheme.warn
+        case .critical: PanelTheme.danger
+        }
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
+            if let accentColor {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(accentColor)
+                    .frame(width: 3, height: 38)
+                    .accessibilityHidden(true)
+            }
+
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .interpolation(.high)

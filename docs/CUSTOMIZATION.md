@@ -1,6 +1,6 @@
 # 定制与二次开发
 
-[返回 README](../README.md) · [提醒机制方案](REMINDER_PRODUCT_DESIGN.md) · [数据源清单](DATA_SOURCES.md) · [贡献规范](../CONTRIBUTING.md)
+[返回 README](../README.md) · [架构说明](ARCHITECTURE.md) · [提醒机制方案](REMINDER_PRODUCT_DESIGN.md) · [数据源清单](DATA_SOURCES.md) · [贡献规范](../CONTRIBUTING.md)
 
 QuotaMonitor 按 MIT 协议开放，你可以修改、再分发，也可以让编程 Agent 帮你完成。分发代码或软件副本时需保留许可证要求的版权与许可声明。下面的扩展方向均标注了当前状态，避免将可开发的能力误当成设置项。
 
@@ -10,9 +10,9 @@ QuotaMonitor 按 MIT 协议开放，你可以修改、再分发，也可以让�
 | --- | --- | --- |
 | 改配色、字体、图表布局 | 已有界面可改：`Views/PanelTheme.swift`、`Views/MainPanelView.swift`、`Views/DropdownViews.swift` | 深浅色、长模型名、大数值、空数据和窄窗口下仍可读；图标、图表、图例色彩一致 |
 | 给已有工具添加日志目录 | 部分来源已有环境变量，见支持清单 | 变量进入应用进程，默认目录与额外目录同时读取时不重复计算 |
-| 增加一个新 AI 工具 | `Models/TokenUsageDimensions.swift`、`Services/AdditionalLocalTokenClient.swift`；特殊格式另建专用 client 并接入 `Stores/QuotaStore.swift` | 有真实结构化字段；明确工具 / 模型归属、时间口径、缓存与去重，补对应测试 |
+| 增加一个新 AI 工具 | `Models/TokenUsageDimensions.swift`、`Models/DataSourceDiagnostics.swift` 的 `DataSourceCatalog`、对应来源 client 与 `Stores/QuotaStore.swift` | 有真实结构化字段；登记稳定来源 ID、名称、安装探针、能力分组和 stale 时限；AdditionalLocal 能力分组会按工具目录自动生成；明确工具 / 模型归属、时间口径、缓存与去重，补对应测试 |
 | 自定义刷新周期 | 周期位于 `Stores/QuotaStore.swift`，事件合并位于 `Services/LocalTokenChangeMonitor.swift`；目前不是用户可调设置 | 平衡及时性、CPU、磁盘和服务请求频率；不要用逐秒扫描读取大历史 |
-| 调整提醒规则、增加预算告警 | 基础提醒已实现，见[提醒机制方案](REMINDER_PRODUCT_DESIGN.md)；自定义阈值与预算告警待开发 | 保持冷启动补发、周期去重、数据过期不误报；Token 数量不能直接当作账单费用 |
+| 调整提醒规则、增加预算告警 | `ReminderRuleCatalog` 声明规则与条件；文案维护本地化资源 | 保持新鲜度、冷启动补发、周期去重和 V5 状态迁移；Token 数量不能直接当作账单费用 |
 | 导出 CSV / JSON | 待开发，可基于聚合桶和展示快照导出 | 明确时间范围、字段和统计边界，只导出用户选择的统计，不带凭据或正文 |
 | 增加其他服务商余额接口 | 待开发，可参考 `Services/DeepSeekBalanceClient.swift` | 先验证接口与授权方式，增加安全凭据读取、网络说明、失败处理；保留原始货币和单位 |
 | 做跨设备 / 多账号汇总 | 待开发，需新增账号标识与数据合并设计 | 来源身份、重复记录、同步冲突、隐私与用户授权，不直接相加每台机器的累计快照 |
@@ -30,9 +30,21 @@ QuotaMonitor 按 MIT 协议开放，你可以修改、再分发，也可以让�
 
 > 请将 QuotaMonitor 的【指定区域】调整为【风格或需求】。沿用现有信息结构与统计口径，统一图表、图例和平台图标的颜色。检查长模型名、大数值、空数据及 Hover 靠近边缘时的展示，提供修改前后截图。不要为界面占位编造用量。
 
-### 扩展额度提醒
+### 扩展提醒规则
 
-> 请基于 `docs/REMINDER_PRODUCT_DESIGN.md` 扩展 QuotaMonitor 的【提醒规则】。保留有效数据判断、冷启动补发、周期去重、同批逐项提醒和系统通知降级逻辑；数据缺失或过期时不推断余额已耗尽。说明新增设置与权限影响，补充阈值边界、刷新失败、应用重启和通知去重的验证，并在真实安装应用中验收视觉与点击跳转。
+> 请基于 `docs/REMINDER_PRODUCT_DESIGN.md` 扩展 QuotaMonitor 的【提醒规则】。普通阈值规则只新增 `ReminderRuleCatalog` 定义、中英文文案和测试；仅在引入新条件种类时扩展执行器。复杂状态沿用对应 condition 与规则 ID 状态，任何持久语义变化都要提供 V1～V5 的顺序迁移和回归测试。保留数据新鲜度、30% / 5% 分档、补充周期去重、用户离席静默和通知降级；被环境抑制的候选事件不能提前写成已投递。规则改动不要修改状态栏创建、Bundle ID、登录项或安装流程。
+
+## 组件边界与改动入口
+
+| 需求 | 优先入口 | 需要保持的兼容性 |
+| --- | --- | --- |
+| 新增或调整普通提醒规则 | `ReminderRuleCatalog` 定义、中英文 `Localizable.strings`、规则测试 | 稳定规则 ID、条件新鲜度、去重 occurrence 和固定顺序 |
+| 新增条件种类或持久状态 | `ReminderCondition` 执行器、`ReminderRuleState` 与 V1～V5 顺序迁移测试 | 失败刷新不覆盖基线、旧账本可回滚、不同规则状态隔离 |
+| 修改本地 Token 扫描共性 | `Services/LocalTokenScanSupport.swift` | 保留客户端缓存版本、根目录隔离、追加读取边界和 last-good 行为 |
+| 修改单个平台解析 | 对应的专用 Token client | 解析字段、fork/请求去重和 Token 口径留在来源客户端 |
+| 增加 Token 来源 | `DataSourceCatalog` 的 `DataSourceDescriptor`、`QuotaStore` 的 `TokenSourceDescriptor`、对应解析器与支持清单 | 稳定来源 ID、安装探针、历史快照 V2→V3 兼容、缓存路径和平台/客户端维度；普通本地来源复用 `.local` 应用分支 |
+| 修改主面板页面 | `Views/OverviewPageView.swift`、`TokenPageView.swift`、`SettingsPageView.swift` | 页面状态继续由 `MainPanelView` 协调；图表交互复用 `TokenChartViews.swift` |
+| 修改系统状态栏入口 | 单独任务检查 `App/QuotaMonitorApp.swift` 与 `script/app_config.sh` | 禁止 `.autosaveName`；保持 Status4 Bundle ID；修改后做真实 Control Center 状态栏验收 |
 
 ## 推荐修改流程
 

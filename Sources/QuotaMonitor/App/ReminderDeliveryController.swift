@@ -17,13 +17,15 @@ final class ReminderDeliveryController {
     }
 
     private let settings: ReminderSettings
+    private let presence: UserPresenceMonitor
     private var toastEntries: [ToastEntry] = []
 
     var statusItemButton: NSStatusBarButton?
     var openReminder: ((ReminderPresentation) -> Void)?
 
-    init(settings: ReminderSettings) {
+    init(settings: ReminderSettings, presence: UserPresenceMonitor) {
         self.settings = settings
+        self.presence = presence
     }
 
     func refreshAuthorizationState() async {
@@ -45,18 +47,25 @@ final class ReminderDeliveryController {
         }
     }
 
-    func deliver(presentations: [ReminderPresentation]) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            var applicationPresentations: [ReminderPresentation] = []
-            for presentation in presentations {
-                if await self.deliverSystemNotificationIfAvailable(presentation) { continue }
-                applicationPresentations.append(presentation)
+    func deliver(presentations: [ReminderPresentation]) async -> Set<String> {
+        guard presence.canNotify else { return [] }
+        let generation = presence.generation
+        var accepted: Set<String> = []
+        var applicationPresentations: [ReminderPresentation] = []
+        for presentation in presentations {
+            guard presence.canNotify, presence.generation == generation else { return accepted }
+            if await deliverSystemNotificationIfAvailable(presentation, generation: generation) {
+                accepted.insert(presentation.id)
+                continue
             }
-            if !applicationPresentations.isEmpty {
-                self.showToastPanels(applicationPresentations)
-            }
+            guard presence.canNotify, presence.generation == generation else { return accepted }
+            applicationPresentations.append(presentation)
         }
+        if !applicationPresentations.isEmpty && presence.canNotify && presence.generation == generation {
+            showToastPanels(applicationPresentations)
+            accepted.formUnion(applicationPresentations.map(\.id))
+        }
+        return accepted
     }
 
     func closeToastPanel() {
@@ -70,13 +79,14 @@ final class ReminderDeliveryController {
 
     private func deliverSystemNotificationIfAvailable(
         _ presentation: ReminderPresentation,
-        requiresPreference: Bool = true
+        generation: Int
     ) async -> Bool {
-        if requiresPreference, !settings.prefersSystemNotifications { return false }
+        if !settings.prefersSystemNotifications { return false }
         let center = UNUserNotificationCenter.current()
         let notificationSettings = await center.notificationSettings()
         settings.updateSystemAuthorization(Self.authorizationState(notificationSettings.authorizationStatus))
         guard [.authorized, .provisional].contains(notificationSettings.authorizationStatus) else { return false }
+        guard presence.canNotify, presence.generation == generation else { return false }
 
         let content = UNMutableNotificationContent()
         content.title = presentation.title
@@ -85,6 +95,11 @@ final class ReminderDeliveryController {
         let request = UNNotificationRequest(identifier: presentation.id, content: content, trigger: nil)
         do {
             try await center.add(request)
+            guard presence.canNotify, presence.generation == generation else {
+                center.removePendingNotificationRequests(withIdentifiers: [presentation.id])
+                center.removeDeliveredNotifications(withIdentifiers: [presentation.id])
+                return false
+            }
             return true
         } catch {
             return false

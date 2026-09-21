@@ -3,6 +3,11 @@ import Testing
 import SQLite3
 @testable import QuotaMonitor
 
+private struct CCSwitchDailyUsage: Sendable {
+    let all: [DailyTokenUsage]
+    let deepSeek: [DailyTokenUsage]
+}
+
 // MARK: - 夹具工具
 
 private enum Fixtures {
@@ -35,6 +40,198 @@ private enum Fixtures {
         components.minute = 0
         let base = Calendar.current.date(from: components) ?? .now
         return Calendar.current.date(byAdding: .day, value: -yesterdayOffset, to: base) ?? base
+    }
+}
+
+struct LocalTokenScanSupportTests {
+    private struct CachedEntry: Codable, Equatable, Sendable {
+        let value: String
+    }
+
+    private struct ScanEntry: LocalTokenScanCacheEntry, Sendable {
+        let mtime: Date
+        let fileSize: Int
+        let processedByteCount: Int?
+    }
+
+    @Test func defaultCacheURLsShareTheExistingAppDirectoryAndKeepSourceNames() throws {
+        let fileNames = [
+            "codex-session-token-cache-v3.json",
+            "claude-session-token-cache-v1.json",
+            "workbuddy-trace-cache-v1.json",
+            "qoder-session-token-cache-v1.json",
+            "additional-local-token-cache-v1.json"
+        ]
+        let urls = try fileNames.map { try #require(LocalTokenScanSupport.defaultCacheURL(fileName: $0)) }
+
+        #expect(urls.map(\.lastPathComponent) == fileNames)
+        #expect(Set(urls.map { $0.deletingLastPathComponent().path }).count == 1)
+        #expect(urls.first?.deletingLastPathComponent().lastPathComponent == "com.cmsjcm.QuotaMonitor")
+    }
+
+    @Test func iso8601ParserAcceptsFractionalAndWholeSeconds() throws {
+        let fractionalRaw = "2026-09-13T12:34:56.789Z"
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        #expect(LocalTokenScanSupport.iso8601Date(from: fractionalRaw) == fractionalFormatter.date(from: fractionalRaw))
+
+        let wholeRaw = "2026-09-13T12:34:56Z"
+        #expect(LocalTokenScanSupport.iso8601Date(from: wholeRaw) == ISO8601DateFormatter().date(from: wholeRaw))
+        #expect(LocalTokenScanSupport.iso8601Date(from: "not-a-date") == nil)
+    }
+
+    @Test func readsLegacyCacheEnvelopeWithoutRootPath() throws {
+        let root = try Fixtures.makeTempDir("shared-cache-legacy")
+        defer { Fixtures.remove(root) }
+        let cacheURL = root.appendingPathComponent("qoder-cache.json")
+        let entryURL = URL(fileURLWithPath: "/tmp/qoder-session.jsonl")
+        let json = #"{"version":1,"entries":{"/tmp/qoder-session.jsonl":{"value":"last-good"}}}"#
+        try json.write(to: cacheURL, atomically: true, encoding: .utf8)
+
+        let cache: [URL: CachedEntry]? = LocalTokenScanSupport.loadCache(at: cacheURL, version: 1)
+        #expect(cache?[entryURL]?.value == "last-good")
+        #expect(LocalTokenScanSupport.loadCache(at: cacheURL, version: 2) as [URL: CachedEntry]? == nil)
+    }
+
+    @Test func keyedCacheHelpersPreserveTheExistingVersionEntriesFormat() throws {
+        let root = try Fixtures.makeTempDir("shared-keyed-cache")
+        defer { Fixtures.remove(root) }
+        let cacheURL = root.appendingPathComponent("additional-cache.json")
+        try #"{"version":3,"entries":{"/tmp/session.jsonl|openclaw|generic|cli":{"value":"cached"}}}"#
+            .write(to: cacheURL, atomically: true, encoding: .utf8)
+
+        var cache: [String: CachedEntry] = [:]
+        var didLoad = false
+        LocalTokenScanSupport.loadKeyedCacheIfNeeded(
+            into: &cache, didLoad: &didLoad, at: cacheURL, version: 3
+        )
+        #expect(cache["/tmp/session.jsonl|openclaw|generic|cli"]?.value == "cached")
+
+        LocalTokenScanSupport.saveKeyedCacheIfChanged(
+            cache, changed: true, at: cacheURL, version: 3
+        )
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: cacheURL)) as? [String: Any])
+        #expect(Set(payload.keys) == ["version", "entries"])
+    }
+
+    @Test func cacheRootMismatchForcesRescan() throws {
+        let root = try Fixtures.makeTempDir("shared-cache-root")
+        defer { Fixtures.remove(root) }
+        let otherRoot = root.appendingPathComponent("other", isDirectory: true)
+        let cacheURL = root.appendingPathComponent("cache.json")
+        LocalTokenScanSupport.saveCache(
+            [root.appendingPathComponent("session.jsonl"): CachedEntry(value: "cached")],
+            at: cacheURL,
+            version: 5,
+            root: root
+        )
+
+        let matching: [URL: CachedEntry]? = LocalTokenScanSupport.loadCache(at: cacheURL, version: 5, root: root)
+        let mismatched: [URL: CachedEntry]? = LocalTokenScanSupport.loadCache(at: cacheURL, version: 5, root: otherRoot)
+        #expect(matching?.count == 1)
+        #expect(mismatched == nil)
+    }
+
+    @Test func singleRootScanStopsWhenCancelledBeforeEnumeration() async throws {
+        let root = try Fixtures.makeTempDir("shared-scan-cancelled")
+        defer { Fixtures.remove(root) }
+        let ready = AsyncStream<Void>.makeStream()
+        let resume = AsyncStream<Void>.makeStream()
+        let task = Task.detached { () throws -> Void in
+            ready.continuation.yield(())
+            for await _ in resume.stream { break }
+            _ = try LocalTokenScanSupport.scanSingleRoot(
+                at: root,
+                cache: [URL: ScanEntry](),
+                accepts: { _ in false },
+                parse: { _, _, _, _, _ in nil },
+                output: { _ in [String]() }
+            )
+        }
+        for await _ in ready.stream { break }
+        task.cancel()
+        resume.continuation.yield(())
+
+        do {
+            try await task.value
+            Issue.record("cancelled scan should throw before enumerating the root")
+        } catch is CancellationError {
+            // Expected: the scan checks cancellation before opening the directory.
+        }
+    }
+
+    @Test func singleRootScanReportsUnreadableDirectory() throws {
+        let root = try Fixtures.makeTempDir("shared-scan-unreadable")
+        defer { Fixtures.remove(root) }
+        let unreadable = root.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: unreadable.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: unreadable.path) }
+
+        do {
+            _ = try LocalTokenScanSupport.scanSingleRoot(
+                at: unreadable,
+                cache: [URL: ScanEntry](),
+                accepts: { _ in false },
+                parse: { _, _, _, _, _ in nil },
+                output: { _ in [String]() }
+            )
+            Issue.record("unreadable root should be reported")
+        } catch TokenSourceReadError.unreadableRoot(let path) {
+            #expect(path == unreadable)
+        }
+    }
+
+    @Test func appendOffsetRequiresACompleteCachedLine() throws {
+        let root = try Fixtures.makeTempDir("shared-append-offset")
+        defer { Fixtures.remove(root) }
+        let completeFile = root.appendingPathComponent("complete.jsonl")
+        let completePrefix = Data("first\n".utf8)
+        try (completePrefix + Data("second\n".utf8)).write(to: completeFile)
+        #expect(LocalTokenScanSupport.appendOffset(
+            currentFileSize: completePrefix.count + 7,
+            cachedFileSize: completePrefix.count,
+            processedByteCount: completePrefix.count,
+            file: completeFile
+        ) == UInt64(completePrefix.count))
+
+        let partialFile = root.appendingPathComponent("partial.jsonl")
+        let partialPrefix = Data("first".utf8)
+        try (partialPrefix + Data("\nsecond\n".utf8)).write(to: partialFile)
+        #expect(LocalTokenScanSupport.appendOffset(
+            currentFileSize: partialPrefix.count + 8,
+            cachedFileSize: partialPrefix.count,
+            processedByteCount: partialPrefix.count,
+            file: partialFile
+        ) == nil)
+    }
+}
+
+private extension LocalTokenSnapshotProviding {
+    func fetch() -> [DailyTokenUsage] {
+        (try? fetchSnapshot().history) ?? []
+    }
+
+    func fetch(modelFilter: String?) -> [DailyTokenUsage] {
+        guard modelFilter?.lowercased().contains("deepseek") == true else { return fetch() }
+        return (try? fetchSnapshot().deepSeekHistory) ?? []
+    }
+
+    func fetchBuckets() -> [TokenUsageBucket] {
+        (try? fetchSnapshot().buckets) ?? []
+    }
+}
+
+private extension AdditionalLocalTokenClient {
+    func fetchSnapshots() throws -> [TokenSourceSnapshot] {
+        try fetchScanResult().snapshots
+    }
+}
+
+private extension CCSwitchUsageClient {
+    func fetch(appType: String) -> CCSwitchDailyUsage? {
+        guard let snapshot = fetchSnapshot(appType: appType) else { return nil }
+        return CCSwitchDailyUsage(all: snapshot.history, deepSeek: snapshot.deepSeekHistory)
     }
 }
 

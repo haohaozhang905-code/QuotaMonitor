@@ -9,9 +9,10 @@ elif [[ $# -gt 0 ]]; then
   exit 2
 fi
 
-APP_NAME="QuotaMonitor"
-VERSION="${QUOTAMONITOR_VERSION:-0.1.8}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/script/app_config.sh"
+APP_NAME="$QUOTAMONITOR_APP_NAME"
+VERSION="$QUOTAMONITOR_VERSION"
 DIST_DIR="$ROOT_DIR/dist/release"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 STAGING_DIR="$DIST_DIR/dmg-root"

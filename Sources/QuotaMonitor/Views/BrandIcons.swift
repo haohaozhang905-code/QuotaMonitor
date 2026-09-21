@@ -9,6 +9,20 @@ enum BrandIconKind: String, Sendable {
     case claudeCode
     case deepSeek
     case workBuddy
+    case generic
+}
+
+extension TokenPlatform {
+    /// One mapping for compact brand marks; platforms without a dedicated
+    /// bundled mark use the neutral tool glyph instead of borrowing another brand.
+    var brandIconKind: BrandIconKind {
+        switch self {
+        case .codex: .codex
+        case .claude: .claude
+        case .workbuddy: .workBuddy
+        default: .generic
+        }
+    }
 }
 
 /// 统一入口：按品牌渲染官方图标（单色模板或官方配色）。
@@ -38,6 +52,12 @@ struct BrandIconView: View {
         case .claudeCode: ClaudeCodeBrandIcon(size: size)
         case .deepSeek: DeepSeekBrandIcon(size: size)
         case .workBuddy: WorkBuddyBrandIcon(size: size)
+        case .generic:
+            Image(systemName: "terminal")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(PanelTheme.text2)
+                .padding(size * 0.12)
         }
     }
 }
@@ -177,20 +197,5 @@ private struct WorkBuddySparkRects: View {
             .fill(.white)
             .frame(width: size * 0.10, height: size * 0.208)
             .rotationEffect(.degrees(-30))
-    }
-}
-
-// MARK: - 便捷引用
-
-extension BrandIconKind {
-    /// 各图标的“主体色”，用于图表/图例配色统一。
-    var mainColor: Color {
-        switch self {
-        case .codex: PanelTheme.codex
-        case .claude: PanelTheme.claude
-        case .claudeCode: PanelTheme.claudeCode
-        case .deepSeek: PanelTheme.deepseek
-        case .workBuddy: PanelTheme.workbuddy
-        }
     }
 }

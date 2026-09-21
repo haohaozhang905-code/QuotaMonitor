@@ -14,7 +14,7 @@ enum CodexRoute: String, Codable, Sendable, Equatable {
 /// 判定依据用 Codex 真正读取的配置与认证存储，不依赖 cc-switch 的数据库。
 enum CodexRouteDetector {
     static func detect() -> CodexRoute {
-        let home = codexHome()
+        let home = CodexEnvironment.homeDirectory
         let authData = try? Data(contentsOf: home.appendingPathComponent("auth.json"))
         let configText = try? String(contentsOf: home.appendingPathComponent("config.toml"), encoding: .utf8)
         // DeepSeek 配置优先，避免切换器保留官方 Keychain 凭证时误判为官方。
@@ -48,7 +48,7 @@ enum CodexRouteDetector {
 
     /// 从 config.toml 解析当前模型名（用于单价估算），取不到返回 nil。
     static func currentModel() -> String? {
-        guard let text = try? String(contentsOf: codexHome().appendingPathComponent("config.toml"), encoding: .utf8) else {
+        guard let text = try? String(contentsOf: CodexEnvironment.homeDirectory.appendingPathComponent("config.toml"), encoding: .utf8) else {
             return nil
         }
         return currentModel(configText: text)
@@ -68,12 +68,6 @@ enum CodexRouteDetector {
             return value
         }
         return nil
-    }
-
-    private static func codexHome() -> URL {
-        ProcessInfo.processInfo.environment["CODEX_HOME"]
-            .map(URL.init(fileURLWithPath:))
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex", isDirectory: true)
     }
 
     private struct AuthEnvelope: Decodable {

@@ -43,13 +43,6 @@ enum QuotaFormatters {
         return formatter
     }
 
-    static func shortDate(language: AppLanguage) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = language.locale
-        formatter.dateFormat = language == .simplifiedChinese ? "M/d" : "MMM d"
-        return formatter
-    }
-
     static func percent(_ remaining: Double?) -> String {
         guard let remaining else { return "--" }
         return "\(Int((remaining * 100).rounded()))%"
@@ -66,15 +59,6 @@ enum QuotaFormatters {
     /// 按界面语言格式化 token，英文使用 K/M，中文使用 万/亿。
     static func localizedTokens(_ count: Int, language: AppLanguage) -> String {
         language == .simplifiedChinese ? tokensCN(count) : tokens(count)
-    }
-
-    /// 千分位 + k：1234567 -> "1,235k"；小于 1000 直接显示数字。
-    static func tokensGrouped(_ count: Int) -> String {
-        guard count >= 1_000 else { return "\(count)" }
-        let thousands = Int((Double(count) / 1_000).rounded())
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return (formatter.string(from: NSNumber(value: thousands)) ?? "\(thousands)") + "k"
     }
 
     /// 中文单位（设计规范 v2）：>=1 亿用 "x.xx亿"，>=100 万用整数 "xxxx万"，

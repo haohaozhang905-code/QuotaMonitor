@@ -11,8 +11,8 @@ import Foundation
 /// 按累计 usage 序列共同前缀排除，只保留 fork 之后新增的记录。
 ///
 /// 用 actor 持有 mtime 增量缓存，避免每隔刷新周期全量重扫所有历史会话文件。
-actor CodexSessionTokenClient {
-    private struct CachedUsage: Codable, Equatable {
+actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
+    private struct CachedUsage: LocalTokenScanCacheEntry {
         let mtime: Date
         let fileSize: Int
         let totalsByDay: [String: TokenTotals]
@@ -27,16 +27,6 @@ actor CodexSessionTokenClient {
         /// Fork 文件中已继承的累计 usage 记录数；nil 表示尚未解析出父子关系。
         let inheritedUsageCount: Int?
 
-        func matches(mtime candidateMtime: Date, fileSize candidateSize: Int) -> Bool {
-            fileSize == candidateSize
-                && abs(mtime.timeIntervalSinceReferenceDate - candidateMtime.timeIntervalSinceReferenceDate) < 0.001
-        }
-    }
-
-    private struct PersistedCache: Codable {
-        let version: Int
-        let rootPath: String
-        let entries: [String: CachedUsage]
     }
 
     private struct SessionIdentity: Equatable {
@@ -79,39 +69,26 @@ actor CodexSessionTokenClient {
         bucketKeyFormatter.dateFormat = "yyyy-MM-dd-HH"
         self.bucketKeyFormatter = bucketKeyFormatter
 
-        let resolvedRoot = root ?? Self.defaultRoot()
+        let resolvedRoot = root ?? CodexEnvironment.homeDirectory
         self.root = resolvedRoot
         if let persistentCacheURL {
             self.persistentCacheURL = persistentCacheURL
         } else if root == nil {
-            self.persistentCacheURL = Self.defaultPersistentCacheURL()
+            self.persistentCacheURL = LocalTokenScanSupport.defaultCacheURL(
+                fileName: "codex-session-token-cache-v3.json"
+            )
         } else {
             // 测试或自定义数据源默认不落入正式应用缓存，避免相互污染。
             self.persistentCacheURL = nil
         }
     }
 
-    func fetch() -> [DailyTokenUsage] {
-        (try? fetchSnapshot().history) ?? []
-    }
-
-    /// 只统计模型名包含 deepseek 的请求增量。
-    func fetch(modelFilter: String?) -> [DailyTokenUsage] {
-        guard modelFilter?.lowercased().contains("deepseek") == true else { return fetch() }
-        return (try? fetchSnapshot().deepSeekHistory) ?? []
-    }
-
-    /// 返回按日期和实际模型拆分的用量，供 Token 看板的“按模型”视图使用。
-    func fetchBuckets() -> [TokenUsageBucket] {
-        (try? fetchSnapshot().buckets) ?? []
-    }
-
-    func fetchSnapshot() throws -> TokenSourceSnapshot {
-        TokenSourceSnapshot(buckets: try aggregateBuckets())
-    }
-
-    private func aggregateBuckets() throws -> [TokenUsageBucket] {
-        loadPersistentCacheIfNeeded()
+    /// 历史会话缓存只保存日期、模型和 Token 汇总，不保存会话正文。
+    func snapshotBuckets() throws -> [TokenUsageBucket] {
+        LocalTokenScanSupport.loadCacheIfNeeded(
+            into: &cache, didLoad: &didLoadPersistentCache,
+            at: persistentCacheURL, version: 5, root: root
+        )
         var buckets: [TokenUsageBucket] = []
         var newCache: [URL: CachedUsage] = [:]
         var usageSequences: [URL: [TokenTotals]] = [:]
@@ -128,9 +105,13 @@ actor CodexSessionTokenClient {
         for file in files {
             try Task.checkCancellation()
             let cached = cache[file.url]
-            let canContinue = cached?.processedByteCount == cached?.fileSize
-                && file.fileSize > (cached?.fileSize ?? 0)
-                && JSONLReader.isLineBoundary(at: cached?.fileSize ?? 0, in: file.url)
+            let appendOffset = LocalTokenScanSupport.appendOffset(
+                currentFileSize: file.fileSize,
+                cachedFileSize: cached?.fileSize,
+                processedByteCount: cached?.processedByteCount,
+                file: file.url
+            )
+            let canContinue = appendOffset != nil
             if let cached,
                cached.matches(mtime: file.mtime, fileSize: file.fileSize),
                Self.canReuse(cached: cached, identity: file.identity) {
@@ -156,7 +137,7 @@ actor CodexSessionTokenClient {
                 inheritedUsageCount = 0
             }
 
-            let startingAt = canContinue ? UInt64(cached?.fileSize ?? 0) : 0
+            let startingAt = appendOffset ?? 0
             let seed = canContinue ? cached : nil
             guard let result = parseFile(
                 file.url,
@@ -201,53 +182,12 @@ actor CodexSessionTokenClient {
         }
         let cacheChanged = cache != newCache
         cache = newCache
-        if cacheChanged { savePersistentCache() }
+        LocalTokenScanSupport.saveCacheIfChanged(cache, changed: cacheChanged, at: persistentCacheURL, version: 5, root: root)
         return TokenUsageBucket.combining(buckets)
     }
 
     private static func makeBuckets(from modelByDay: [String: TokenTotals]) -> [TokenUsageBucket] {
-        modelByDay.compactMap { key, totals in
-            let parts = key.split(separator: "\u{1F}", maxSplits: 1).map(String.init)
-            guard parts.count == 2 else { return nil }
-            let model = TokenModelName.canonical(parts[1])
-            guard let bucketStart = TokenUsageBucket.date(fromBucketKey: parts[0]) else { return nil }
-            return TokenUsageBucket(
-                bucketStart: bucketStart,
-                platform: .codex,
-                client: .cli,
-                model: model,
-                provider: model.lowercased().contains("deepseek") ? .deepseek : .official,
-                totals: totals
-            )
-        }
-    }
-
-    /// 历史会话解析结果跨启动保存；活跃文件按 mtime + 大小自动失效。
-    /// 缓存只包含日期、模型与 token 汇总，不保存会话正文。
-    private func loadPersistentCacheIfNeeded() {
-        guard !didLoadPersistentCache else { return }
-        didLoadPersistentCache = true
-        guard let persistentCacheURL,
-              let data = try? Data(contentsOf: persistentCacheURL),
-              let persisted = try? JSONDecoder().decode(PersistedCache.self, from: data),
-              persisted.version == 5,
-              persisted.rootPath == root.standardizedFileURL.path else { return }
-        cache = Dictionary(uniqueKeysWithValues: persisted.entries.map {
-            (URL(fileURLWithPath: $0.key), $0.value)
-        })
-    }
-
-    private func savePersistentCache() {
-        guard let persistentCacheURL else { return }
-        let payload = PersistedCache(
-            version: 5,
-            rootPath: root.standardizedFileURL.path,
-            entries: Dictionary(uniqueKeysWithValues: cache.map { ($0.key.path, $0.value) })
-        )
-        guard let data = try? JSONEncoder().encode(payload) else { return }
-        let directory = persistentCacheURL.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? data.write(to: persistentCacheURL, options: .atomic)
+        LocalTokenScanSupport.modelBuckets(from: modelByDay, platform: .codex, client: .cli)
     }
 
     private struct ParsedFile {
@@ -380,23 +320,19 @@ actor CodexSessionTokenClient {
         var files: [SessionFile] = []
         for root in Self.sessionRoots(from: self.root) {
             var enumerationError: Error?
-            guard let enumerator = FileManager.default.enumerator(
+            guard let enumerator = LocalTokenScanSupport.enumerator(
                 at: root,
-                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-                options: [.skipsHiddenFiles],
                 errorHandler: { _, error in
                     enumerationError = error
                     return false
                 }
             ) else { throw TokenSourceReadError.unreadableRoot(root) }
             for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-                guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
-                      let mtime = values.contentModificationDate,
-                      let fileSize = values.fileSize else { continue }
+                guard let metadata = LocalTokenScanSupport.fileMetadata(at: url) else { continue }
                 files.append(SessionFile(
                     url: url,
-                    mtime: mtime,
-                    fileSize: fileSize,
+                    mtime: metadata.mtime,
+                    fileSize: metadata.fileSize,
                     identity: Self.readSessionIdentity(from: url),
                     fallbackDay: Self.dayComponents(from: url)
                 ))
@@ -574,19 +510,6 @@ actor CodexSessionTokenClient {
 
     private func parseTimestamp(_ raw: String) -> Date? {
         fractionalTimestampFormatter.date(from: raw) ?? basicTimestampFormatter.date(from: raw)
-    }
-
-    private static func defaultRoot() -> URL {
-        ProcessInfo.processInfo.environment["CODEX_HOME"]
-            .map(URL.init(fileURLWithPath:))
-            ?? FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".codex", isDirectory: true)
-    }
-
-    private static func defaultPersistentCacheURL() -> URL? {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("com.cmsjcm.QuotaMonitor", isDirectory: true)
-            .appendingPathComponent("codex-session-token-cache-v3.json")
     }
 
     /// 会话目录与归档目录的并集；归档目录存在才加入。

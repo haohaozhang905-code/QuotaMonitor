@@ -117,6 +117,24 @@ struct TokenUsageBucket: Codable, Equatable, Identifiable, Sendable {
 
     var total: Int { totals.input + totals.output }
 
+    static func modelBucket(
+        at bucketStart: Date,
+        platform: TokenPlatform,
+        client: TokenClient,
+        model rawModel: String?,
+        totals: TokenTotals
+    ) -> Self {
+        let model = TokenModelName.canonical(rawModel)
+        return Self(
+            bucketStart: bucketStart,
+            platform: platform,
+            client: client,
+            model: model,
+            provider: model.contains("deepseek") ? .deepseek : .official,
+            totals: totals
+        )
+    }
+
     /// Cache keys historically used a day-only string. New scans retain the
     /// local hour so the overview can render a real 24-hour distribution while
     /// still accepting old cached entries.

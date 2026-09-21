@@ -37,9 +37,9 @@ extension NSColor {
 ///
 /// 2026-09-09 · Steep 视觉升级 · 阶段 1（配色迁移）
 /// - 依据：designs/codexquota-redesign/steep-design-system/DESIGN.md
-/// - 旧 API 名称全部保留（调用方零改动），值按迁移表替换为新语义色
+/// - 仍有调用方的旧语义名称按迁移表映射到新语义色；未使用的旧 token 不保留
 /// - 新增语义 token（bg/ink/paper/mist/fog/…/chart*/heat*）供后续阶段使用
-/// - 已废弃语义（surface3 / borderStrong / 各 Soft 彩色底）暂保留过渡值，阶段 3 清理
+/// - 已废弃语义仅保留仍有调用方的过渡值，阶段 3 清理
 /// - 品牌图标 / 平台主色 / 字体均不在本次改动范围
 enum PanelTheme {
     static func dynamic(_ light: String, _ dark: String) -> Color {
@@ -72,12 +72,6 @@ enum PanelTheme {
     static let slate = dynamic("#777B86", "#A29F98")
     /// 三级标签 / 坐标轴文字
     static let ash = dynamic("#979799", "#7C7A75")
-    /// 占位 / 禁用
-    static let smoke = dynamic("#A3A6AF", "#585752")
-    /// 桃面（提醒卡 / 桃底标签底色）。深色档压暗避免过亮
-    static let peach = dynamic("#FBE1D1", "#D5AE93")
-    /// 桃面上的文字与图表笔势。深底上的强调文字请用 chartAccent
-    static let sienna = dynamic("#5D2A1A", "#5D2A1A")
     /// 卡片内分隔线 / 浮卡描边
     static let hairline = dynamic(NSColor(hex: "#ECECEC"), NSColor(white: 1, alpha: 0.08))
     /// 更强一级的分隔线：下拉框区块分隔等需要明确分界时使用
@@ -86,11 +80,6 @@ enum PanelTheme {
     static let hairlineSoft = dynamic(NSColor(srgbRed: 23/255, green: 25/255, blue: 28/255, alpha: 0.06), NSColor(white: 1, alpha: 0.055))
     /// 进度条轨道 / 内嵌槽
     static let track = dynamic(NSColor(srgbRed: 23/255, green: 25/255, blue: 28/255, alpha: 0.08), NSColor(white: 1, alpha: 0.07))
-    /// 输入控件使用中性静面 + 暖色焦点，避免系统默认的蓝色描边破坏主题。
-    static let inputSurface = dynamic("#FFFFFF", "#202126")
-    static let inputBorder = dynamic(NSColor(srgbRed: 23/255, green: 25/255, blue: 28/255, alpha: 0.14), NSColor(white: 1, alpha: 0.13))
-    static let inputFocus = dynamic("#9A694F", "#C59A7D")
-
     // MARK: - 图表分类色（c1–c5）与热力图（h0–h4）
 
     /// c1 图表主系列
@@ -112,6 +101,16 @@ enum PanelTheme {
     static let heat3 = ink.opacity(0.72)
     /// 热力图最高档 h4（= ink）
     static let heat4 = ink
+
+    static func heatColor(level: Int) -> Color {
+        switch level {
+        case 1: heat1
+        case 2: heat2
+        case 3: heat3
+        case 4: heat4
+        default: heat0
+        }
+    }
 
     // MARK: - 现有语义色板（阶段 1 迁移映射；DESIGN §9）
 
@@ -136,25 +135,18 @@ enum PanelTheme {
     static let text2 = slate
     static let text3 = ash
 
+    // 下拉框覆盖在不断变化的桌面背景上，需要比主面板正文更稳定的前景对比度。
+    // 深色档参考系统电池面板：主文字接近白色，次级文字保持清晰的中灰层级。
+    static let dropdownText = dynamic("#17191C", "#F2F3F5")
+    static let dropdownTextSecondary = dynamic("#656A73", "#C3C5CC")
+
     // 平台 / 品牌色（保持不变式；图标与主色不动）
     static let codex = dynamic("#5B6F8D", "#6C82A3")
-    static let codexDeep = dynamic("#4C607D", "#8296B5")
-    /// 已废弃：彩色柔底，阶段 3 统一清理
-    static let codexSoft = dynamic("#E7EBF1", "#28323E")
     // Claude 官方品牌橙；图标在深浅色外观中均保持品牌原色。
     static let claude = Color(hex: "#D97757")
-    static let claudeDeep = dynamic("#B85C3B", "#E68A6D")
-    /// 已废弃：彩色柔底
-    static let claudeSoft = dynamic("#F3E8E3", "#382D2A")
     static let claudeCode = dynamic("#77678B", "#8C7BA3")
-    /// 已废弃：彩色柔底
-    static let claudeCodeSoft = dynamic("#ECE8EF", "#302B38")
     static let deepseek = dynamic("#5D858D", "#6F98A0")
-    /// 已废弃：彩色柔底
-    static let deepseekSoft = dynamic("#E8EDFF", "#252D40")
     static let workbuddy = dynamic("#5E8975", "#78A18F")
-    /// 已废弃：彩色柔底
-    static let workbuddySoft = dynamic("#E4EFEA", "#293A34")
     static let modelFallback = dynamic("#8B877F", "#A5A19A")
 
     // 状态色（正常 / 关注 / 危急），浅色和深色各自配对底色。
@@ -172,6 +164,14 @@ enum PanelTheme {
     static func quotaValueColor(_ health: QuotaHealth) -> Color {
         switch health {
         case .healthy, .unknown: text
+        case .warning: warn
+        case .critical: danger
+        }
+    }
+
+    static func dropdownQuotaValueColor(_ health: QuotaHealth) -> Color {
+        switch health {
+        case .healthy, .unknown: dropdownText
         case .warning: warn
         case .critical: danger
         }
@@ -198,10 +198,57 @@ enum PanelTheme {
     /// 侧栏选中项：浅色白纸 / 深色亮灰（比侧栏 mist 提亮一档），配合左侧指示条保证选中明显
     static let sidebarSelected = dynamic("#FFFFFF", "#26282E")
 
-    static func modelColor(for model: String) -> Color {
-        let hash = model.utf8.reduce(UInt32(2166136261)) { partial, byte in
-            (partial ^ UInt32(byte)) &* 16777619
+}
+
+/// 系统材质负责实时取样与模糊；透明度和颜色随 macOS 外观及辅助功能设置变化。
+struct PanelVisualEffect: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+    let blendingMode: NSVisualEffectView.BlendingMode
+    /// 从不接收 key 状态的浮层（下拉面板）保持 active，避免材质随应用失焦冻结观感。
+    var keepsActiveState = false
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        if keepsActiveState {
+            view.state = .active
         }
-        return categoryPalette[Int(hash % UInt32(categoryPalette.count))]
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        // 页面切换会触发 SwiftUI 更新 NSViewRepresentable。重复写入相同材质会让
+        // NSVisualEffectView 短暂重建采样层，在浅色侧栏上表现为一次闪白。
+        if view.material != material {
+            view.material = material
+        }
+        if view.blendingMode != blendingMode {
+            view.blendingMode = blendingMode
+        }
+        let targetState: NSVisualEffectView.State = keepsActiveState ? .active : .followsWindowActiveState
+        if view.state != targetState {
+            view.state = targetState
+        }
+    }
+}
+
+/// 统一半透明玻璃表面：系统材质负责取样模糊，主题色调薄层保证文字对比。
+/// 开启“减少透明度”时整体回退到调用方提供的实色。
+struct GlassSurface: View {
+    let material: NSVisualEffectView.Material
+    let tint: Color
+    let opaqueFallback: Color
+    var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
+    var keepsActiveState = false
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        if reduceTransparency {
+            opaqueFallback
+        } else {
+            PanelVisualEffect(material: material, blendingMode: blendingMode, keepsActiveState: keepsActiveState)
+                .overlay(tint)
+        }
     }
 }

@@ -23,6 +23,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: MainPanelController?
     private var reminderCoordinator: ReminderCoordinator?
     private var reminderDeliveryController: ReminderDeliveryController?
+    private let presence = UserPresenceMonitor()
+    private var reminderEvaluationTask: Task<Void, Never>?
+    private var resumeTask: Task<Void, Never>?
+    private var resumeEpoch = 0
+    private var isResuming = false
     private var refreshTask: Task<Void, Never>?
     private var menuBarUpdateTask: Task<Void, Never>?
     private var menuBarAnimationTask: Task<Void, Never>?
@@ -61,6 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             reminderSettings: reminderSettings
         )
         setupReminders()
+        presence.onEligibilityChanged = { [weak self] eligible in
+            self?.handlePresenceChange(eligible)
+        }
         observeStore()
         refreshTask = Task { await store.start() }
         // 调试/验收用：设置 CODEXQUOTA_SHOW_PANEL=1 时启动即展示主面板。
@@ -71,6 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         refreshTask?.cancel()
+        resumeTask?.cancel()
+        reminderEvaluationTask?.cancel()
+        presence.stop()
         menuBarUpdateTask?.cancel()
         menuBarAnimationTask?.cancel()
         reminderDeliveryController?.closeToastPanel()
@@ -107,9 +118,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        // 不使用系统自动生成的 Item-0 名称，避免继承旧 MenuBarExtra/状态栏
-        // 的隐藏偏好；固定名称也让后续重启保持同一个 QuotaMonitor 状态项。
-        item.autosaveName = "QuotaMonitor.StatusItem2"
+        // macOS 26 会持久化应用状态项的隐藏/blocked 状态。固定
+        // autosaveName 还会让已屏蔽的名称在后续重启中持续被复用，
+        // 因此单状态项应用不设置自定义名称。系统级屏蔽由安装验证检测。
         item.isVisible = true
         if let button = item.button {
             button.title = ""
@@ -305,6 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 所有状态栏点击都打开下拉框，主面板只从下拉框动作进入。
     @objc private func statusItemClicked() {
+        presence.confirmUserInteraction()
         if dropdownPanel?.isVisible == true {
             closeDropdownPanel()
         } else {
@@ -351,10 +363,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             quit: { NSApp.terminate(nil) }
         )
-        let hostingController = NSHostingController(rootView: rootView)
-        panel.contentViewController = hostingController
+        let hosting = TransparentDropdownHostingView(rootView: rootView)
+        hosting.wantsLayer = true
+        hosting.layer?.isOpaque = false
+        hosting.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = hosting
 
-        let fittingHeight = hostingController.view.fittingSize.height
+        let fittingHeight = hosting.fittingSize.height
         let panelSize = NSSize(
             width: DropdownLayout.width,
             height: min(max(fittingHeight, 300), 660)
@@ -475,6 +490,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 主面板
 
     @objc func showMainPanel() {
+        presence.confirmUserInteraction()
         panelController?.show()
     }
 
@@ -484,7 +500,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupReminders() {
-        let delivery = ReminderDeliveryController(settings: reminderSettings)
+        let delivery = ReminderDeliveryController(settings: reminderSettings, presence: presence)
         delivery.statusItemButton = statusItem?.button
         delivery.openReminder = { [weak self] presentation in
             self?.showMainPanel()
@@ -497,7 +513,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let coordinator = ReminderCoordinator(settings: reminderSettings, language: language)
         coordinator.onEvents = { [weak delivery] _, presentations in
-            delivery?.deliver(presentations: presentations)
+            await delivery?.deliver(presentations: presentations) ?? []
         }
         reminderCoordinator = coordinator
         reminderSettings.onSystemNotificationPreferenceChange = { [weak delivery] enabled in
@@ -516,9 +532,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func evaluateRemindersIfNeeded() {
-        guard store.reminderRevision != lastEvaluatedReminderRevision else { return }
-        lastEvaluatedReminderRevision = store.reminderRevision
-        reminderCoordinator?.evaluate(store: store)
+        guard presence.canNotify, !isResuming, reminderEvaluationTask == nil,
+              store.reminderRevision != lastEvaluatedReminderRevision else { return }
+        reminderEvaluationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.reminderEvaluationTask = nil }
+            while self.presence.canNotify && !self.isResuming
+                    && self.store.reminderRevision != self.lastEvaluatedReminderRevision {
+                self.lastEvaluatedReminderRevision = self.store.reminderRevision
+                await self.reminderCoordinator?.evaluate(store: self.store)
+            }
+        }
+    }
+
+    private func handlePresenceChange(_ eligible: Bool) {
+        resumeEpoch &+= 1
+        resumeTask?.cancel()
+        if !eligible {
+            isResuming = false
+            reminderDeliveryController?.closeToastPanel()
+            return
+        }
+        let epoch = resumeEpoch
+        isResuming = true
+        resumeTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            // A periodic refresh that began while away is not the resume sample.
+            while self.store.isRefreshing || self.store.isRefreshingTokenSources {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled, self.presence.canNotify else { return }
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled, self.presence.canNotify else { return }
+            await self.store.refreshAll()
+            guard !Task.isCancelled, self.presence.canNotify, epoch == self.resumeEpoch else { return }
+            self.isResuming = false
+            self.resumeTask = nil
+            self.evaluateRemindersIfNeeded()
+        }
     }
 
 }

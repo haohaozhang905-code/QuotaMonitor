@@ -48,4 +48,20 @@ if rg -n --no-messages \
   exit 1
 fi
 
+# macOS 26 会记住 NSStatusItem.autosaveName 的 blocked 状态，导致进程正常但
+# 菜单栏入口永久消失。把这个已复现过的回归变成发布前硬失败。
+if rg -n --no-messages '\.autosaveName\s*=' Sources/QuotaMonitor/App/QuotaMonitorApp.swift; then
+  echo "security audit: NSStatusItem autosaveName can persist a blocked menu-bar item" >&2
+  exit 1
+fi
+
+if rg -n --no-messages 'BUNDLE_ID="com\.cmsjcm\.QuotaMonitor' script/assemble_app.sh script/build_and_run.sh script/package_release.sh; then
+  echo "security audit: bundle identity must come from script/app_config.sh" >&2
+  exit 1
+fi
+if ! rg -q 'QUOTAMONITOR_BUNDLE_ID="com\.cmsjcm\.QuotaMonitorStatus4"' script/app_config.sh; then
+  echo "security audit: expected Status4 bundle identity is missing" >&2
+  exit 1
+fi
+
 echo "security audit: passed (${#AUDIT_FILES[@]} publishable files checked)"

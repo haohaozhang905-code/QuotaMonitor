@@ -6,47 +6,63 @@ import Testing
 struct OverviewRiskAndChartTests {
     private let now = Date(timeIntervalSince1970: 1_788_880_000)
 
-    @Test func quotaCoverageUsesRemainingWindowInsteadOfOnlyAbsoluteThresholds() {
-        let critical = quotaCandidate(
+    @Test func sharedChartSelectionKeepsKeyboardAndHoverSemantics() {
+        var selection = ChartSelectionState()
+        selection.move(by: 1, count: 0)
+        #expect(selection.index == nil)
+
+        selection.move(by: 1, count: 3)
+        #expect(selection.index == 0)
+        selection.move(by: 1, count: 3)
+        #expect(selection.index == 1)
+        selection.togglePin(count: 3)
+        selection.hover(2)
+        selection.endHover()
+        #expect(selection.index == 1)
+        #expect(selection.isPinned)
+
+        selection.togglePin(count: 3)
+        selection.endHover()
+        #expect(selection.index == nil)
+        #expect(!selection.isPinned)
+        selection.clear()
+        #expect(selection == ChartSelectionState())
+    }
+
+    @Test func quotaUsesFixedDisplayedPercentageTiersRegardlessOfResetTime() {
+        let healthy = quotaCandidate(
             metric: .weekly,
             remaining: 0.39,
-            resetAfter: 4 * 60 * 60,
-            duration: 5 * 60 * 60
+            resetAfter: 4 * 60 * 60
         )
-        let nearReset = quotaCandidate(
+        let warning = quotaCandidate(
             metric: .session,
             remaining: 0.20,
-            resetAfter: 30 * 60,
-            duration: 5 * 60 * 60
+            resetAfter: 30 * 60
         )
 
         let result = OverviewRiskResolver.resolve(
-            input: .init(candidates: [nearReset, critical], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true),
-            now: now
+            input: .init(candidates: [warning, healthy], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true)
         )
 
-        #expect(result.level == .critical)
-        #expect(result.signal?.metric == .weekly)
-        #expect(abs((result.signal?.coverageRatio ?? 0) - 0.4875) < 0.0001)
+        #expect(result.level == .reminder)
+        #expect(result.signal?.metric == .session)
     }
 
     @Test func exhaustedQuotaAlwaysWinsEvenWhenResetIsNear() {
         let exhausted = quotaCandidate(
             metric: .session,
             remaining: 0,
-            resetAfter: 5 * 60,
-            duration: 5 * 60 * 60
+            resetAfter: 5 * 60
         )
         let reminder = quotaCandidate(
             metric: .weekly,
             remaining: 0.45,
-            resetAfter: nil,
-            duration: nil
+            resetAfter: nil
         )
 
         let result = OverviewRiskResolver.resolve(
-            input: .init(candidates: [reminder, exhausted], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true),
-            now: now
+            input: .init(candidates: [reminder, exhausted], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true)
         )
 
         #expect(result.level == .critical)
@@ -58,51 +74,48 @@ struct OverviewRiskAndChartTests {
         let session = quotaCandidate(
             metric: .session,
             remaining: 0.20,
-            resetAfter: 4 * 60 * 60,
-            duration: 5 * 60 * 60
+            resetAfter: 4 * 60 * 60
         )
         let weekly = quotaCandidate(
             metric: .weekly,
             remaining: 0.30,
-            resetAfter: 6 * 24 * 60 * 60,
-            duration: 7 * 24 * 60 * 60
+            resetAfter: 6 * 24 * 60 * 60
         )
 
         let result = OverviewRiskResolver.resolve(
-            input: .init(candidates: [weekly, session], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true),
-            now: now
+            input: .init(candidates: [weekly, session], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true)
         )
 
-        #expect(result.level == .critical)
+        #expect(result.level == .reminder)
         #expect(result.signal?.metric == .session)
-        #expect(abs((result.signal?.coverageRatio ?? 0) - 0.25) < 0.0001)
     }
 
-    @Test func missingWindowFallsBackToRemainingQuotaThresholds() {
-        let critical = quotaCandidate(metric: .weekly, remaining: 0.30, resetAfter: nil, duration: nil)
-        let reminder = quotaCandidate(metric: .session, remaining: 0.50, resetAfter: nil, duration: nil)
+    @Test func displayedPercentageBoundariesMatchReminderTiers() {
+        let critical = quotaCandidate(metric: .weekly, remaining: 0.054, resetAfter: nil)
+        let reminder = quotaCandidate(metric: .session, remaining: 0.304, resetAfter: nil)
+        let healthy = quotaCandidate(metric: .weekly, remaining: 0.306, resetAfter: nil)
 
         let criticalResult = OverviewRiskResolver.resolve(
-            input: .init(candidates: [critical], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true),
-            now: now
+            input: .init(candidates: [critical], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true)
         )
         let reminderResult = OverviewRiskResolver.resolve(
-            input: .init(candidates: [reminder], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true),
-            now: now
+            input: .init(candidates: [reminder], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true)
+        )
+        let healthyResult = OverviewRiskResolver.resolve(
+            input: .init(candidates: [healthy], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true)
         )
 
         #expect(criticalResult.level == .critical)
-        #expect(criticalResult.signal?.coverageRatio == nil)
         #expect(reminderResult.level == .reminder)
+        #expect(healthyResult.level == .healthy)
     }
 
     @Test func sharedBalanceIsOneSignalAndCanOutrankQuota() {
         let balance = OverviewRiskCandidate.balance(amount: 12, estimatedDays: 2)
-        let quota = quotaCandidate(metric: .weekly, remaining: 0.45, resetAfter: nil, duration: nil)
+        let quota = quotaCandidate(metric: .weekly, remaining: 0.45, resetAfter: nil)
 
         let result = OverviewRiskResolver.resolve(
-            input: .init(candidates: [quota, balance], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true),
-            now: now
+            input: .init(candidates: [quota, balance], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true)
         )
 
         #expect(result.level == .critical)
@@ -112,13 +125,12 @@ struct OverviewRiskAndChartTests {
     }
 
     @Test func partialQuotaFailureDoesNotHideAUsableRiskSignal() {
-        let signal = quotaCandidate(metric: .weekly, remaining: 0.45, resetAfter: nil, duration: nil)
+        let signal = quotaCandidate(metric: .weekly, remaining: 0.45, resetAfter: nil)
         let result = OverviewRiskResolver.resolve(
-            input: .init(candidates: [signal], unavailableQuotaSourceCount: 1, hasConnectedQuotaRoute: true),
-            now: now
+            input: .init(candidates: [signal], unavailableQuotaSourceCount: 1, hasConnectedQuotaRoute: true)
         )
 
-        #expect(result.level == .reminder)
+        #expect(result.level == .healthy)
         #expect(result.signal != nil)
         #expect(result.unavailableQuotaSourceCount == 1)
         #expect(result.actionPage == .overview)
@@ -126,8 +138,7 @@ struct OverviewRiskAndChartTests {
 
     @Test func failedQuotaSourceBecomesRecoveryStateWhenNoSignalIsUsable() {
         let result = OverviewRiskResolver.resolve(
-            input: .init(candidates: [], unavailableQuotaSourceCount: 1, hasConnectedQuotaRoute: true),
-            now: now
+            input: .init(candidates: [], unavailableQuotaSourceCount: 1, hasConnectedQuotaRoute: true)
         )
 
         #expect(result.level == .trustWarning)
@@ -137,8 +148,7 @@ struct OverviewRiskAndChartTests {
 
     @Test func officialClaudeWithoutRealQuotaDoesNotCreateASignal() {
         let result = OverviewRiskResolver.resolve(
-            input: .init(candidates: [], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true),
-            now: now
+            input: .init(candidates: [], unavailableQuotaSourceCount: 0, hasConnectedQuotaRoute: true)
         )
 
         #expect(result.level == .unavailable)
@@ -214,15 +224,13 @@ struct OverviewRiskAndChartTests {
         provider: OverviewRiskProvider = .codex,
         metric: OverviewRiskMetric,
         remaining: Double,
-        resetAfter: TimeInterval?,
-        duration: TimeInterval?
+        resetAfter: TimeInterval?
     ) -> OverviewRiskCandidate {
         .init(
             provider: provider,
             metric: metric,
             remainingPercent: remaining,
             resetsAt: resetAfter.map { now.addingTimeInterval($0) },
-            periodDuration: duration,
             balanceAmount: nil,
             estimatedDays: nil
         )
