@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+if ! command -v rg >/dev/null 2>&1; then
+  echo "security audit: ripgrep (rg) is required; install with: brew install ripgrep" >&2
+  exit 127
+fi
+
 mapfile_compat() {
   while IFS= read -r line; do
     [[ -n "$line" ]] && AUDIT_FILES+=("$line")

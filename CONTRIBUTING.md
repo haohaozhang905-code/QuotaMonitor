@@ -24,6 +24,8 @@
 
 ## 开发检查
 
+检查脚本依赖 ripgrep（`rg`）。macOS 可用 `brew install ripgrep` 安装；CI 会显式准备该依赖。缺失时脚本会直接报告依赖问题，不将其误判为文档缺漏或检查通过。
+
 ```bash
 ./script/verify_sdd_docs.sh
 bash script/verify_refactor.sh

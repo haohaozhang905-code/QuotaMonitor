@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+if ! command -v rg >/dev/null 2>&1; then
+  echo "SDD verification failed: ripgrep (rg) is required; install with: brew install ripgrep" >&2
+  exit 127
+fi
+
 required_files=(
   "AGENTS.md"
   "docs/PRODUCT.md"
