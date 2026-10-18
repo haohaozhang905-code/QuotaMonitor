@@ -22,7 +22,7 @@ Codex 的套餐名、额度重置时间、Reset Credit 到期时间是不同字�
 
 | 工具 | 默认位置 | 实现与条件 |
 | --- | --- | --- |
-| Codex | `~/.codex/sessions`、`~/.codex/archived_sessions` | 读取请求级 / 累计用量；按父子会话关系排除已知的继承历史。找不到可核对的父记录时可能不纳入相关 fork 数据 |
+| Codex | `~/.codex/sessions`、`~/.codex/archived_sessions` | 只读扫描 `.jsonl` 与 `.jsonl.zst`；流式解压无需外部工具。同一会话普通/压缩及跨目录副本只计一次，优先普通文件；按父子关系排除继承历史。找不到可核对的父记录时可能不纳入相关 fork 数据 |
 | Claude Code | `~/.claude/projects` | 读取本地 transcript 中的 usage；无需 cc-switch。cc-switch 中同源数据用于核对，不再加一遍 |
 | Claude Desktop | `~/.cc-switch/cc-switch.db` | 当前采集入口是 cc-switch 的 `proxy_request_logs`；该链路未捕获的桌面端请求无法补算 |
 | WorkBuddy | `~/.workbuddy/traces` | 兼容旧 Trace 汇总与新版 generation usage；受日志格式和读取耗时影响 |
@@ -84,6 +84,8 @@ Cursor 的普通聊天转录不作为用量来源；其结构化工作区数据�
 5. 应用优先保留暂时不可读文件的上一份有效统计，但缓存不是永久档案；删除源文件、重建缓存或上游改格式会影响总量。
 6. 当前不采集 TraeWork、千问办公或豆包工作：TraeWork 依赖私有云接口和需要钥匙串保存的短期凭据；千问办公没有稳定、非零、可复核的请求级 Token 字段；豆包工作的本地数据和私有接口无法提供精确 Token 总量。三者都不使用文本长度或窗口比例估算。
 7. 当前也不查询 OpenRouter、MiniMax、火山引擎、Qoder 账户积分或任意自定义兼容端点的余额，不提供 Ollama 本地用量适配。
+
+Codex 压缩文件变化时整文件重算，不将压缩字节偏移用于增量读取；普通日志保留追加读取。旧增量缓存缺少 revision 标志时先从源日志完整校准，成功后恢复增量读取。解压失败或截断不接受本次局部结果，有同会话缓存时沿用，无缓存时令来源刷新失败。解码窗口上限 128 MiB；超过上限按读取失败处理。不会解压回源目录或修改源日志。[兼容规范与验收](../specs/003-compressed-codex-history/spec.md)记录自动化、本机隔离扫描与已安装 TOKEN 累计页的验收边界。
 
 ## 代码依据
 

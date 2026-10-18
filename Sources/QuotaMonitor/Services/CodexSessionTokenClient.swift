@@ -1,16 +1,16 @@
 import Foundation
 
-/// 从本地 Codex 会话日志解析 token 用量；历史总量按天汇总，模型桶保留到小时。
+/// 只读解析 Codex 会话日志；历史总量按天汇总，模型明细保留到小时。
 ///
 /// 数据来源：`~/.codex/sessions/<年>/<月>/<日>/*.jsonl` 与
-/// `~/.codex/archived_sessions/rollout-*.jsonl`（Codex 归档旧会话时移动至此）。
-/// 每行 `payload.info.total_token_usage` 是 per-session 累计量，取相邻两行的差得到
-/// 单次请求增量；按该行 `timestamp` 的本地日期归日、按该行模型归 DeepSeek，
-/// 与 cc-switch / DeepSeek 后台的逐请求口径一致（跨午夜会话会正确拆分）。
-    /// Fork 会话通过文件首条 `session_meta` 的父关系识别，复制的父历史
-/// 按累计 usage 序列共同前缀排除，只保留 fork 之后新增的记录。
+/// `~/.codex/archived_sessions/rollout-*.jsonl`，以及对应 `.jsonl.zst` 压缩文件。
+/// 优先使用 `payload.info.last_token_usage` 的请求级用量；缺失时，
+/// 对相邻 `total_token_usage` 累计值取差。按记录时间归入本地日期，跨午夜拆分。
+/// 同一会话的普通、压缩及归档副本只读一份；fork 通过首条 `session_meta`
+/// 识别父会话，排除双方累计用量序列的共同前缀，只计 fork 后新增的请求。
 ///
-/// 用 actor 持有 mtime 增量缓存，避免每隔刷新周期全量重扫所有历史会话文件。
+/// 文件未变时复用汇总；普通日志追加时续读，压缩文件变更时完整重算。
+/// 仅写入汇总缓存，不解压回源目录，也不修改源日志。
 actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
     private struct CachedUsage: LocalTokenScanCacheEntry {
         let mtime: Date
@@ -26,6 +26,10 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
         let forkedFromID: String?
         /// Fork 文件中已继承的累计 usage 记录数；nil 表示尚未解析出父子关系。
         let inheritedUsageCount: Int?
+        /// 旧 V5 缓存没有此字段，按普通 JSONL 处理。
+        let isCompressed: Bool?
+        /// 1 表示已按当前口径校准；旧缓存缺失此字段时，从源日志完整重算。
+        let aggregationRevision: Int?
 
     }
 
@@ -40,6 +44,17 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
         let fileSize: Int
         let identity: SessionIdentity?
         let fallbackDay: Date?
+
+        var isCompressed: Bool { url.pathExtension == "zst" }
+        var cacheKey: URL { isCompressed ? url.deletingPathExtension() : url }
+
+        var deduplicationKeys: [String] {
+            var keys = ["path:\(cacheKey.path)"]
+            if let identity { keys.append("session:\(identity.sessionID)") }
+            let name = cacheKey.lastPathComponent
+            if name.hasPrefix("rollout-") { keys.append("rollout:\(name)") }
+            return keys
+        }
     }
 
     private var cache: [URL: CachedUsage] = [:]
@@ -93,6 +108,11 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
         var newCache: [URL: CachedUsage] = [:]
         var usageSequences: [URL: [TokenTotals]] = [:]
         let discoveredFiles = try discoverSessionFiles()
+        let cachedBySessionID = Dictionary(
+            cache.values.compactMap { entry -> (String, CachedUsage)? in
+                entry.sessionID.map { ($0, entry) }
+            }, uniquingKeysWith: { first, _ in first }
+        )
         let filesBySessionID = Dictionary(
             discoveredFiles.compactMap { file -> (String, URL)? in
                 guard let sessionID = file.identity?.sessionID else { return nil }
@@ -104,18 +124,21 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
 
         for file in files {
             try Task.checkCancellation()
-            let cached = cache[file.url]
-            let appendOffset = LocalTokenScanSupport.appendOffset(
+            let cached = cache[file.cacheKey] ?? file.identity.flatMap { cachedBySessionID[$0.sessionID] }
+            let canAppend = !file.isCompressed && cached?.isCompressed != true
+                && cached?.aggregationRevision == 1 && cache[file.cacheKey] != nil
+            let appendOffset = canAppend ? LocalTokenScanSupport.appendOffset(
                 currentFileSize: file.fileSize,
                 cachedFileSize: cached?.fileSize,
                 processedByteCount: cached?.processedByteCount,
                 file: file.url
-            )
+            ) : nil
             let canContinue = appendOffset != nil
             if let cached,
                cached.matches(mtime: file.mtime, fileSize: file.fileSize),
+               (cached.isCompressed ?? false) == file.isCompressed,
                Self.canReuse(cached: cached, identity: file.identity) {
-                newCache[file.url] = cached
+                newCache[file.cacheKey] = cached
                 buckets.append(contentsOf: Self.makeBuckets(from: cached.modelByDay))
                 continue
             }
@@ -131,7 +154,10 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
                         continue
                     }
                     parentUsageSequence = Self.usageSequence(in: parentURL, cache: &usageSequences)
-                    guard parentUsageSequence != nil else { continue }
+                    guard parentUsageSequence != nil else {
+                        if parentURL.pathExtension == "zst" { throw TokenSourceReadError.unreadableRoot(parentURL) }
+                        continue
+                    }
                 }
             } else {
                 inheritedUsageCount = 0
@@ -139,21 +165,26 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
 
             let startingAt = appendOffset ?? 0
             let seed = canContinue ? cached : nil
-            guard let result = parseFile(
+            let parsed = parseFile(
                 file.url,
                 fallbackDay: file.fallbackDay,
                 startingAt: startingAt,
                 seed: seed,
                 parentUsageSequence: startingAt == 0 ? parentUsageSequence : nil
-            ) else {
+            )
+            try Task.checkCancellation()
+            guard let result = parsed else {
                 // 活跃日志可能在写入边界暂时无法解析；保留上一份文件汇总。
-                guard let cached else { continue }
-                newCache[file.url] = cached
+                guard let cached else {
+                    if file.isCompressed { throw TokenSourceReadError.unreadableRoot(file.url) }
+                    continue
+                }
+                newCache[file.cacheKey] = cached
                 buckets.append(contentsOf: Self.makeBuckets(from: cached.modelByDay))
                 continue
             }
             if result.modelByDay.isEmpty, let cached, !result.sawValidJSON {
-                newCache[file.url] = cached
+                newCache[file.cacheKey] = cached
                 buckets.append(contentsOf: Self.makeBuckets(from: cached.modelByDay))
                 continue
             }
@@ -169,15 +200,17 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
                 totalsByDay: result.totalsByDay,
                 deepSeekByDay: result.deepSeekByDay,
                 modelByDay: result.modelByDay,
-                processedByteCount: file.fileSize,
+                processedByteCount: file.isCompressed ? nil : file.fileSize,
                 lastTotals: result.lastTotals,
                 lastDayKey: result.lastDayKey,
                 currentModel: result.currentModel,
                 sessionID: file.identity?.sessionID,
                 forkedFromID: file.identity?.forkedFromID,
-                inheritedUsageCount: inheritedUsageCount
+                inheritedUsageCount: inheritedUsageCount,
+                isCompressed: file.isCompressed,
+                aggregationRevision: 1
             )
-            newCache[file.url] = entry
+            newCache[file.cacheKey] = entry
             buckets.append(contentsOf: Self.makeBuckets(from: entry.modelByDay))
         }
         let cacheChanged = cache != newCache
@@ -207,7 +240,7 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
         let request: TokenTotals?
     }
 
-    /// 逐行取累计量差值得到单次请求增量。活跃日志只从上次字节游标继续读取。
+    /// 优先取请求级用量，缺失时用累计量差值；仅普通日志可从完整行边界续读。
     private func parseFile(
         _ url: URL,
         fallbackDay: Date?,
@@ -327,23 +360,60 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
                     return false
                 }
             ) else { throw TokenSourceReadError.unreadableRoot(root) }
-            for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-                guard let metadata = LocalTokenScanSupport.fileMetadata(at: url) else { continue }
+            for case let url as URL in enumerator where url.pathExtension == "jsonl"
+                || (url.pathExtension == "zst" && url.deletingPathExtension().pathExtension == "jsonl") {
+                let key = url.pathExtension == "zst" ? url.deletingPathExtension() : url
+                let previous = cache[key]
+                let metadata = LocalTokenScanSupport.fileMetadata(at: url)
+                    ?? previous.map { (mtime: $0.mtime, fileSize: $0.fileSize) }
+                guard let metadata else {
+                    if url.pathExtension == "zst" { throw TokenSourceReadError.unreadableRoot(url) }
+                    continue
+                }
+                // 首行暂时不可读时保留已知会话身份，避免同一副本被当成新会话。
+                let identity = Self.readSessionIdentity(from: url) ?? previous?.sessionID.map {
+                    SessionIdentity(sessionID: $0, forkedFromID: previous?.forkedFromID)
+                }
                 files.append(SessionFile(
                     url: url,
                     mtime: metadata.mtime,
                     fileSize: metadata.fileSize,
-                    identity: Self.readSessionIdentity(from: url),
+                    identity: identity,
                     fallbackDay: Self.dayComponents(from: url)
                 ))
             }
             if enumerationError != nil { throw TokenSourceReadError.unreadableRoot(root) }
         }
-        return files
+        // 优先普通日志，同格式选修改时间较新的副本；路径用于稳定打破同时间平局。
+        files.sort {
+            if $0.isCompressed != $1.isCompressed { return !$0.isCompressed }
+            if $0.mtime != $1.mtime { return $0.mtime > $1.mtime }
+            return $0.url.path < $1.url.path
+        }
+        // 先合并路径、文件名与会话 ID 的关联，再选唯一副本。
+        // 即使某份副本的首行暂不可读，普通/压缩文件也不会因此各算一次。
+        var parents = Array(files.indices)
+        func representative(_ index: Int) -> Int {
+            var current = index
+            while parents[current] != current { current = parents[current] }
+            return current
+        }
+        var aliases: [String: Int] = [:]
+        for index in files.indices {
+            for key in files[index].deduplicationKeys {
+                if let existing = aliases[key] {
+                    parents[representative(index)] = representative(existing)
+                }
+                aliases[key] = index
+            }
+        }
+        var seen: Set<Int> = []
+        return files.indices.compactMap { seen.insert(representative($0)).inserted ? files[$0] : nil }
     }
 
     private static func canReuse(cached: CachedUsage, identity: SessionIdentity?) -> Bool {
-        guard cached.sessionID == identity?.sessionID,
+        guard cached.aggregationRevision == 1,
+              cached.sessionID == identity?.sessionID,
               cached.forkedFromID == identity?.forkedFromID else { return false }
         if identity?.forkedFromID != nil {
             return cached.inheritedUsageCount != nil
@@ -414,9 +484,7 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
     }
 
     private static func readSessionIdentity(from url: URL) -> SessionIdentity? {
-        var firstLine: Data?
-        guard readFirstLine(at: url, into: &firstLine),
-              let firstLine,
+        guard let firstLine = JSONLReader.firstLine(at: url),
               let obj = try? JSONSerialization.jsonObject(with: firstLine) as? [String: Any],
               obj["type"] as? String == "session_meta",
               let payload = obj["payload"] as? [String: Any],
@@ -429,25 +497,6 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
         let parentID = (payload["forked_from_id"] as? String)
             ?? (payload["parent_thread_id"] as? String)
         return SessionIdentity(sessionID: fileSessionID, forkedFromID: parentID)
-    }
-
-    private static func readFirstLine(at url: URL, into result: inout Data?) -> Bool {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
-        defer { try? handle.close() }
-        var buffer = Data()
-        do {
-            while let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
-                buffer.append(chunk)
-                if let newline = buffer.firstIndex(of: 0x0A) {
-                    result = Data(buffer[..<newline])
-                    return true
-                }
-            }
-            result = buffer.isEmpty ? nil : buffer
-            return result != nil
-        } catch {
-            return false
-        }
     }
 
     private static func extractModel(_ obj: [String: Any]) -> String? {
@@ -471,17 +520,15 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
               let tu = info["total_token_usage"] as? [String: Any] else { return nil }
         let cumulative = tokenTotals(from: tu)
 
-        // `last_token_usage` is the request-level record. It also covers
-        // compaction/internal usage where total_token_usage may stay unchanged.
+        // 请求级字段也能记录压缩上下文等内部请求；此时累计值可能没有变化。
         let request: TokenTotals?
         if let last = info["last_token_usage"] as? [String: Any] {
             let parsed = tokenTotals(from: last)
             if parsed.hasAnyUsage {
                 request = parsed
             } else if let total = (last["total_tokens"] as? NSNumber)?.intValue, total > 0 {
-                // Some Codex versions emit only total_tokens for compaction.
-                // Keep it in the displayed total even though its dimensions
-                // are unavailable.
+                // 部分内部请求只有 total_tokens。用 input 字段承载这笔总量，
+                // 不据此推断真实的输入/输出拆分。
                 var fallback = TokenTotals()
                 fallback.input = total
                 request = fallback
