@@ -25,7 +25,7 @@ Codex 的套餐名、额度重置时间、Reset Credit 到期时间是不同字�
 | Codex | `~/.codex/sessions`、`~/.codex/archived_sessions` | 只读扫描 `.jsonl` 与 `.jsonl.zst`；流式解压无需外部工具。同一会话普通/压缩及跨目录副本只计一次，优先普通文件；按父子关系排除继承历史。找不到可核对的父记录时可能不纳入相关 fork 数据 |
 | Claude Code | `~/.claude/projects` | 读取本地 transcript 中的 usage；无需 cc-switch。cc-switch 中同源数据用于核对，不再加一遍 |
 | Claude Desktop | `~/.cc-switch/cc-switch.db` | 当前采集入口是 cc-switch 的 `proxy_request_logs`；该链路未捕获的桌面端请求无法补算 |
-| WorkBuddy | `~/.workbuddy/traces` | 兼容旧 Trace 汇总与新版 generation usage；受日志格式和读取耗时影响 |
+| WorkBuddy | `~/.workbuddy/traces` | 读取 `trace_*.json` 与 `trace_*.jsonl`，兼容旧 Trace 汇总与新版 generation usage；同一 `traceId` 双格式只计 JSONL，受日志格式和读取耗时影响 |
 | Qoder CLI | `~/.qoder/logs/sessions` | 专用事件解析，使用请求标识处理重复记录 |
 | Qoder Desktop / Work | `~/Library/Application Support/Qoder/SharedClientCache/cli/projects` | 专用转录解析，使用消息标识处理重复记录；不查询 Qoder 账户积分 |
 | Kimi Desktop | `~/Library/Application Support/kimi-desktop/daimon-share/daimon/runtime/kimi-code/home/sessions` | 专用 `wire.jsonl` 解析，采集请求级 `usage.record`；不把步骤汇总重复相加 |

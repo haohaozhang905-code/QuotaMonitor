@@ -41,6 +41,7 @@
 | `QMR-001` | 提醒机制 V1.1 | implemented / partially verified | [spec.md](001-reminder-v1.1/spec.md) | [plan.md](001-reminder-v1.1/plan.md) | [acceptance.md](001-reminder-v1.1/acceptance.md) |
 | `QMV-001` | 导航与下拉框玻璃材质 | implemented / visual pending | [spec.md](002-glass-surfaces/spec.md) | [plan.md](002-glass-surfaces/plan.md) | [acceptance.md](002-glass-surfaces/acceptance.md) |
 | `QMT-003` | Codex 压缩历史日志兼容 | verified / installed Token page verified | [spec.md](003-compressed-codex-history/spec.md) | [plan.md](003-compressed-codex-history/plan.md) | [acceptance.md](003-compressed-codex-history/acceptance.md) |
+| `QMT-004` | WorkBuddy JSONL Trace 兼容 | implemented / runtime verified / visual pending | [spec.md](004-workbuddy-jsonl-traces/spec.md) | [plan.md](004-workbuddy-jsonl-traces/plan.md) | [acceptance.md](004-workbuddy-jsonl-traces/acceptance.md) |
 
 新功能可从 [`_template`](_template) 复制 `spec.md`、`plan.md`、`tasks.md` 和 `acceptance.md`，确认范围后再将状态从 `draft` 更新为 `accepted`。
 

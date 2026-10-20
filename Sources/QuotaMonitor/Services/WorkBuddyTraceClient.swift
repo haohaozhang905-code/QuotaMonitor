@@ -2,7 +2,7 @@ import Foundation
 
 /// 从 WorkBuddy 本地 trace 文件解析 token 用量；历史总量按天汇总，模型桶保留到小时。
 ///
-/// 数据来源：`~/.workbuddy/traces/<pid>/trace_*.json`，每个工作流一个文件。
+/// 数据来源：`~/.workbuddy/traces/<pid>/trace_*.json` 与 `trace_*.jsonl`，每个工作流一个文件。
 /// 文件很大（含完整对话）。旧版本的头部 `trace` 对象带汇总；新版本把
 /// 每次模型调用的 usage 放在 generation span 的 toolOutput 中。本客户端
 /// 只提取这些汇总字段，不保存或展示对话正文。
@@ -23,9 +23,19 @@ actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
         let modelByDay: [String: TokenTotals]
         let processedByteCount: Int?
         let generationUsages: [GenerationUsageRecord]?
+        let traceID: String?
+        let sourceExtension: String?
+    }
+
+    private struct ScannedTrace {
+        let traceID: String?
+        let sourceExtension: String?
+        let fileSize: Int
+        let buckets: [TokenUsageBucket]
     }
 
     private struct TraceSummary: Decodable {
+        let traceId: String?
         let startedAt: Date
         let totalTokens: Int
         /// 早期版本的 trace 头部没有 modelInfo（只有 totalTokens），
@@ -40,6 +50,7 @@ actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
         }
 
         enum CodingKeys: String, CodingKey {
+            case traceId
             case startedAt
             case totalTokens
             case modelInfo
@@ -63,12 +74,15 @@ actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
     func snapshotBuckets() throws -> [TokenUsageBucket] {
         LocalTokenScanSupport.loadCacheIfNeeded(
             into: &cache, didLoad: &didLoadPersistentCache,
-            at: persistentCacheURL, version: 2, root: root
+            at: persistentCacheURL, version: 3, root: root
         )
         let result = try LocalTokenScanSupport.scanSingleRoot(
             at: root,
             cache: cache,
-            accepts: { $0.lastPathComponent.hasPrefix("trace_") && $0.pathExtension == "json" },
+            accepts: {
+                $0.lastPathComponent.hasPrefix("trace_")
+                    && ["json", "jsonl"].contains($0.pathExtension.lowercased())
+            },
             parse: { [self] url, mtime, fileSize, _, cached in
                 parseFile(url, mtime: mtime, fileSize: fileSize, cached: cached)
             },
@@ -78,21 +92,51 @@ actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
                     fileSize: fileSize,
                     modelByDay: [:],
                     processedByteCount: fileSize,
-                    generationUsages: []
+                    generationUsages: [],
+                    traceID: nil,
+                    sourceExtension: nil
                 )
             },
             output: {
-                LocalTokenScanSupport.modelBuckets(
-                    from: $0.modelByDay,
-                    platform: .workbuddy,
-                    client: .desktop,
-                    invalidDatePolicy: .useNow
-                )
+                [ScannedTrace(
+                    traceID: $0.traceID,
+                    sourceExtension: $0.sourceExtension,
+                    fileSize: $0.fileSize,
+                    buckets: LocalTokenScanSupport.modelBuckets(
+                        from: $0.modelByDay,
+                        platform: .workbuddy,
+                        client: .desktop,
+                        invalidDatePolicy: .useNow
+                    )
+                )]
             }
         )
         cache = result.cache
-        LocalTokenScanSupport.saveCacheIfChanged(cache, changed: result.changed, at: persistentCacheURL, version: 2, root: root)
-        return TokenUsageBucket.combining(result.output)
+        LocalTokenScanSupport.saveCacheIfChanged(cache, changed: result.changed, at: persistentCacheURL, version: 3, root: root)
+
+        var identified: [String: ScannedTrace] = [:]
+        var unidentified: [ScannedTrace] = []
+        for trace in result.output {
+            guard let traceID = trace.traceID, !traceID.isEmpty else {
+                unidentified.append(trace)
+                continue
+            }
+            if let current = identified[traceID], !Self.prefers(trace, over: current) {
+                continue
+            }
+            identified[traceID] = trace
+        }
+        let selected = unidentified + identified.values
+        return TokenUsageBucket.combining(selected.flatMap(\.buckets))
+    }
+
+    /// WorkBuddy may leave the same trace in both formats during an upgrade.
+    /// Prefer the appendable JSONL copy, then the larger copy within one format.
+    private static func prefers(_ candidate: ScannedTrace, over current: ScannedTrace) -> Bool {
+        let candidateRank = candidate.sourceExtension == "jsonl" ? 1 : 0
+        let currentRank = current.sourceExtension == "jsonl" ? 1 : 0
+        if candidateRank != currentRank { return candidateRank > currentRank }
+        return candidate.fileSize > current.fileSize
     }
 
     private func parseFile(
@@ -123,7 +167,9 @@ actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
                 fileSize: fileSize,
                 modelByDay: ["\(bucketKey)\u{1F}\(model)": totals],
                 processedByteCount: fileSize,
-                generationUsages: nil
+                generationUsages: nil,
+                traceID: summary.traceId,
+                sourceExtension: url.pathExtension.lowercased()
             )
         }
 
@@ -167,7 +213,9 @@ actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
             fileSize: fileSize,
             modelByDay: modelByDay,
             processedByteCount: fileSize,
-            generationUsages: usages
+            generationUsages: usages,
+            traceID: summary.traceId,
+            sourceExtension: url.pathExtension.lowercased()
         )
     }
 

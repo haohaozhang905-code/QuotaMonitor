@@ -58,3 +58,14 @@
 | HIST-004 | 格式转换、旧缓存校准及错误保守 | 可选格式/revision 标志；禁用压缩游标；last-good | V5 兼容、旧偏大缓存重算、重载、格式往返及错误测试 | 旧缓存 186,539 Token 偏差已校正，安装及重启后与冷扫一致 |
 
 规范与验收见 [`specs/003-compressed-codex-history`](../specs/003-compressed-codex-history/spec.md)。
+
+## WorkBuddy JSONL Trace 兼容
+
+| 需求 | 产品定义 | 实现 | 自动化证据 | 真实验收 |
+| --- | --- | --- | --- | --- |
+| WBT-001 | JSON 与 JSONL Trace 都进入统计 | `WorkBuddyTraceClient` 文件发现 | 双格式 fixture 与原有 WorkBuddy 测试 | 本机 105 个 Trace 只读扫描，最近日期恢复 |
+| WBT-002 | 只统计明确 generation usage | 现有定向分块解析 | usage、跨块及假标记测试 | 本机 JSONL generation 结构核对并解析 |
+| WBT-003 | 格式切换不重复，缓存完整重建 | `traceId` 去重、JSONL 优先、V3 cache | 双副本 fixture | 本机现有 105 个 `traceId` 唯一；安装缓存含 105 个条目且无旧 V2 遮蔽 |
+| WBT-004 | 源文件只读，重复扫描稳定 | 文件指纹缓存与独立聚合 | WorkBuddy 测试 | 今日以前结果一致，源 SHA-256、大小、修改时间不变 |
+
+规范与验收见 [`specs/004-workbuddy-jsonl-traces`](../specs/004-workbuddy-jsonl-traces/spec.md)。

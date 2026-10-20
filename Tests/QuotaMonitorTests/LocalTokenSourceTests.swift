@@ -676,6 +676,58 @@ struct WorkBuddyTraceClientTests {
         #expect(buckets.first?.model == "hy3")
     }
 
+    @Test func readsLineDelimitedTraceAndPrefersItOverLegacyDuplicate() async throws {
+        let root = try Fixtures.makeTempDir("workbuddy-jsonl")
+        defer { Fixtures.remove(root) }
+
+        let day = Fixtures.noon(yesterdayOffset: 0)
+        let created = Int(day.timeIntervalSince1970)
+        let traceID = "same-trace"
+        let legacy = #"{"trace":{"traceId":"same-trace","startedAt":"\#(Fixtures.iso(day))","totalTokens":900,"modelInfo":{"models":["legacy"],"totalInputTokens":800,"totalOutputTokens":100,"totalCachedTokens":0}},"spans":[]}"#
+        try legacy.write(to: root.appendingPathComponent("trace_same.json"), atomically: true, encoding: .utf8)
+
+        let responseObject: [String: Any] = [
+            "id": "g1",
+            "created": created,
+            "model": "hy3",
+            "usage": [
+                "prompt_tokens": 120,
+                "completion_tokens": 30,
+                "total_tokens": 150,
+                "prompt_tokens_details": ["cached_tokens": 80]
+            ]
+        ]
+        let responseData = try JSONSerialization.data(withJSONObject: responseObject)
+        let response = String(decoding: responseData, as: UTF8.self)
+        let span: [String: Any] = [
+            "type": "span_end",
+            "span": [
+                "traceId": traceID,
+                "name": "generation",
+                "type": "generation",
+                "toolInput": "{}",
+                "toolOutput": "[\(response)]"
+            ]
+        ]
+        let traceStart: [String: Any] = [
+            "type": "trace_start",
+            "trace": [
+                "traceId": traceID,
+                "startedAt": Fixtures.iso(day),
+                "totalTokens": 0
+            ]
+        ]
+        let lines = try [traceStart, span].map {
+            String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self)
+        }.joined(separator: "\n") + "\n"
+        try lines.write(to: root.appendingPathComponent("trace_same.jsonl"), atomically: true, encoding: .utf8)
+
+        let snapshot = try await WorkBuddyTraceClient(root: root).fetchSnapshot()
+        #expect(snapshot.history.first?.total == 150)
+        #expect(snapshot.history.first?.cachedInput == 80)
+        #expect(snapshot.buckets.first?.model == "hy3")
+    }
+
     @Test func appendsWorkBuddyGenerationUsageWithoutDoubleCounting() async throws {
         let root = try Fixtures.makeTempDir("workbuddy-generation-append")
         defer { Fixtures.remove(root) }
