@@ -2,13 +2,46 @@
 
 本文件把产品需求连接到技术实现、自动测试和真实验收。状态以对应 Spec 的 `acceptance.md` 为准。
 
+## 状态栏点击态与下拉动画
+
+| 需求 | 实现 | 自动化证据 | 真实验收 |
+| --- | --- | --- | --- |
+| INTERACT-001 | 系统状态栏按钮 | 构建通过 | 用户确认交互正常；加载刷新待验 |
+| INTERACT-002 | 系统 `NSPopover` | 构建通过 | 用户确认交互正常；减少动态效果待验 |
+| INTERACT-003 | `NSPopover` 关闭与打开 | 构建通过，竞态待运行验证 | 连续点击和动作跳转待验 |
+| INTERACT-004 | 复用现有 `DropdownPopoverView`，系统提供外框 | 构建通过 | 用户确认旧白边消失、内容完整；边缘和多屏待验 |
+
+规范见 [状态栏点击态与下拉动画](../specs/007-status-interaction/spec.md)。
+
+## Codex 状态栏双额度
+
+| 需求 | 实现 | 自动化证据 | 真实验收 |
+| --- | --- | --- | --- |
+| MENU-001 | `MenuBarSlotsView`、`QuotaMonitorApp` | 独立数值和缺失测试通过 | 用户提供的截图显示上方 71% 与下方 16%，与下拉框两项一致 |
+| MENU-002 | 路由及辅助功能描述 | 全量测试及安全检查通过 | 菜单栏点击和辅助功能待验 |
+| MENU-003 | 双行布局 | 多状态视图渲染和高度测试通过 | 用户截图显示新顺序；异常状态与不同菜单栏背景待验 |
+
+规范见 [Codex 状态栏双额度](../specs/006-codex-menu-quotas/spec.md)。
+
+## 后台能耗优化
+
+| 需求 | 实现 | 自动化证据 | 真实验收 |
+| --- | --- | --- | --- |
+| ENERGY-001 | `TokenRefreshWakeupState`、30 秒事件合并 | 首事件及扫描后补刷状态测试 | 安装版刷新间隔和提醒待验 |
+| ENERGY-002 | `CodexSessionTokenClient` 文件身份缓存 | 压缩、格式切换、追加、去重和缓存测试 | 真实运行能耗对照待验 |
+| ENERGY-003 | `QuotaStore.totalTokenHistory` 缓存失效 | 汇总变化、提醒规则测试 | 安装版 Token 与提醒待验 |
+
+规范见 [后台能耗优化](../specs/005-energy-efficiency/spec.md)。
+
 ## 导航与下拉框玻璃材质
+
+历史 GLASS-001 和 GLASS-003 中下拉框自绘材质及回退实现已由 [INTERACT-004](../specs/007-status-interaction/spec.md) 替代；以下记录保留当时的追踪结果，侧栏相关要求继续有效。
 
 | 需求 | 产品定义 | 主要实现 | 自动化证据 | 真实验收 |
 | --- | --- | --- | --- | --- |
-| GLASS-001 | 下拉框随桌面变化呈现半透明模糊，信息可读 | `DropdownPopoverView`、`PanelVisualEffect` | Swift 构建、文档检查 | 浅色、深色、复杂桌面背景待验 |
+| GLASS-001 | 下拉框随桌面变化呈现半透明模糊，信息可读 | 原自绘材质已替代；现由系统 `NSPopover` 提供 | 原 Swift 构建、文档检查 | 最新实现见 INTERACT-004 |
 | GLASS-002 | 主面板侧栏使用系统模糊材质；右侧顶部与正文同色并支持窗口拖拽 | `MainPanelView`、`PanelTitlebarDragSurface`、`MainPanelController` | Swift 构建、文档检查 | 侧栏视觉已运行检查；拖拽位移待用户确认 |
-| GLASS-003 | 侧栏选中项为实色；减少透明度时下拉框与侧栏回退实色 | `MainPanelView`、`GlassSurface` | Swift 构建、文档检查通过 | 选中态、减少透明度待验 |
+| GLASS-003 | 侧栏选中项为实色；减少透明度时的回退 | 侧栏 `MainPanelView`、`GlassSurface`；下拉框由系统处理 | 原 Swift 构建、文档检查通过 | 选中态、减少透明度待验 |
 | GLASS-004 | 分段选择与设置开关恢复原实色样式 | `PanelSegmentedControl`、`SettingsPageView` | Swift 构建、文档检查通过 | 分段选择、开关、禁用及辅助功能待验 |
 | GLASS-005 | 内容画布、卡片、图表提示与提醒卡恢复原实色样式 | `MainPanelView`、`TokenPageView`、`SettingsPageView`、`ReminderToastView`、`ChartTooltip` | Swift 构建、文档检查通过 | 浅深色、复杂桌面下的实色表面待验 |
 

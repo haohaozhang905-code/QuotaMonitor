@@ -1,6 +1,8 @@
 "menu.refresh" = "Refresh Now";
 "menu.quit" = "Quit";
 "menu.weekly.short" = "week";
+"menu.weeklyQuota" = "weekly quota";
+"menu.sessionQuota" = "5-hour quota";
 "menu.codexDeepSeek" = "Codex · %@ · ~%@ days left";
 "menu.todayTokens" = "Today %@";
 "menu.todayDeepSeek" = "DeepSeek %@";

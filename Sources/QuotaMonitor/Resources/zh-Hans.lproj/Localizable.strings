@@ -1,6 +1,8 @@
 "menu.refresh" = "立即刷新";
 "menu.quit" = "退出";
 "menu.weekly.short" = "周";
+"menu.weeklyQuota" = "周额度";
+"menu.sessionQuota" = "5小时额度";
 "menu.codexDeepSeek" = "Codex · %@ · 约可用%@天";
 "menu.todayTokens" = "今日用量 %@";
 "menu.todayDeepSeek" = "其中 DeepSeek %@";

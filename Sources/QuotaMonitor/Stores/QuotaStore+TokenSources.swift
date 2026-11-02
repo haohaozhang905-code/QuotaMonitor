@@ -119,7 +119,7 @@ extension QuotaStore {
 
     private func scheduleTokenRefreshTask() {
         tokenChangeDebounceTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(10))
+            try? await Task.sleep(for: .seconds(30))
             guard !Task.isCancelled, let self else { return }
             let shouldRefresh = self.tokenRefreshWakeupState.debounceDidFire(
                 isScanning: self.isRefreshingTokenSources

@@ -1,6 +1,6 @@
 # README 截图维护
 
-README 当前只展示 QuotaMonitor 的真实运行截图，不再使用重绘、拼接或带外部标注的合成展示图。截图中的额度、余额、Token 数量和时间仅代表拍摄当时的账户与本机记录。
+README 展示 QuotaMonitor 的真实运行截图，不使用重绘或带外部标注的合成展示图。截图中的额度、余额、Token 数量和时间仅代表拍摄当时的账户与本机记录。
 
 ## 截图清单
 
@@ -12,7 +12,7 @@ README 当前只展示 QuotaMonitor 的真实运行截图，不再使用重绘�
 | 设置 | `settings-light.png` | `settings-dark.png` |
 | 系统通知中心 | `reminder-notifications.png` | — |
 
-README 使用 HTML `<picture>` 根据阅读者的 GitHub 主题自动选择浅色或深色截图，并在可展开区域提供一张 `screenshots-overview.png` 深浅色拼接总览图（上排浅色、下排深色，四页面并排）。更新原图后需重新生成拼接图。
+README 使用 HTML `<picture>` 根据阅读者的 GitHub 主题自动选择浅色或深色截图，并在可展开区域链接各张原图。历史拼接图 `screenshots-overview.png` 含旧状态栏和下拉框，已不在 README 展示；以后如恢复使用，应先更新对应画面。
 
 ## 更新规则
 

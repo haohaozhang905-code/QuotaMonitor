@@ -12,7 +12,7 @@ struct QuotaMonitorApp: App {
     }
 }
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let store = QuotaStore()
     let language = LanguageSettings()
     let dockIconSettings = DockIconSettings()
@@ -31,15 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var refreshTask: Task<Void, Never>?
     private var menuBarUpdateTask: Task<Void, Never>?
     private var menuBarAnimationTask: Task<Void, Never>?
-    private var dropdownPanel: NSPanel?
-    private var dropdownEventMonitors: [Any] = []
+    private let dropdownPopover = NSPopover()
     private var renderedMenuBarState: MenuBarRenderState?
     private var lastEvaluatedReminderRevision = 0
 
     private struct MenuBarRenderState: Equatable {
         let codexRoute: CodexRoute
         let claudeRoute: ClaudeRoute
-        let codexRemaining: Double?
+        let codexWeeklyRemaining: Double?
+        let codexSessionRemaining: Double?
         let balanceAmount: Double?
         let balanceDays: Int?
         let balanceCurrency: String?
@@ -128,19 +128,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 把零内容状态项放入 blocked 列表。
             button.image = MenuBarQuotaGlyph.image
             item.length = ceil(button.image?.size.width ?? 18) + 8
-            // 使用无边框的 NSStatusBarButton，让 AppKit 自己绘制状态栏
-            // hover/pressed 的圆形高亮容器；不要用普通按钮 bezel，否则会出现黑底。
-            button.isBordered = false
-            button.showsBorderOnlyWhileMouseInside = false
-            if let cell = button.cell as? NSButtonCell {
-                let nativeHighlightMask = NSCell.StyleMask(rawValue: 8)
-                cell.highlightsBy = nativeHighlightMask
-                // 状态栏浮层打开后保持系统 selected 容器，直到浮层关闭。
-                cell.showsStateBy = nativeHighlightMask
-            }
             button.target = self
             button.action = #selector(statusItemClicked)
-            button.sendAction(on: [.leftMouseDown, .rightMouseDown])
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.setAccessibilityLabel(QuotaMonitorIdentity.displayName)
             button.setAccessibilityValue(menuBarAccessibilityValue(for: menuBarRenderState))
         }
@@ -150,13 +140,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var menuBarRenderState: MenuBarRenderState {
         let codex = store.providers.first { $0.providerId.lowercased() == "codex" }
-        // 菜单栏是长期状态摘要，优先显示周额度；5 小时额度和周额度
-        // 的差异在下拉框与主面板中分别展开，避免状态栏被短周期波动带偏。
-        let codexRemaining = codex?.weekly?.remainingPercent ?? codex?.session?.remainingPercent
         return MenuBarRenderState(
             codexRoute: store.codexRoute,
             claudeRoute: store.claudeUsesDeepSeek ? .deepseek : store.claudeRouteSummary,
-            codexRemaining: codexRemaining,
+            codexWeeklyRemaining: codex?.weekly?.remainingPercent,
+            codexSessionRemaining: codex?.session?.remainingPercent,
             balanceAmount: store.deepSeekBalance,
             balanceDays: store.deepSeekDays,
             balanceCurrency: store.deepSeekCurrency,
@@ -168,7 +156,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MenuBarSlotsView(
             codexRoute: state.codexRoute,
             claudeRoute: state.claudeRoute,
-            codexRemaining: state.codexRemaining,
+            codexWeeklyRemaining: state.codexWeeklyRemaining,
+            codexSessionRemaining: state.codexSessionRemaining,
             claudeRemaining: nil,
             balanceAmount: state.balanceAmount,
             balanceDays: state.balanceDays,
@@ -229,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
         let image = renderer.nsImage ?? MenuBarQuotaGlyph.image
-        // 交给 macOS 根据菜单栏明暗自动着色，避免浅色菜单栏上白色内容“隐形”。
+        // 内容始终交给 macOS 根据菜单栏明暗着色。
         image.isTemplate = true
         button.image = image
         button.imagePosition = .imageOnly
@@ -268,18 +257,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         var parts: [String] = []
         if state.codexRoute != .unknown {
-            let value: String
             if state.codexRoute == .deepseek {
-                value = language.text("menu.deepSeekRoute")
-            } else if let remaining = state.codexRemaining {
-                value = QuotaFormatters.percent(remaining)
+                let health = QuotaHealth(balanceAmount: state.balanceAmount, estimatedDays: state.balanceDays)
+                parts.append("Codex \(language.text("menu.deepSeekRoute")) · \(menuBarHealthText(health))")
             } else {
-                value = language.text("menu.quotaUnavailable")
+                let weekly = state.codexWeeklyRemaining.map(QuotaFormatters.percent) ?? language.text("menu.quotaUnavailable")
+                let session = state.codexSessionRemaining.map(QuotaFormatters.percent) ?? language.text("menu.quotaUnavailable")
+                parts.append("Codex \(language.text("menu.sessionQuota")) \(session), \(language.text("menu.weeklyQuota")) \(weekly)")
             }
-            let health = state.codexRoute == .deepseek
-                ? QuotaHealth(balanceAmount: state.balanceAmount, estimatedDays: state.balanceDays)
-                : QuotaHealth(remaining: state.codexRemaining)
-            parts.append("Codex \(value) · \(menuBarHealthText(health))")
         }
         if state.claudeRoute != .unknown {
             let route = state.claudeRoute == .deepseek
@@ -317,7 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 所有状态栏点击都打开下拉框，主面板只从下拉框动作进入。
     @objc private func statusItemClicked() {
         presence.confirmUserInteraction()
-        if dropdownPanel?.isVisible == true {
+        if dropdownPopover.isShown {
             closeDropdownPanel()
         } else {
             showDropdownPanel()
@@ -327,164 +312,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 下拉框
 
     private func showDropdownPanel() {
-        guard let button = statusItem?.button, let window = button.window else { return }
-
-        closeDropdownPanel(animated: false)
-
-        let panel = NSPanel(
-            contentRect: .zero,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.level = .statusBar
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
+        guard let button = statusItem?.button else { return }
         let rootView = DropdownPopoverView(
             store: store,
             language: language,
             openPanel: { [weak self] in
-                self?.closeDropdownPanelThen {
-                    self?.showMainPanel()
-                }
+                self?.closeDropdownPanelThen { self?.showMainPanel() }
             },
             refresh: { [weak self] in
                 guard let self else { return }
                 Task { await self.store.refreshAll() }
             },
             openSettings: { [weak self] in
-                self?.closeDropdownPanelThen {
-                    self?.showSettings()
-                }
+                self?.closeDropdownPanelThen { self?.showSettings() }
             },
             quit: { NSApp.terminate(nil) }
         )
-        let hosting = TransparentDropdownHostingView(rootView: rootView)
-        hosting.wantsLayer = true
-        hosting.layer?.isOpaque = false
-        hosting.layer?.backgroundColor = NSColor.clear.cgColor
-        panel.contentView = hosting
-
-        let fittingHeight = hosting.fittingSize.height
-        let panelSize = NSSize(
+        let controller = NSHostingController(rootView: rootView)
+        let fittingHeight = controller.view.fittingSize.height
+        dropdownPopover.contentSize = NSSize(
             width: DropdownLayout.width,
             height: min(max(fittingHeight, 300), 660)
         )
-        panel.setContentSize(panelSize)
-
-        let buttonRectOnScreen = window.convertToScreen(button.convert(button.bounds, to: nil))
-        let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame ?? buttonRectOnScreen
-        let edgeInset: CGFloat = 8
-        let left = min(
-            max(buttonRectOnScreen.midX - panelSize.width / 2, visibleFrame.minX + edgeInset),
-            max(visibleFrame.minX + edgeInset, visibleFrame.maxX - panelSize.width - edgeInset)
-        )
-        let finalFrame = NSRect(
-            x: left,
-            y: buttonRectOnScreen.minY - panelSize.height - 2,
-            width: panelSize.width,
-            height: panelSize.height
-        )
-
-        // 顶边固定在状态栏下方 2px，窗口从一条细缝向下展开。
-        let collapsedHeight: CGFloat = 2
-        let collapsedFrame = NSRect(
-            x: finalFrame.minX,
-            y: finalFrame.maxY - collapsedHeight,
-            width: finalFrame.width,
-            height: collapsedHeight
-        )
-        panel.setFrame(collapsedFrame, display: false)
-        panel.alphaValue = 1
-        dropdownPanel = panel
-        installDropdownEventMonitors()
-        setStatusItemHighlighted(true)
-        panel.orderFrontRegardless()
-
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            panel.setFrame(finalFrame, display: true)
-        } else {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.22
-                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1.0)
-                panel.animator().setFrame(finalFrame, display: true)
-            }
+        dropdownPopover.contentViewController = controller
+        dropdownPopover.behavior = .transient
+        dropdownPopover.delegate = self
+        dropdownPopover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        NSApp.activate(ignoringOtherApps: true)
+        dropdownPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        // 系统默认把弹出窗口留在原空间，显式支持其他应用的全屏空间。
+        if let window = controller.view.window {
+            window.collectionBehavior.remove(.moveToActiveSpace)
+            window.collectionBehavior.insert([.canJoinAllSpaces, .fullScreenAuxiliary])
         }
-    }
-
-    private func installDropdownEventMonitors() {
-        removeDropdownEventMonitors()
-        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
-            Task { @MainActor in
-                self?.closeDropdownPanel()
-            }
-        }) {
-            dropdownEventMonitors.append(global)
-        }
-        if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
-            guard let self, let panel = self.dropdownPanel, panel.isVisible else { return event }
-            let statusWindow = self.statusItem?.button?.window
-            if event.window !== panel && event.window !== statusWindow {
-                self.closeDropdownPanel()
-            }
-            return event
-        }) {
-            dropdownEventMonitors.append(local)
-        }
-    }
-
-    private func removeDropdownEventMonitors() {
-        dropdownEventMonitors.forEach { NSEvent.removeMonitor($0) }
-        dropdownEventMonitors.removeAll()
-    }
-
-    private func setStatusItemHighlighted(_ highlighted: Bool) {
-        guard let button = statusItem?.button else { return }
-        // pressed 负责按下瞬间，state 负责浮层打开后的持续 selected 容器。
-        // 两者都交给 NSStatusBarButton/AppKit 绘制，不生成自定义背景。
-        button.state = highlighted ? .on : .off
-        button.highlight(highlighted)
     }
 
     private func closeDropdownPanel(animated: Bool = true) {
-        guard let panel = dropdownPanel else {
-            removeDropdownEventMonitors()
-            setStatusItemHighlighted(false)
-            return
-        }
-        removeDropdownEventMonitors()
-        setStatusItemHighlighted(false)
-
-        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-            panel.orderOut(nil)
-            if dropdownPanel === panel { dropdownPanel = nil }
-            return
-        }
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().alphaValue = 0
-        } completionHandler: { [weak self, weak panel] in
-            Task { @MainActor in
-                panel?.orderOut(nil)
-                panel?.alphaValue = 1
-                if self?.dropdownPanel === panel { self?.dropdownPanel = nil }
-            }
-        }
+        guard dropdownPopover.isShown else { return }
+        dropdownPopover.animates = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        dropdownPopover.performClose(nil)
     }
 
     private func closeDropdownPanelThen(_ action: @escaping @MainActor () -> Void) {
         closeDropdownPanel()
-        let delay = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.0 : 0.14
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            action()
-        }
+        let delay = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.0 : 0.18
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { action() }
     }
 
     // MARK: - 主面板

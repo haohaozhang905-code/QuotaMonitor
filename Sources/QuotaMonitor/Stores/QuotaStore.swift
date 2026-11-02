@@ -16,7 +16,11 @@ final class QuotaStore {
     var reminderRevision = 0
     private(set) var codexResetCredits: CodexResetCredits?
     /// 按日期、平台、客户端和模型拆分的原始聚合桶，供 Token 看板的模型维度查询。
-    var tokenBuckets: [TokenUsageBucket] = []
+    var tokenBuckets: [TokenUsageBucket] = [] {
+        didSet { cachedTotalTokenHistory = nil }
+    }
+    @ObservationIgnored private var cachedTotalTokenHistory: [DailyTokenUsage]?
+    @ObservationIgnored private var cachedHistoryTimeZone: TimeZone?
     private(set) var codexRoute: CodexRoute = .unknown
     /// Claude 走官方还是 DeepSeek 路由（由本地 settings 推断）。
     private(set) var claudeRoute: ClaudeRoute = .unknown
@@ -106,7 +110,12 @@ final class QuotaStore {
     var totalTokenHistory: [DailyTokenUsage] {
         // 以 buckets 为唯一汇总来源，使新接入工具自动进入总量、趋势和热力图，
         // 不再要求为每一种平台增加一组专用 history 属性。
-        TokenSourceSnapshot(buckets: tokenBuckets).history
+        let timeZone = TimeZone.current
+        if cachedHistoryTimeZone == timeZone, let cachedTotalTokenHistory { return cachedTotalTokenHistory }
+        let history = TokenSourceSnapshot(buckets: tokenBuckets).history
+        cachedTotalTokenHistory = history
+        cachedHistoryTimeZone = timeZone
+        return history
     }
 
     private func dailyHistory(

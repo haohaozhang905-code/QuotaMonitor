@@ -42,6 +42,9 @@
 | `QMV-001` | 导航与下拉框玻璃材质 | implemented / visual pending | [spec.md](002-glass-surfaces/spec.md) | [plan.md](002-glass-surfaces/plan.md) | [acceptance.md](002-glass-surfaces/acceptance.md) |
 | `QMT-003` | Codex 压缩历史日志兼容 | verified / installed Token page verified | [spec.md](003-compressed-codex-history/spec.md) | [plan.md](003-compressed-codex-history/plan.md) | [acceptance.md](003-compressed-codex-history/acceptance.md) |
 | `QMT-004` | WorkBuddy JSONL Trace 兼容 | implemented / runtime verified / visual pending | [spec.md](004-workbuddy-jsonl-traces/spec.md) | [plan.md](004-workbuddy-jsonl-traces/plan.md) | [acceptance.md](004-workbuddy-jsonl-traces/acceptance.md) |
+| `QME-005` | 后台能耗优化 | implemented / installed validation pending | [spec.md](005-energy-efficiency/spec.md) | [plan.md](005-energy-efficiency/plan.md) | [acceptance.md](005-energy-efficiency/acceptance.md) |
+| `QMV-006` | Codex 状态栏双额度 | implemented / revised order screenshot verified / edge cases pending | [spec.md](006-codex-menu-quotas/spec.md) | [plan.md](006-codex-menu-quotas/plan.md) | [acceptance.md](006-codex-menu-quotas/acceptance.md) |
+| `QMV-007` | 状态栏点击态与下拉动画 | implemented / normal visual confirmed / edge cases pending | [spec.md](007-status-interaction/spec.md) | [plan.md](007-status-interaction/plan.md) | [acceptance.md](007-status-interaction/acceptance.md) |
 
 新功能可从 [`_template`](_template) 复制 `spec.md`、`plan.md`、`tasks.md` 和 `acceptance.md`，确认范围后再将状态从 `draft` 更新为 `accepted`。
 

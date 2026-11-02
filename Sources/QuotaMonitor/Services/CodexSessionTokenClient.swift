@@ -371,8 +371,17 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
                     continue
                 }
                 // 首行暂时不可读时保留已知会话身份，避免同一副本被当成新会话。
-                let identity = Self.readSessionIdentity(from: url) ?? previous?.sessionID.map {
+                let previousIdentity = previous?.sessionID.map {
                     SessionIdentity(sessionID: $0, forkedFromID: previous?.forkedFromID)
+                }
+                // 只有同格式且文件指纹完全相同时才能复用身份；变更或格式切换仍读取首行。
+                let identity: SessionIdentity?
+                if let previous, previous.matches(mtime: metadata.mtime, fileSize: metadata.fileSize),
+                   (previous.isCompressed ?? false) == (url.pathExtension == "zst"),
+                   let previousIdentity {
+                    identity = previousIdentity
+                } else {
+                    identity = Self.readSessionIdentity(from: url) ?? previousIdentity
                 }
                 files.append(SessionFile(
                     url: url,

@@ -1,6 +1,18 @@
 import AppKit
 import SwiftUI
 
+struct CodexMenuQuotaValues: Equatable {
+    let weekly: String
+    let session: String
+    var top: String { session }
+    var bottom: String { weekly }
+
+    init(weekly: Double?, session: Double?) {
+        self.weekly = QuotaFormatters.percent(weekly)
+        self.session = QuotaFormatters.percent(session)
+    }
+}
+
 /// 菜单栏双槽位：Codex / Claude 各自展示产品图标 + 数值。
 ///
 /// 规则（对应设计稿四种组合）：
@@ -10,7 +22,8 @@ import SwiftUI
 struct MenuBarSlotsView: View {
     let codexRoute: CodexRoute
     let claudeRoute: ClaudeRoute
-    let codexRemaining: Double?
+    let codexWeeklyRemaining: Double?
+    let codexSessionRemaining: Double?
     let claudeRemaining: Double?
     let balanceAmount: Double?
     let balanceDays: Int?
@@ -26,7 +39,11 @@ struct MenuBarSlotsView: View {
                 slot(icon: .deepSeek, value: balanceText, health: balanceHealth)
             } else {
                 if codexRoute != .unknown {
-                    slot(icon: .codex, value: codexValue, health: codexHealth)
+                    if codexRoute == .deepseek {
+                        slot(icon: .codex, value: balanceText, health: balanceHealth)
+                    } else {
+                        codexQuotaSlot
+                    }
                 }
                 if claudeRoute != .unknown || claudeRemaining != nil {
                     slot(icon: .claude, value: claudeValue, health: claudeHealth)
@@ -40,10 +57,6 @@ struct MenuBarSlotsView: View {
         .fontDesign(.monospaced)
     }
 
-    private var codexValue: String {
-        codexRoute == .deepseek ? balanceText : QuotaFormatters.percent(codexRemaining)
-    }
-
     private var claudeValue: String {
         if claudeRoute == .deepseek { return balanceText }
         if let claudeRemaining { return QuotaFormatters.percent(claudeRemaining) }
@@ -55,11 +68,6 @@ struct MenuBarSlotsView: View {
         return QuotaFormatters.money(balanceAmount, currency: balanceCurrency)
     }
 
-    private var codexHealth: QuotaHealth {
-        if codexRoute == .deepseek { return balanceHealth }
-        return QuotaHealth(remaining: codexRemaining)
-    }
-
     private var claudeHealth: QuotaHealth {
         if claudeRoute == .deepseek { return balanceHealth }
         return QuotaHealth(remaining: claudeRemaining)
@@ -67,6 +75,21 @@ struct MenuBarSlotsView: View {
 
     private var balanceHealth: QuotaHealth {
         QuotaHealth(balanceAmount: balanceAmount, estimatedDays: balanceDays)
+    }
+
+    private var codexQuotaSlot: some View {
+        let values = CodexMenuQuotaValues(weekly: codexWeeklyRemaining, session: codexSessionRemaining)
+        return HStack(spacing: 4) {
+            BrandIconView(kind: .codex, size: 17, monochromeColor: .black)
+                .frame(width: 18, height: 18)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(values.top).frame(height: 9)
+                Text(values.bottom).frame(height: 9)
+            }
+            .font(.system(size: 8, weight: .medium, design: .monospaced))
+            .foregroundStyle(.black)
+            .lineLimit(1)
+        }
     }
 
     private func slot(icon: BrandIconKind, value: String, health: QuotaHealth) -> some View {

@@ -7,7 +7,7 @@
 <p align="center">同时用 Codex、Claude、WorkBuddy 写代码，却总在切窗口查额度？<br>QuotaMonitor 把 Codex 剩余额度、DeepSeek 余额和 20+ AI 工具的本地 Token 消耗，集中到 Mac 菜单栏——抬眼就能看，点击查详情。</p>
 
 <p align="center">
-  <strong>📍 菜单栏常驻</strong> · 不用切窗口，抬眼看 Codex 周额度和 DeepSeek 余额<br>
+  <strong>📍 菜单栏常驻</strong> · 抬眼查看 Codex 5 小时 / 周额度和 DeepSeek 余额<br>
   <strong>🔔 到线提醒</strong> · 额度分级、5 小时/周额度重置、重置机会到期或 Token 跨过里程碑时及时通知<br>
   <strong>🔒 纯本地运行</strong> · 用量在本机解析，不上传对话、不需要注册账号<br>
   <strong>📊 多工具统一视图</strong> · Codex、Claude、WorkBuddy、Qoder、Kimi 等 Token 趋势和用量分布，一个看板看完
@@ -18,6 +18,7 @@
   <a href="docs/INSTALL.md">安装与排查</a> ·
   <a href="docs/DATA_SOURCES.md">工具支持清单</a> ·
   <a href="docs/REMINDER_PRODUCT_DESIGN.md">提醒机制方案</a> ·
+  <a href="CHANGELOG.md">更新记录</a> ·
   <a href="PRIVACY.md">隐私说明</a> ·
   <a href="https://github.com/haohaozhang905-code/QuotaMonitor/issues">反馈问题</a>
 </p>
@@ -34,7 +35,7 @@
 
 | 形态 | 什么时候用 | 能看到什么 |
 | --- | --- | --- |
-| **① 状态栏** | 工作时抬眼查看 | Codex 周额度、已识别 DeepSeek 路由的余额 |
+| **① 状态栏** | 工作时抬眼查看 | Codex 5 小时和周额度、已识别 DeepSeek 路由的余额 |
 | **② 下拉框** | 点击菜单栏入口，快速确认 | 今日 Token、较昨日变化、5 小时 / 周额度、重置时间及用量摘要 |
 | **③ 主面板** | 想了解风险、趋势与来源状态 | 风险优先概览、Token 看板、数据来源诊断与显示设置 |
 | **④ 提醒通知** | 额度触达风险线、5 小时/周额度重置或重置机会临近到期 | macOS 原生通知，或菜单栏下方的应用内提醒卡片；同批两类额度重置合并为周额度提醒 |
@@ -43,12 +44,12 @@
 
 ### ① 状态栏 → ② 下拉框
 
-状态栏保留最需要随时看到的两个数字；点击后展开下拉框，在不打开主窗口的情况下查看额度、重置时间、今日 Token，以及平台和模型摘要。
+Codex 官方额度在状态栏上下显示：上方是 5 小时剩余额度，下方是周剩余额度；已识别的 DeepSeek 路由显示余额。点击后通过系统弹出框查看额度、重置时间、今日 Token，以及平台和模型摘要。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/menu-dropdown-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/images/menu-dropdown-light.png">
-  <img src="docs/images/menu-dropdown-light.png" width="420" alt="QuotaMonitor 状态栏与下拉框：显示 Codex 周额度、DeepSeek 余额、今日 Token、重置时间和用量摘要">
+  <img src="docs/images/menu-dropdown-light.png" width="420" alt="QuotaMonitor 状态栏与下拉框：Codex 5 小时和周额度、DeepSeek 余额、今日 Token、重置时间和用量摘要">
 </picture>
 
 ### ③ 主面板：先看风险，再看当日概览
@@ -87,12 +88,17 @@ QuotaMonitor 会在 Codex 5 小时 / 周额度进入 30% 和 5% 两档时分别�
 
 系统通知已获 macOS 授权时使用原生通知；没有授权或投递失败时，自动回退到菜单栏下方的应用内卡片。同一轮同时触发多个事项时，每个事项分别通知。额度约每 60 秒刷新，因此提醒可能比服务端变化晚约一分钟。
 
-<img src="docs/images/reminder-notifications.png" width="640" alt="QuotaMonitor 应用内提醒：分别显示 Codex 5 小时额度、周额度重置和重置机会到期提醒">
+<img src="docs/images/reminder-notifications.png" width="640" alt="macOS 通知中心中的 QuotaMonitor 5 小时额度重置通知">
 
 <details>
 <summary>浅色 / 深色完整截图一览</summary>
 
-<img src="docs/images/screenshots-overview.png" alt="QuotaMonitor 全部页面的浅色与深色模式截图一览：上排为浅色模式，下排为深色模式，从左到右依次为状态栏与下拉框、概览、Token 看板、设置">
+| 页面 | 截图 |
+| --- | --- |
+| 状态栏与下拉框 | [浅色](docs/images/menu-dropdown-light.png) · [深色](docs/images/menu-dropdown-dark.png) |
+| 概览 | [浅色](docs/images/overview-light.png) · [深色](docs/images/overview-dark.png) |
+| Token 看板 | [浅色](docs/images/token-dashboard-light.png) · [深色](docs/images/token-dashboard-dark.png) |
+| 设置 | [浅色](docs/images/settings-light.png) · [深色](docs/images/settings-dark.png) |
 
 </details>
 
@@ -125,7 +131,7 @@ TraeWork、千问办公和豆包工作当前不纳入采集，原因见工具支
 2. **按需要准备数据源。** 查询 Codex 额度需先在同一 macOS 用户下登录 Codex；统计其他工具的本地 Token 不要求先购买或登录 Codex。DeepSeek 余额需要当前已配置的 Codex / Claude / cc-switch DeepSeek 路由和可读取凭据。
 3. **查看"概览"。** 顶部警示优先显示当前最需要关注的额度；下方可确认重置时间、路由、共享余额和 Codex 重置卡。重置卡不会自动兑换；接口返回明确到期时间时，每个机会会在到期前 24 小时提醒一次。
 4. **打开"Token 看板"。** 选择时间范围，切换平台或模型查看趋势与排行。首次使用会扫描已有日志；已有缓存时先显示缓存，再后台更新。
-5. **按需调整设置。** 支持简体中文 / English、跟随系统 / 浅色 / 深色外观、登录后自动启动、Dock 图标策略、额度与用量提醒和数据源重新扫描。新安装默认开启额度与用量提醒及系统通知偏好；如果 macOS 没有授权系统通知，会自动使用应用内提醒。额度约每 60 秒刷新，本地 Token 约每 5 分钟刷新；文件变化还会触发合并后的更新，界面并非逐请求实时流。30% / 5% 档位、周重置识别、24 小时到期提醒、去重和通知降级规则见[提醒机制方案](docs/REMINDER_PRODUCT_DESIGN.md)。
+5. **按需调整设置。** 支持简体中文 / English、跟随系统 / 浅色 / 深色外观、登录后自动启动、Dock 图标策略、额度与用量提醒和数据源重新扫描。新安装默认开启额度与用量提醒及系统通知偏好；如果 macOS 没有授权系统通知，会自动使用应用内提醒。额度约每 60 秒刷新，本地 Token 约每 5 分钟兜底刷新；文件变化从首个事件起合并等待 30 秒后触发更新，实际时间还受系统事件和扫描耗时影响，界面并非逐请求实时流。30% / 5% 档位、周重置识别、24 小时到期提醒、去重和通知降级规则见[提醒机制方案](docs/REMINDER_PRODUCT_DESIGN.md)。
 
 额度、余额与本地 Token 是不同指标。Token 数量不能直接换算为订阅剩余额度或实际账单金额。
 

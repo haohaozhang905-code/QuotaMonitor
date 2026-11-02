@@ -18,6 +18,19 @@ struct QuotaStoreSnapshotTests {
         let tokenUpdatedAt: Date?
     }
 
+    @Test @MainActor func totalHistoryReflectsChangedBuckets() {
+        let store = QuotaStore(tokenSnapshotURL: nil)
+        let day = Date(timeIntervalSince1970: 1_789_200_000)
+        let bucket = TokenUsageBucket(bucketStart: day, platform: .codex, client: .cli,
+                                      model: "test", provider: .official,
+                                      totals: TokenTotals(input: 100, output: 20))
+        store.tokenBuckets = [bucket]
+        #expect(store.totalTokenHistory.first?.total == 120)
+        #expect(store.totalTokenHistory.first?.total == 120)
+        store.tokenBuckets = []
+        #expect(store.totalTokenHistory.isEmpty)
+    }
+
     @MainActor
     @Test func successfulCodexRefreshClearsResetCreditsMissingFromTheNewSnapshot() {
         let store = QuotaStore(tokenSnapshotURL: nil)

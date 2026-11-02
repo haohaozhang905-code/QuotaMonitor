@@ -339,21 +339,7 @@ struct DropdownPopoverView: View {
                 .padding(.bottom, 5)
         }
         .frame(width: DropdownLayout.width)
-        .background {
-            // 直接使用系统 popover 材质，让桌面颜色参与材质计算；不再叠加
-            // 固定纸色蒙层，避免深浅色下都退化成近似实色卡片。
-            GlassSurface(
-                material: .popover,
-                tint: .clear,
-                opaqueFallback: PanelTheme.surfaceFloat,
-                keepsActiveState: true
-            )
-        }
-        .clipShape(RoundedRectangle(cornerRadius: DropdownLayout.cornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DropdownLayout.cornerRadius, style: .continuous)
-                .stroke(PanelTheme.border, lineWidth: 0.5)
-        )
+        // 系统 NSPopover 提供材质、圆角和边框，避免旧浮层表面重复叠加。
     }
 
     private var updatedText: String {

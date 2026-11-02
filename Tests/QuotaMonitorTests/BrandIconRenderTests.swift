@@ -10,7 +10,8 @@ final class BrandIconRenderTests: XCTestCase {
         let view = MenuBarSlotsView(
             codexRoute: .deepseek,
             claudeRoute: .unknown,
-            codexRemaining: nil,
+            codexWeeklyRemaining: nil,
+            codexSessionRemaining: nil,
             claudeRemaining: nil,
             balanceAmount: 20.9,
             balanceDays: 8,
@@ -28,6 +29,59 @@ final class BrandIconRenderTests: XCTestCase {
             return
         }
         try data.write(to: URL(fileURLWithPath: "/tmp/menubar-slots.png"))
+    }
+
+    func testCodexMenuQuotaValuesAreIndependent() {
+        let both = CodexMenuQuotaValues(weekly: 0.76, session: 0.42)
+        XCTAssertEqual(both.weekly, "76%")
+        XCTAssertEqual(both.session, "42%")
+        XCTAssertEqual(both.top, "42%")
+        XCTAssertEqual(both.bottom, "76%")
+        XCTAssertEqual(CodexMenuQuotaValues(weekly: nil, session: 1).weekly, "--")
+        XCTAssertEqual(CodexMenuQuotaValues(weekly: nil, session: 1).session, "100%")
+        XCTAssertEqual(CodexMenuQuotaValues(weekly: 0, session: nil).weekly, "0%")
+        XCTAssertEqual(CodexMenuQuotaValues(weekly: 0, session: nil).session, "--")
+    }
+
+    @MainActor
+    func testRenderCodexQuotaStackFitsMenuBar() throws {
+        let view = MenuBarSlotsView(
+            codexRoute: .official, claudeRoute: .unknown,
+            codexWeeklyRemaining: 0.21, codexSessionRemaining: 0.99,
+            claudeRemaining: nil, balanceAmount: nil, balanceDays: nil, balanceCurrency: nil
+        )
+        let renderer = ImageRenderer(content: view.background(Color.white))
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.nsImage)
+        XCTAssertLessThanOrEqual(image.size.height, 18)
+        let rep = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(image.tiffRepresentation)))
+        let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: "/tmp/quotamonitor-codex-stack.png"))
+    }
+
+    @MainActor
+    func testMenuBarStatesRenderWithinMenuBarHeight() throws {
+        let cases: [(CodexRoute, ClaudeRoute, Double?, Double?, Double?, Bool)] = [
+            (.official, .unknown, 1, 0, nil, false),
+            (.official, .unknown, nil, 0.5, nil, false),
+            (.official, .unknown, 0.5, nil, nil, false),
+            (.official, .deepseek, 0.2, 0.9, 5.4, false),
+            (.deepseek, .deepseek, nil, nil, 5.4, false),
+            (.deepseek, .unknown, nil, nil, nil, false),
+            (.unknown, .unknown, nil, nil, nil, false),
+            (.official, .unknown, nil, nil, nil, true)
+        ]
+        for (codex, claude, weekly, session, balance, loading) in cases {
+            let view = MenuBarSlotsView(
+                codexRoute: codex, claudeRoute: claude,
+                codexWeeklyRemaining: weekly, codexSessionRemaining: session,
+                claudeRemaining: nil, balanceAmount: balance, balanceDays: nil,
+                balanceCurrency: "CNY", isLoading: loading
+            )
+            let image = try XCTUnwrap(ImageRenderer(content: view).nsImage)
+            XCTAssertGreaterThan(image.size.width, 0)
+            XCTAssertLessThanOrEqual(image.size.height, 18)
+        }
     }
 
     /// 渲染各品牌图标为 PNG（便于人工核对），同时断言输出非空、非全透明。
