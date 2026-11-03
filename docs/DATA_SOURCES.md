@@ -28,7 +28,10 @@ Codex 的套餐名、额度重置时间、Reset Credit 到期时间是不同字�
 | WorkBuddy | `~/.workbuddy/traces` | 读取 `trace_*.json` 与 `trace_*.jsonl`，兼容旧 Trace 汇总与新版 generation usage；同一 `traceId` 双格式只计 JSONL，受日志格式和读取耗时影响 |
 | Qoder CLI | `~/.qoder/logs/sessions` | 专用事件解析，使用请求标识处理重复记录 |
 | Qoder Desktop / Work | `~/Library/Application Support/Qoder/SharedClientCache/cli/projects` | 专用转录解析，使用消息标识处理重复记录；不查询 Qoder 账户积分 |
+| DeepSeek Harness | `~/.dsh/sessions` | 读取 v4 会话的消息 usage；每个会话只选最高日志版本，不重复统计流式镜像；seeded 会话及未验证版本跳过。日志来源无法区分桌面端和 CLI，当前统一归为 Desktop |
 | Kimi Desktop | `~/Library/Application Support/kimi-desktop/daimon-share/daimon/runtime/kimi-code/home/sessions` | 专用 `wire.jsonl` 解析，采集请求级 `usage.record`；不把步骤汇总重复相加 |
+
+DeepSeek Harness 可通过 `QUOTAMONITOR_DSH_HOME` 增加会话根目录。其本地记录可能缺少辅助请求，无法替代账户账单。
 
 Kimi Desktop 可通过 `QUOTAMONITOR_KIMI_DESKTOP_HOME` 增加目录。Codex 认证与 Token 扫描都读取启动环境中的 `CODEX_HOME`：设置后，Token 解析器扫描该目录下的 `sessions` 和 `archived_sessions`。当前文件事件监听仍包含默认 `~/.codex` 路径，自定义根目录可依赖周期或手动刷新，不保证同样的事件触发时效。
 
@@ -60,7 +63,7 @@ Kimi Desktop 可通过 `QUOTAMONITOR_KIMI_DESKTOP_HOME` 增加目录。Codex 认
 
 Cursor 的普通聊天转录不作为用量来源；其结构化工作区数据也必须有可识别字段。Antigravity 依赖已有的 tokscale 同步缓存。QuotaMonitor 不负责登录或同步这些工具的云端数据，也不会自动安装 tokscale。
 
-本表与上一表对应当前代码中的 23 个 Token 平台标识；Claude Code / Desktop 和 Kimi CLI / Desktop 按客户端区分，不额外算成不同平台。这个数字只表示代码入口，不能解释为所有平台已完整实机验证，更不代表 23 个额度接口。
+本表与上一表对应当前代码中的 24 个 Token 平台标识；Claude Code / Desktop 和 Kimi CLI / Desktop 按客户端区分，不额外算成不同平台。这个数字只表示代码入口，不能解释为所有平台已完整实机验证，更不代表有同样数量的额度接口。
 
 环境变量指定的是额外扫描目录，会与默认目录一起读取；相同来源、相同路径会做遍历去重。变量必须传入 QuotaMonitor 启动进程，具体方式见[安装指南](INSTALL.md)。上述名称并非每个工具上游的统一配置标准，请以本项目定义为准。
 

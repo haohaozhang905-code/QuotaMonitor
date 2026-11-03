@@ -977,6 +977,67 @@ struct AdditionalLocalTokenClientTests {
     }
 }
 
+struct DeepSeekHarnessTokenTests {
+    @Test func countsMessagesOnceAndRebuildsAfterAppend() async throws {
+        let root = try Fixtures.makeTempDir("dsh")
+        defer { Fixtures.remove(root) }
+        let dir = root.appendingPathComponent("sessions/project/session-a")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("session.v4.jsonl")
+        let header = #"{"type":"session","version":4,"isSeeded":false}"#
+        let event = #"{"type":"assistant/message","time":1793682733030,"data":{"message":{"id":"a","source":{"kind":"model","model":"deepseek-flash"}},"usage":{"inputTokens":100,"outputTokens":20,"cacheReadTokens":30},"stream":[{"chunk":{"usage":{"inputTokens":100,"outputTokens":20}}}]}}"#
+        let missing = #"{"type":"assistant/message","time":1793682733030,"data":{"message":{"id":"b","source":{"kind":"model","model":"deepseek-flash"}},"usage":{"inputTokens":50}}}"#
+        try ([header, event, event, missing].joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
+        try ([header, event].joined(separator: "\n") + "\n").write(to: dir.appendingPathComponent("session.v3.jsonl"), atomically: true, encoding: .utf8)
+        let source = LocalToolTokenSource(platform: .deepseekHarness, roots: ["sessions"], overrideEnvironment: "", format: .deepseekHarness, client: .desktop)
+        let cache = root.appendingPathComponent("cache.json")
+        let client = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:], persistentCacheURL: cache)
+        let first = try await client.fetchSnapshots()
+        #expect(first.first?.history.first?.total == 120)
+        #expect(first.first?.history.first?.cachedInput == 30)
+        #expect(first.first?.deepSeekHistory.first?.total == 120)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((event.replacingOccurrences(of: "\"id\":\"a\"", with: "\"id\":\"c\"") + "\n").utf8))
+        try handle.close()
+        #expect(try await client.fetchSnapshots().first?.history.first?.total == 240)
+        let restored = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:], persistentCacheURL: cache)
+        #expect(try await restored.fetchSnapshots().first?.history.first?.total == 240)
+        try #"{"type":"session","version":4,"isSeeded":true}"#.write(to: file, atomically: true, encoding: .utf8)
+        #expect(try await restored.fetchSnapshots().isEmpty)
+    }
+
+    @Test func compressedReadFailureRetainsLastGoodData() async throws {
+        let root = try Fixtures.makeTempDir("dsh-compressed")
+        defer { Fixtures.remove(root) }
+        let dir = root.appendingPathComponent("sessions/project/session-a")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("session.v4.jsonl.zstd")
+        let bytes = try #require(Data(base64Encoded: "KLUv/QRY7QQAQgsiHnBJmwM0EmT7MdrWZoyf2vQYqHCJqIzU1TTNqo87hMV7zxysLaMxRnrVkWXA2qKSXTbje05YTRAG5N/lR050crQUp5FKiF36B4m21mh1GiW7tEsrU2Q0x5xzOAYEDsHBSF9JzOgj6O4VAKaUbdrV4n0TRaTR0V+wyRiQiSsYrVba/Tr9ZYHZBQYA2NgA4yu4kkkoRfap6upVxGCaI58="))
+        try bytes.write(to: file)
+        let source = LocalToolTokenSource(platform: .deepseekHarness, roots: ["sessions"], overrideEnvironment: "", format: .deepseekHarness, client: .desktop)
+        let client = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:], persistentCacheURL: root.appendingPathComponent("cache.json"))
+        #expect(try await client.fetchSnapshots().first?.history.first?.total == 120)
+        try Data(bytes.prefix(20)).write(to: file)
+        let stale = try await client.fetchScanResult()
+        #expect(stale.snapshots.first?.history.first?.total == 120)
+        #expect(stale.diagnostics.first?.state == .stale)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["QUOTAMONITOR_TEST_DSH_REAL"] == "1"))
+    func scansRealHarnessSessionsReadOnly() async throws {
+        let source = LocalToolTokenSource(platform: .deepseekHarness, roots: [".dsh/sessions"], overrideEnvironment: "", format: .deepseekHarness, client: .desktop)
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("dsh-check-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let client = AdditionalLocalTokenClient(sources: [source], environment: [:], persistentCacheURL: cache)
+        let result = try await client.fetchScanResult()
+        let snapshot = try #require(result.snapshots.first)
+        print("DSH real scan: files=\(result.diagnostics.first?.candidateFileCount ?? 0), total=\(snapshot.history.reduce(0) { $0 + $1.total }), buckets=\(snapshot.buckets.count)")
+        #expect(snapshot.history.reduce(0) { $0 + $1.total } > 0)
+        #expect(try await client.fetchScanResult().snapshots == result.snapshots)
+    }
+}
+
 struct KimiDesktopTokenClientTests {
     @Test func countsUsageRecordsWithoutRepeatingStepEndEvents() async throws {
         let root = try Fixtures.makeTempDir("kimi-desktop")

@@ -10,11 +10,13 @@ QuotaMonitor 在本机汇总 AI 工具用量，当前没有自建账号、广告
 | --- | --- | --- |
 | Codex 本地认证、Keychain 中匹配的 Codex Auth 条目，或启动环境中显式提供的认证 | 查询当前额度和 Reset Credits | 本机读取，向 OpenAI 发送认证请求 |
 | Codex / Claude / cc-switch 路由设置及活动 DeepSeek 凭据 | 判断服务路由、查询 DeepSeek 余额 | 本机读取，向 DeepSeek 发送认证请求 |
-| Codex、Claude Code、WorkBuddy、Qoder 等工具的日志、Trace 或数据库 | 提取模型、时间及 Token 用量，识别部分重复记录 | 本机解析 |
+| Codex、Claude Code、WorkBuddy、Qoder、DeepSeek Harness 等工具的日志、Trace 或数据库 | 提取模型、时间及 Token 用量，识别部分重复记录 | 本机解析 |
 | 额外工具目录中的 JSON / JSONL / SQLite 和支持的日志文件 | 按适配规则提取结构化用量 | 本机解析；完整路径见[支持清单](docs/DATA_SOURCES.md) |
 | 文件路径、大小、修改时间 | 发现变化、复用缓存和增量读取 | 本机缓存 |
 
 这些源日志本身可能包含提示词、回答和项目内容。解析过程会读取文件字节，部分格式会在内存中解析整个记录或文件；**应用不把对话正文作为统计结果保存、展示或上传**。这不意味着应用从不接触含正文的文件，也不意味着原 AI 工具的日志已被清除。
+
+DeepSeek Harness Token 统计只读取本地会话日志，不为该统计读取 Harness 凭据或发送网络请求；DeepSeek 余额查询有独立的数据来源和认证条件。
 
 数据库采集使用只读方式。QuotaMonitor 不修改原会话记录，不自动切换 AI 工具路由，也不主动兑换 Reset Credits。Claude Desktop 当前通过 cc-switch 请求日志采集，cc-switch 自身的数据处理由其软件和配置决定。
 

@@ -49,7 +49,7 @@ struct QuotaModelsTests {
         #expect(groups.first { $0.id == "codex" }?.quotaSourceIDs == [DataSourceCatalog.codexQuota])
         #expect(groups.first { $0.id == "claude" }?.routeDependentQuotaSourceIDs == [DataSourceCatalog.deepSeekBalance])
         #expect(groups.first { $0.id == "claude" }?.tokenSourceIDs == [DataSourceCatalog.claudeCode, DataSourceCatalog.claudeDesktop])
-        #expect(TokenPlatform.allCases.count == 23)
+        #expect(TokenPlatform.allCases.count == 24)
         #expect(Set(TokenPlatform.allCases.map(\.rawValue)).isDisjoint(with: unsupportedPlatforms))
         #expect(Set(ids.map(\.platform)).isDisjoint(with: unsupportedPlatforms))
     }

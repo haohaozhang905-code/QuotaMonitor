@@ -8,6 +8,7 @@ struct LocalToolTokenSource: Hashable, Sendable {
         case generic
         /// Kimi Desktop 的 wire.jsonl 同时记录步骤结束与 usage.record；仅后者是一条可计费请求。
         case kimiWire
+        case deepseekHarness
     }
 
     let platform: TokenPlatform
@@ -43,6 +44,7 @@ struct LocalToolTokenSource: Hashable, Sendable {
     /// README 中声明的本地用量来源。仅含可在本机读取会话、事件或数据库记录的工具；
     /// 余额/订阅额度 API（OpenRouter、Minimax 等）需要用户明确配置凭证后再单独接入。
     static let additional: [Self] = [
+        .init(platform: .deepseekHarness, roots: [".dsh/sessions"], overrideEnvironment: "QUOTAMONITOR_DSH_HOME", format: .deepseekHarness, client: .desktop),
         .init(platform: .opencode, roots: [".local/share/opencode/storage/message", ".local/share/opencode"], overrideEnvironment: "QUOTAMONITOR_OPENCODE_HOME"),
         .init(platform: .hermes, roots: [".hermes"], overrideEnvironment: "HERMES_HOME"),
         .init(platform: .openclaw, roots: [".openclaw/agents"], overrideEnvironment: "QUOTAMONITOR_OPENCLAW_HOME"),
@@ -131,7 +133,10 @@ actor AdditionalLocalTokenClient {
                     try Task.checkCancellation()
                     let ext = url.pathExtension.lowercased()
                     let cacheKey = Self.cacheKey(url: url, source: source)
-                    guard ["json", "jsonl", "log", "db", "sqlite", "sqlite3"].contains(ext), visited.insert(cacheKey).inserted else { continue }
+                    let eligible = source.format == .deepseekHarness
+                        ? Self.isCurrentHarnessGeneration(url)
+                        : ["json", "jsonl", "log", "db", "sqlite", "sqlite3"].contains(ext)
+                    guard eligible, visited.insert(cacheKey).inserted else { continue }
                     candidateFileCount += 1
                     guard let metadata = LocalTokenScanSupport.fileMetadata(at: url) else { continue }
                     let (mtime, size) = metadata
@@ -140,7 +145,7 @@ actor AdditionalLocalTokenClient {
                     if let cached = cache[cacheKey], cached.matches(mtime: mtime, fileSize: size) {
                         buckets = cached.buckets
                     } else {
-                        let isLineFile = ["jsonl", "log"].contains(ext)
+                        let isLineFile = source.format != .deepseekHarness && ["jsonl", "log"].contains(ext)
                         let appendOffset = isLineFile
                             ? LocalTokenScanSupport.appendOffset(
                                 currentFileSize: size,
@@ -215,6 +220,9 @@ actor AdditionalLocalTokenClient {
         fallbackDate: Date,
         startingAt: Int
     ) -> [TokenUsageBucket]? {
+        if source.format == .deepseekHarness {
+            return parseDeepSeekHarness(url: url, source: source)
+        }
         if source.format == .kimiWire {
             return parseKimiWire(url: url, source: source, fallbackDate: fallbackDate, startingAt: startingAt)
         }
@@ -325,6 +333,56 @@ actor AdditionalLocalTokenClient {
             ))
         }
         guard didRead else { return nil }
+        return TokenUsageBucket.combining(buckets)
+    }
+
+    /// Harness retains immutable predecessor generations. Its runtime selects the highest.
+    private static func isCurrentHarnessGeneration(_ url: URL) -> Bool {
+        func version(_ name: String) -> Int? {
+            guard let match = name.range(of: #"^session\.v[0-9]+\.jsonl(\.zstd)?$"#, options: .regularExpression) else { return nil }
+            let parts = name[match].split(separator: ".")
+            return Int(parts[1].dropFirst())
+        }
+        guard let own = version(url.lastPathComponent),
+              let siblings = try? FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path),
+              own == siblings.compactMap(version).max() else { return false }
+        // Two encodings of one generation are ambiguous; prefer compressed deterministically.
+        return url.pathExtension == "zstd" || !siblings.contains(url.lastPathComponent + ".zstd")
+    }
+
+    private static func parseDeepSeekHarness(url: URL, source: LocalToolTokenSource) -> [TokenUsageBucket]? {
+        var buckets: [TokenUsageBucket] = []
+        var headerValid = false
+        var first = true
+        var seen: Set<String> = []
+        let read = JSONLReader.forEachLine(at: url) { line in
+            guard let row = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return }
+            if first {
+                first = false
+                headerValid = row["type"] as? String == "session" && (row["version"] as? Int) == 4 && (row["isSeeded"] as? Bool) == false
+                return
+            }
+            guard headerValid, row["type"] as? String == "assistant/message",
+                  let data = row["data"] as? [String: Any],
+                  let message = data["message"] as? [String: Any],
+                  let id = message["id"] as? String, !id.isEmpty,
+                  let origin = message["source"] as? [String: Any], origin["kind"] as? String == "model",
+                  let usage = data["usage"] as? [String: Any],
+                  let input = usage["inputTokens"] as? Int, input >= 0,
+                  let output = usage["outputTokens"] as? Int, output >= 0,
+                  let millis = row["time"] as? Double, millis > 0,
+                  !seen.contains(id), input > 0 || output > 0 else { return }
+            seen.insert(id)
+            var totals = TokenTotals()
+            totals.input = input
+            totals.output = output
+            totals.cachedInput = max(0, usage["cacheReadTokens"] as? Int ?? 0)
+            totals.cacheWriteInput = max(0, usage["cacheWriteTokens"] as? Int ?? 0)
+            let date = Date(timeIntervalSince1970: millis / 1000)
+            let hour = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day, .hour], from: date)) ?? date
+            buckets.append(.modelBucket(at: hour, platform: source.platform, client: source.client, model: origin["model"] as? String, totals: totals))
+        }
+        guard read else { return nil }
         return TokenUsageBucket.combining(buckets)
     }
 

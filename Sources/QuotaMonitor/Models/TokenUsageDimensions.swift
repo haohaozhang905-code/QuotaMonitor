@@ -26,6 +26,7 @@ enum TokenPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
     case qoder
     case proma
     case reasonix
+    case deepseekHarness
 
     var id: String { rawValue }
 }
@@ -56,6 +57,7 @@ extension TokenPlatform {
         case .qoder: "Qoder"
         case .proma: "Proma"
         case .reasonix: "Reasonix"
+        case .deepseekHarness: "DeepSeek Harness"
         }
     }
 }

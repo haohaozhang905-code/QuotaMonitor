@@ -6,7 +6,7 @@ enum JSONLReader {
     /// 只有上次游标正好落在换行符之后，才可安全从文件尾继续；
     /// 否则末行可能仍在写入，下一次改为全文件重算，避免漏掉被补全的 JSON。
     static func isLineBoundary(at offset: Int, in url: URL) -> Bool {
-        guard url.pathExtension != "zst" else { return false }
+        guard !["zst", "zstd"].contains(url.pathExtension.lowercased()) else { return false }
         guard offset > 0, let handle = try? FileHandle(forReadingFrom: url) else { return offset == 0 }
         defer { try? handle.close() }
         do {
@@ -92,7 +92,7 @@ enum JSONLReader {
         private var compressed: OpaquePointer?
 
         init(url: URL, startingAt: UInt64) throws {
-            if url.pathExtension == "zst" {
+            if ["zst", "zstd"].contains(url.pathExtension.lowercased()) {
                 guard startingAt == 0, let reader = url.withUnsafeFileSystemRepresentation({ path in
                     path.flatMap(qm_zstd_open)
                 }) else { throw CocoaError(.fileReadCorruptFile) }

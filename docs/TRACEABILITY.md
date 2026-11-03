@@ -112,3 +112,12 @@
 | WBT-004 | 源文件只读，重复扫描稳定 | 文件指纹缓存与独立聚合 | WorkBuddy 测试 | 今日以前结果一致，源 SHA-256、大小、修改时间不变 |
 
 规范与验收见 [`specs/004-workbuddy-jsonl-traces`](../specs/004-workbuddy-jsonl-traces/spec.md)。
+
+## DeepSeek Harness（QMT-009）
+
+| 需求 | 实现 | 验证状态 |
+| --- | --- | --- |
+| DSH-001 | `AdditionalLocalTokenClient.parseDeepSeekHarness` | 事件及流式镜像去重测试；本机扫描已核对 |
+| DSH-002 | `isCurrentHarnessGeneration` | 版本选择和 seeded 跳过测试 |
+| DSH-003 | 消息 ID、事件时间和模型字段 | 自动化及本机扫描；安装应用待验证 |
+| DSH-004 | 文件缓存与内置 Zstandard 读取 | 追加、缓存重载和压缩读取失败测试 |

@@ -117,9 +117,11 @@ QuotaMonitor 会在 Codex 5 小时 / 周额度进入 30% 和 5% 两档时分别�
 
 ## 支持哪些 AI 工具
 
-当前能查询的远端额度 / 余额为 **Codex 和 DeepSeek**；本地 Token 统计代码覆盖 **23 个平台标识**，包括 Codex、Claude Code、Claude Desktop（经 cc-switch）、WorkBuddy、Qoder、Kimi Desktop 等专用解析，以及 OpenCode、Cline、Grok Build、GitHub Copilot、Zed 等通用目录适配。
+当前能查询的远端额度 / 余额为 **Codex 和 DeepSeek**；本地 Token 统计代码覆盖 **24 个平台标识**，包括 Codex、Claude Code、Claude Desktop（经 cc-switch）、WorkBuddy、Qoder、Kimi Desktop、DeepSeek Harness 等专用解析，以及 OpenCode、Cline、Grok Build、GitHub Copilot、Zed 等通用目录适配。
 
 > "支持"表示代码已接入相应入口，不代表所有工具版本都完成真实环境验证，也不代表安装工具后一定已经产生可读日志。Token 统计只覆盖本机实际存在、且包含明确用量字段的日志或数据库记录。
+
+DeepSeek Harness 从本机会话日志读取可核实的 Token 用量，并在看板中作为独立平台显示；它与 DeepSeek 余额查询是不同来源。当前支持 v4 会话日志，继承历史的 seeded 会话和未验证版本暂不统计，具体条件见[工具支持清单](docs/DATA_SOURCES.md)。
 
 完整的平台 × 数据采集矩阵、路径、环境变量、统计口径与验证边界，见 **[工具支持清单](docs/DATA_SOURCES.md)**。
 
