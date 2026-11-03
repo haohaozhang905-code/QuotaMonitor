@@ -45,6 +45,7 @@
 | `QME-005` | 后台能耗优化 | implemented / installed validation pending | [spec.md](005-energy-efficiency/spec.md) | [plan.md](005-energy-efficiency/plan.md) | [acceptance.md](005-energy-efficiency/acceptance.md) |
 | `QMV-006` | Codex 状态栏双额度 | implemented / revised order screenshot verified / edge cases pending | [spec.md](006-codex-menu-quotas/spec.md) | [plan.md](006-codex-menu-quotas/plan.md) | [acceptance.md](006-codex-menu-quotas/acceptance.md) |
 | `QMV-007` | 状态栏点击态与下拉动画 | implemented / normal visual confirmed / edge cases pending | [spec.md](007-status-interaction/spec.md) | [plan.md](007-status-interaction/plan.md) | [acceptance.md](007-status-interaction/acceptance.md) |
+| `QMT-008` | 模型排行过滤零用量 | implemented / installed validation pending | [spec.md](008-model-ranking/spec.md) | [plan.md](008-model-ranking/plan.md) | [acceptance.md](008-model-ranking/acceptance.md) |
 
 新功能可从 [`_template`](_template) 复制 `spec.md`、`plan.md`、`tasks.md` 和 `acceptance.md`，确认范围后再将状态从 `draft` 更新为 `accepted`。
 

@@ -238,6 +238,36 @@ struct QuotaModelsTests {
         #expect(snapshot.topModels().last?.key == .model("model-d"))
     }
 
+    @Test func modelRankingsExcludeZeroUsageWithoutDiscardingBuckets() {
+        let now = Date(timeIntervalSince1970: 1_786_400_000)
+        let buckets = [
+            Self.bucket(day: now, platform: .claude, client: .desktop, model: "deepseek-v4-flash", total: 100),
+            Self.bucket(day: now, platform: .claude, client: .desktop, model: "claude-fable-5", total: 0),
+            Self.bucket(day: now, platform: .claude, client: .desktop, model: "claude-haiku-4-5", total: 0)
+        ]
+        let source = TokenSourceSnapshot(buckets: buckets)
+        let snapshot = QuotaPresentationSnapshot.make(
+            providers: [], updatedAt: now, errorMessageKey: nil, isRefreshing: false,
+            codexRoute: .unknown, claudeRoute: .unknown, totalHistory: source.history,
+            buckets: source.buckets, now: now
+        )
+        let dashboard = QuotaPresentationSnapshot.makeTokenDashboard(
+            period: .all, totalHistory: source.history, buckets: source.buckets, now: now
+        )
+
+        #expect(source.buckets.count == 3)
+        #expect(snapshot.today.total == 100)
+        #expect(snapshot.modelToday.map(\.key) == [.model("deepseek-v4-flash")])
+        #expect(snapshot.modelLastSevenDays.map(\.key) == [.model("deepseek-v4-flash")])
+        #expect(snapshot.topModels().first?.share == 1)
+        #expect(dashboard.models.map(\.key) == [.model("deepseek-v4-flash")])
+
+        let emptyDashboard = QuotaPresentationSnapshot.makeTokenDashboard(
+            period: .all, totalHistory: [], buckets: Array(buckets.dropFirst()), now: now
+        )
+        #expect(emptyDashboard.models.isEmpty)
+    }
+
     @Test func dashboardBreakdownsUseFourPlusOtherForPlatformsAndModels() {
         let now = Date(timeIntervalSince1970: 1_786_400_000)
         let platforms: [TokenPlatform] = [.codex, .claude, .workbuddy, .kimi]

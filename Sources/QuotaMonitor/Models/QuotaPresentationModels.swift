@@ -231,11 +231,13 @@ struct QuotaPresentationSnapshot: Equatable, Sendable {
             modelToday: breakdown(
                 buckets: buckets,
                 startingAt: todayStart,
+                positiveOnly: true,
                 key: { .model(TokenModelName.canonical($0.model)) }
             ),
             modelLastSevenDays: breakdown(
                 buckets: buckets,
                 startingAt: sevenDayStart,
+                positiveOnly: true,
                 key: { .model(TokenModelName.canonical($0.model)) }
             ),
             history: historyAvailability(history: totalHistory, now: now, calendar: calendar)
@@ -282,6 +284,7 @@ struct QuotaPresentationSnapshot: Equatable, Sendable {
             models: breakdown(
                 buckets: buckets,
                 startingAt: start,
+                positiveOnly: true,
                 key: { .model(TokenModelName.canonical($0.model)) }
             ).topFourPlusOther(limit: 4, otherKey: .otherModels)
         )
@@ -424,14 +427,16 @@ struct QuotaPresentationSnapshot: Equatable, Sendable {
     private static func breakdown(
         buckets: [TokenUsageBucket],
         startingAt start: Date,
+        positiveOnly: Bool = false,
         key: (TokenUsageBucket) -> UsageBreakdownKey
     ) -> [UsageBreakdownSnapshot] {
         var totals: [UsageBreakdownKey: Int] = [:]
         for bucket in buckets where bucket.bucketStart >= start {
             totals[key(bucket), default: 0] += bucket.total
         }
-        let total = totals.values.reduce(0, +)
-        return totals
+        let displayedTotals = positiveOnly ? totals.filter { $0.value > 0 } : totals
+        let total = displayedTotals.values.reduce(0, +)
+        return displayedTotals
             .map { UsageBreakdownSnapshot(key: $0.key, total: $0.value, share: total > 0 ? Double($0.value) / Double(total) : 0) }
             .sorted {
                 if $0.total != $1.total { return $0.total > $1.total }
