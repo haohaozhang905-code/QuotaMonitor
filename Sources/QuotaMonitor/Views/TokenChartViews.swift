@@ -201,8 +201,8 @@ private struct ChartTooltip: View {
             }
         }
         // 浮动浮层：实色浮卡面 + 描边 + 投影。
-        .background(PanelTheme.tooltipSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PanelTheme.tooltipBorder, lineWidth: 1))
+        .background(PanelTheme.tooltipSurface, in: RoundedRectangle(cornerRadius: PanelTheme.tooltipCornerRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: PanelTheme.tooltipCornerRadius, style: .continuous).stroke(PanelTheme.tooltipBorder, lineWidth: 1))
         .shadow(color: Color.black.opacity(0.18), radius: 18, y: 6)
         .zIndex(20)
         .allowsHitTesting(false)

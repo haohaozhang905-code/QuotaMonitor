@@ -337,3 +337,37 @@
 "appearance.system" = "跟随系统";
 "appearance.light" = "浅色";
 "appearance.dark" = "深色";
+
+"cache.title" = "输入缓存命中";
+"cache.brief.title" = "输入缓存命中率";
+"cache.shortTitle" = "缓存命中";
+"cache.help" = "查看输入缓存命中说明";
+"cache.rate" = "输入缓存命中率";
+"cache.read" = "缓存命中量";
+"cache.input" = "已核实输入";
+"cache.coverage" = "明细覆盖率";
+"cache.partial" = "部分数据";
+"cache.unavailable" = "暂无可计算的输入缓存数据";
+"cache.updating" = "正在更新，显示上次可用数据";
+"cache.explanation" = "命中率 = 缓存读取 ÷ 已核实输入；明细覆盖率 = 已核实记录的输入及输出 ÷ 已采集 Token。";
+"cache.exclusions" = "未接入、字段缺失或异常、旧缓存及读取失败的数据未纳入命中率。";
+"cache.legend" = "缓存命中输入";
+"cache.loading" = "正在读取缓存明细";
+"cache.updated" = "数据更新于 %@";
+"cache.otherInput" = "其他输入";
+"cache.sources" = "来源明细";
+"cache.notIncluded" = "未纳入";
+"cache.reason.unsupportedSource" = "部分来源暂未接入缓存统计";
+"cache.reason.unsupportedFormat" = "部分旧格式暂未纳入";
+"cache.reason.missingFields" = "部分记录缺少缓存或输入字段";
+"cache.reason.invalidFields" = "部分记录的字段值或数量关系异常";
+"cache.reason.missingTime" = "部分记录没有可靠的使用时间";
+"cache.reason.oldCache" = "部分旧缓存缺少字段证据，等待重扫";
+"cache.reason.fileUnreadable" = "部分文件读取失败，沿用旧用量";
+"cache.reason.sourceUnavailable" = "部分来源读取失败或数据已过期";
+"cache.brief.definition" = "输入中有多少直接复用了缓存。按输入 Token 计算，不含输出。";
+"cache.brief.partial" = "仅统计可核实的数据，部分记录未纳入。";
+"cache.hover.partial" = "仅含可核实输入";
+"cache.hover.unknown" = "暂无可核实的缓存数据";
+
+"cache.row.accessibility" = "用量 %@ Token，占比 %@，输入缓存命中率 %@";

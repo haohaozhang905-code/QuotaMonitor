@@ -30,6 +30,7 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
         let isCompressed: Bool?
         /// 1 表示已按当前口径校准；旧缓存缺失此字段时，从源日志完整重算。
         let aggregationRevision: Int?
+        let cacheEvidenceRevision: Int?
 
     }
 
@@ -90,7 +91,7 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
             self.persistentCacheURL = persistentCacheURL
         } else if root == nil {
             self.persistentCacheURL = LocalTokenScanSupport.defaultCacheURL(
-                fileName: "codex-session-token-cache-v3.json"
+                fileName: "codex-session-token-cache-evidence-v1.json"
             )
         } else {
             // 测试或自定义数据源默认不落入正式应用缓存，避免相互污染。
@@ -100,6 +101,15 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
 
     /// 历史会话缓存只保存日期、模型和 Token 汇总，不保存会话正文。
     func snapshotBuckets() throws -> [TokenUsageBucket] {
+        if !didLoadPersistentCache, persistentCacheURL != nil,
+           LocalTokenScanSupport.loadCache(at: persistentCacheURL, version: 5, root: root) as [URL: CachedUsage]? == nil,
+           root == CodexEnvironment.homeDirectory {
+            cache = LocalTokenScanSupport.loadCache(
+                at: LocalTokenScanSupport.defaultCacheURL(fileName: "codex-session-token-cache-v3.json"),
+                version: 5, root: root
+            ) ?? [:]
+            didLoadPersistentCache = true
+        }
         LocalTokenScanSupport.loadCacheIfNeeded(
             into: &cache, didLoad: &didLoadPersistentCache,
             at: persistentCacheURL, version: 5, root: root
@@ -126,7 +136,7 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
             try Task.checkCancellation()
             let cached = cache[file.cacheKey] ?? file.identity.flatMap { cachedBySessionID[$0.sessionID] }
             let canAppend = !file.isCompressed && cached?.isCompressed != true
-                && cached?.aggregationRevision == 1 && cache[file.cacheKey] != nil
+                && cached?.aggregationRevision == 1 && cached?.cacheEvidenceRevision == 2 && cache[file.cacheKey] != nil
             let appendOffset = canAppend ? LocalTokenScanSupport.appendOffset(
                 currentFileSize: file.fileSize,
                 cachedFileSize: cached?.fileSize,
@@ -180,12 +190,12 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
                     continue
                 }
                 newCache[file.cacheKey] = cached
-                buckets.append(contentsOf: Self.makeBuckets(from: cached.modelByDay))
+                buckets.append(contentsOf: Self.makeBuckets(from: cached.modelByDay.mapValues(\.withoutCacheMeasurement)))
                 continue
             }
             if result.modelByDay.isEmpty, let cached, !result.sawValidJSON {
                 newCache[file.cacheKey] = cached
-                buckets.append(contentsOf: Self.makeBuckets(from: cached.modelByDay))
+                buckets.append(contentsOf: Self.makeBuckets(from: cached.modelByDay.mapValues(\.withoutCacheMeasurement)))
                 continue
             }
             if let sequence = result.usageSequence {
@@ -208,7 +218,8 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
                 forkedFromID: file.identity?.forkedFromID,
                 inheritedUsageCount: inheritedUsageCount,
                 isCompressed: file.isCompressed,
-                aggregationRevision: 1
+                aggregationRevision: 1,
+                cacheEvidenceRevision: 2
             )
             newCache[file.cacheKey] = entry
             buckets.append(contentsOf: Self.makeBuckets(from: entry.modelByDay))
@@ -303,7 +314,10 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
                 }
                 usageRecordCount += 1
 
-                let delta = usage.request ?? (lastTotals.map { totals.subtracting($0) } ?? totals)
+                var delta = usage.request ?? (lastTotals.map { totals.subtracting($0) } ?? totals)
+                if delta.cacheMeasurement == nil {
+                    delta.cacheExclusionReasons = usage.request?.cacheExclusionReasons ?? totals.cacheExclusionReasons ?? [.missingFields]
+                }
                 lastTotals = totals
                 if inherited { return }
                 guard delta.hasAnyUsage else { return }
@@ -322,6 +336,9 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
                     bucketKey = fallbackDayKey
                 } else {
                     return
+                }
+                if (obj["timestamp"] as? String).flatMap(parseTimestamp) == nil {
+                    delta = delta.excludingCache(.missingTime)
                 }
                 lastDayKey = dayKey
 
@@ -421,7 +438,7 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
     }
 
     private static func canReuse(cached: CachedUsage, identity: SessionIdentity?) -> Bool {
-        guard cached.aggregationRevision == 1,
+        guard cached.aggregationRevision == 1, cached.cacheEvidenceRevision == 2,
               cached.sessionID == identity?.sessionID,
               cached.forkedFromID == identity?.forkedFromID else { return false }
         if identity?.forkedFromID != nil {
@@ -540,6 +557,7 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
                 // 不据此推断真实的输入/输出拆分。
                 var fallback = TokenTotals()
                 fallback.input = total
+                fallback.cacheExclusionReasons = [.missingFields]
                 request = fallback
             } else {
                 request = nil
@@ -561,6 +579,20 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
         totals.output = intv("output_tokens")
         totals.reasoning = intv("reasoning_output_tokens")
         if totals.reasoning == 0 { totals.reasoning = intv("reasoning_tokens") }
+        if let input = cacheEvidenceInteger(object["input_tokens"]),
+           let cached = cacheEvidenceInteger(object["cached_input_tokens"]),
+           let output = cacheEvidenceInteger(object["output_tokens"]),
+           object["cache_write_input_tokens"] == nil || cacheEvidenceInteger(object["cache_write_input_tokens"]) != nil {
+            totals.cacheMeasurement = CacheUsageMeasurement(
+                input: input, cachedInput: cached,
+                cacheWriteInput: cacheEvidenceInteger(object["cache_write_input_tokens"]),
+                output: output
+            )
+        }
+        if totals.cacheMeasurement == nil {
+            let keys = ["input_tokens", "cached_input_tokens", "output_tokens"]
+            totals.cacheExclusionReasons = [keys.contains { object[$0] == nil } ? .missingFields : .invalidFields]
+        }
         return totals
     }
 

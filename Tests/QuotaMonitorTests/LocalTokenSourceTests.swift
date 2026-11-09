@@ -97,21 +97,37 @@ struct LocalTokenScanSupportTests {
         let root = try Fixtures.makeTempDir("shared-keyed-cache")
         defer { Fixtures.remove(root) }
         let cacheURL = root.appendingPathComponent("additional-cache.json")
-        try #"{"version":3,"entries":{"/tmp/session.jsonl|openclaw|generic|cli":{"value":"cached"}}}"#
+        try #"{"version":4,"entries":{"/tmp/session.jsonl|openclaw|generic|cli":{"value":"cached"}}}"#
             .write(to: cacheURL, atomically: true, encoding: .utf8)
 
         var cache: [String: CachedEntry] = [:]
         var didLoad = false
         LocalTokenScanSupport.loadKeyedCacheIfNeeded(
-            into: &cache, didLoad: &didLoad, at: cacheURL, version: 3
+            into: &cache, didLoad: &didLoad, at: cacheURL, version: 4
         )
         #expect(cache["/tmp/session.jsonl|openclaw|generic|cli"]?.value == "cached")
 
         LocalTokenScanSupport.saveKeyedCacheIfChanged(
-            cache, changed: true, at: cacheURL, version: 3
+            cache, changed: true, at: cacheURL, version: 4
         )
         let payload = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: cacheURL)) as? [String: Any])
         #expect(Set(payload.keys) == ["version", "entries"])
+    }
+
+    @Test func additionalCacheSchemaBumpRejectsOldTokenSemantics() throws {
+        let root = try Fixtures.makeTempDir("additional-cache-v3")
+        defer { Fixtures.remove(root) }
+        let cacheURL = root.appendingPathComponent("additional-cache.json")
+        try #"{"version":3,"entries":{"/tmp/session.jsonl|deepseekHarness|deepseekHarness|desktop":{"value":"old-input-semantics"}}}"#
+            .write(to: cacheURL, atomically: true, encoding: .utf8)
+
+        var cache: [String: CachedEntry] = [:]
+        var didLoad = false
+        LocalTokenScanSupport.loadKeyedCacheIfNeeded(
+            into: &cache, didLoad: &didLoad, at: cacheURL, version: 4
+        )
+        #expect(didLoad)
+        #expect(cache.isEmpty)
     }
 
     @Test func cacheRootMismatchForcesRescan() throws {
@@ -233,11 +249,45 @@ private extension CCSwitchUsageClient {
         guard let snapshot = fetchSnapshot(appType: appType) else { return nil }
         return CCSwitchDailyUsage(all: snapshot.history, deepSeek: snapshot.deepSeekHistory)
     }
+
+    func snapshot(appType: String) -> TokenSourceSnapshot? {
+        fetchSnapshot(appType: appType)
+    }
 }
 
 // MARK: - Claude 转录解析
 
 struct ClaudeSessionTokenClientTests {
+    @Test func cacheEvidenceExcludesMissingFieldsButKeepsObservedZero() async throws {
+        let root = try Fixtures.makeTempDir("claude-cache-evidence")
+        defer { Fixtures.remove(root) }
+        let stamp = Fixtures.iso(Fixtures.noon(yesterdayOffset: 0))
+        let lines = [
+            #"{"timestamp":"\#(stamp)","message":{"model":"m","usage":{"input_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":2}}}"#,
+            #"{"timestamp":"\#(stamp)","message":{"model":"m","usage":{"input_tokens":20,"output_tokens":3}}}"#
+        ]
+        try (lines.joined(separator: "\n") + "\n").write(to: root.appendingPathComponent("session.jsonl"), atomically: true, encoding: .utf8)
+        let bucket = try #require(try await ClaudeSessionTokenClient(root: root).fetchSnapshot().buckets.first)
+        #expect(bucket.total == 35)
+        #expect(bucket.totals.cacheMeasurement?.input == 10)
+        #expect(bucket.totals.cacheMeasurement?.cachedInput == 0)
+        #expect(bucket.totals.cacheMeasurement?.total == 12)
+        #expect(bucket.totals.cacheExclusionReasons?.contains(.missingFields) == true)
+    }
+
+    @Test func cacheEvidenceExplainsInvalidFieldsAndMissingTime() async throws {
+        let root = try Fixtures.makeTempDir("claude-cache-reasons")
+        defer { Fixtures.remove(root) }
+        let stamp = Fixtures.iso(Fixtures.noon(yesterdayOffset: 0))
+        let lines = [
+            #"{"timestamp":"\#(stamp)","message":{"model":"invalid","usage":{"input_tokens":10,"cache_read_input_tokens":-1,"cache_creation_input_tokens":0,"output_tokens":2}}}"#,
+            #"{"message":{"model":"no-time","usage":{"input_tokens":10,"cache_read_input_tokens":2,"cache_creation_input_tokens":0,"output_tokens":2}}}"#
+        ]
+        try (lines.joined(separator: "\n") + "\n").write(to: root.appendingPathComponent("session.jsonl"), atomically: true, encoding: .utf8)
+        let buckets = try await ClaudeSessionTokenClient(root: root).fetchSnapshot().buckets
+        #expect(buckets.first { $0.model == "invalid" }?.totals.cacheExclusionReasons?.contains(.invalidFields) == true)
+        #expect(buckets.first { $0.model == "no-time" }?.totals.cacheExclusionReasons?.contains(.missingTime) == true)
+    }
     @Test func aggregatesByDayAndSplitsDeepSeek() async throws {
         let root = try Fixtures.makeTempDir("claude")
         defer { Fixtures.remove(root) }
@@ -271,6 +321,11 @@ struct ClaudeSessionTokenClientTests {
         #expect(deepSeek.first { $0.id == day1Key }?.total == 230)
         #expect(deepSeek.first { $0.id == day2Key }?.total == 340)
         #expect(all.count == 2)
+        let buckets = await client.fetchBuckets()
+        let measured = try #require(buckets.first { $0.model == "gpt-5.6-sol" }?.totals.cacheMeasurement)
+        #expect(measured.input == 160)
+        #expect(measured.cachedInput == 50)
+        #expect(measured.total == 180)
     }
 
     @Test func cachesUnchangedFiles() async throws {
@@ -323,6 +378,55 @@ struct ClaudeSessionTokenClientTests {
 // MARK: - Codex 会话解析（含归档目录）
 
 struct CodexSessionTokenClientTests {
+    @Test func evidenceMigrationAndFailedRescanKeepTotalsWithoutPretendingFreshness() async throws {
+        let root = try Fixtures.makeTempDir("cache-migration-failure")
+        defer { Fixtures.remove(root) }
+        let dir = root.appendingPathComponent("sessions/2026/01/01", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("rollout-migration.jsonl")
+        let line = #"{"timestamp":"2026-01-01T01:00:00Z","payload":{"info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":20}}}}"#
+        try (line + "\n").write(to: file, atomically: true, encoding: .utf8)
+        let cache = root.appendingPathComponent("cache.json")
+        let first = CodexSessionTokenClient(root: root, persistentCacheURL: cache)
+        #expect(try await first.fetchSnapshot().buckets.first?.totals.cacheMeasurement?.cachedInput == 80)
+        let encoded = try Data(contentsOf: cache)
+        var envelope = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        var entries = try #require(envelope["entries"] as? [String: [String: Any]])
+        for key in entries.keys { entries[key]?["cacheEvidenceRevision"] = 1 }
+        envelope["entries"] = entries
+        try JSONSerialization.data(withJSONObject: envelope).write(to: cache)
+        let migrated = CodexSessionTokenClient(root: root, persistentCacheURL: cache)
+        let afterMigration = try #require(try await migrated.fetchSnapshot().buckets.first)
+        #expect(afterMigration.total == 120)
+        #expect(afterMigration.totals.cacheMeasurement?.cachedInput == 80)
+        try "not valid JSON\n".write(to: file, atomically: true, encoding: .utf8)
+        let stale = try #require(try await migrated.fetchSnapshot().buckets.first)
+        #expect(stale.total == 120)
+        #expect(stale.totals.cacheMeasurement == nil)
+        #expect(stale.totals.cacheExclusionReasons?.contains(.fileUnreadable) == true)
+        try (line + "\n").write(to: file, atomically: true, encoding: .utf8)
+        let recovered = try #require(try await migrated.fetchSnapshot().buckets.first)
+        #expect(recovered.total == 120)
+        #expect(recovered.totals.cacheMeasurement?.cachedInput == 80)
+    }
+    @Test func cumulativeCacheEvidenceDoesNotCrossMissingBoundary() async throws {
+        let root = try Fixtures.makeTempDir("codex-cache-boundary")
+        defer { Fixtures.remove(root) }
+        let dir = root.appendingPathComponent("sessions/2026/01/01", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let entries = [
+            #"{"timestamp":"2026-01-01T01:00:00Z","payload":{"info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":20}}}}"#,
+            #"{"timestamp":"2026-01-01T01:01:00Z","payload":{"info":{"total_token_usage":{"input_tokens":150,"output_tokens":30}}}}"#,
+            #"{"timestamp":"2026-01-01T01:02:00Z","payload":{"info":{"total_token_usage":{"input_tokens":200,"cached_input_tokens":160,"output_tokens":40}}}}"#,
+            #"{"timestamp":"2026-01-01T01:03:00Z","payload":{"info":{"total_token_usage":{"input_tokens":250,"cached_input_tokens":200,"output_tokens":50}}}}"#
+        ]
+        try (entries.joined(separator: "\n") + "\n").write(to: dir.appendingPathComponent("rollout-cache.jsonl"), atomically: true, encoding: .utf8)
+        let bucket = try #require(try await CodexSessionTokenClient(root: root).fetchSnapshot().buckets.first)
+        #expect(bucket.total == 300)
+        #expect(bucket.totals.cacheMeasurement?.input == 150)
+        #expect(bucket.totals.cacheMeasurement?.cachedInput == 120)
+        #expect(bucket.totals.cacheMeasurement?.total == 180)
+    }
     @Test func excludesForkedHistoryAndCountsOnlyForkAdditions() async throws {
         let root = try Fixtures.makeTempDir("codex-fork")
         defer { Fixtures.remove(root) }
@@ -674,6 +778,9 @@ struct WorkBuddyTraceClientTests {
         #expect(all.first?.cachedInput == 80)
         #expect(all.first?.reasoning == 7)
         #expect(buckets.first?.model == "hy3")
+        // Legacy JSON traces keep their total but are not eligible for cache metrics.
+        #expect(buckets.first?.totals.cacheMeasurement == nil)
+        #expect(buckets.first?.totals.cacheExclusionReasons?.contains(.unsupportedFormat) == true)
     }
 
     @Test func readsLineDelimitedTraceAndPrefersItOverLegacyDuplicate() async throws {
@@ -726,6 +833,9 @@ struct WorkBuddyTraceClientTests {
         #expect(snapshot.history.first?.total == 150)
         #expect(snapshot.history.first?.cachedInput == 80)
         #expect(snapshot.buckets.first?.model == "hy3")
+        #expect(snapshot.buckets.first?.totals.cacheMeasurement?.input == 120)
+        #expect(snapshot.buckets.first?.totals.cacheMeasurement?.cachedInput == 80)
+        #expect(snapshot.buckets.first?.totals.cacheExclusionReasons == nil)
     }
 
     @Test func appendsWorkBuddyGenerationUsageWithoutDoubleCounting() async throws {
@@ -800,18 +910,22 @@ struct CCSwitchUsageClientTests {
 
         let day1 = Fixtures.noon(yesterdayOffset: 1)
         let day2 = Fixtures.noon(yesterdayOffset: 0)
+        let day3 = Fixtures.noon(yesterdayOffset: 2)
         try createDB(
             at: dbURL,
             rows: [
-                ("claude-desktop", "deepseek-v4-flash", 100, 10, 50, 5, Int64(day1.timeIntervalSince1970)),
-                ("claude-desktop", "deepseek-v4-flash", 200, 20, 0, 0, Int64(day2.timeIntervalSince1970)),
-                ("claude", "gpt-5.6-sol", 30, 3, 0, 0, Int64(day2.timeIntervalSince1970))
+                ("claude-desktop", "deepseek-v4-flash", 100, 10, 50, 5, 2, Int64(day1.timeIntervalSince1970)),
+                ("claude-desktop", "deepseek-v4-flash", 200, 20, 0, 0, 2, Int64(day2.timeIntervalSince1970)),
+                ("claude-desktop", "legacy", 100, 10, 50, 5, 0, Int64(day3.timeIntervalSince1970)),
+                ("claude-desktop", "inclusive", 155, 10, 50, 5, 1, Int64(day3.timeIntervalSince1970)),
+                ("claude", "gpt-5.6-sol", 30, 3, 0, 0, 2, Int64(day2.timeIntervalSince1970))
             ]
         )
 
         let client = CCSwitchUsageClient(dbURL: dbURL)
         let desktop = await client.fetch(appType: "claude-desktop")
         let claude = await client.fetch(appType: "claude")
+        let desktopSnapshot = await client.snapshot(appType: "claude-desktop")
 
         // 统一口径：input 含 cache_read + cache_creation。
         let day1Key = Fixtures.day(day1)
@@ -822,12 +936,22 @@ struct CCSwitchUsageClientTests {
         #expect(desktop?.all.first { $0.id == day2Key }?.total == 220)
         #expect(desktop?.deepSeek.first { $0.id == day1Key }?.total == 165)
         #expect(desktop?.deepSeek.first { $0.id == day2Key }?.total == 220)
+        let desktopMeasure = try #require(desktopSnapshot?.buckets.first { $0.bucketStart == Calendar.current.date(
+            from: Calendar.current.dateComponents([.year, .month, .day, .hour], from: day1)
+        ) }?.totals.cacheMeasurement)
+        #expect(desktopMeasure.input == 155)
+        #expect(desktopMeasure.cachedInput == 50)
+        #expect(desktopSnapshot?.buckets.allSatisfy { $0.totals.cacheMeasurement != nil } == true)
+        let legacyInput = try #require(desktopSnapshot?.buckets.first { $0.model == "legacy" }?.totals.cacheMeasurement?.input)
+        let inclusiveInput = try #require(desktopSnapshot?.buckets.first { $0.model == "inclusive" }?.totals.cacheMeasurement?.input)
+        #expect(legacyInput == 105) // old rows already include cache reads, but not cache creation
+        #expect(inclusiveInput == 155) // total-inclusive rows must not add cache a second time
 
         #expect(claude?.all.first { $0.id == day2Key }?.total == 33)
         #expect(claude?.deepSeek.isEmpty == true)
     }
 
-    private func createDB(at url: URL, rows: [(String, String, Int, Int, Int, Int, Int64)]) throws {
+    private func createDB(at url: URL, rows: [(String, String, Int, Int, Int, Int, Int, Int64)]) throws {
         var db: OpaquePointer?
         guard sqlite3_open(url.path, &db) == SQLITE_OK, let db else {
             throw TestError.dbOpenFailed
@@ -837,7 +961,8 @@ struct CCSwitchUsageClientTests {
         let schema = """
         CREATE TABLE proxy_request_logs (
             app_type TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER,
-            cache_read_tokens INTEGER, cache_creation_tokens INTEGER, created_at INTEGER
+            cache_read_tokens INTEGER, cache_creation_tokens INTEGER,
+            input_token_semantics INTEGER, created_at INTEGER
         );
         """
         guard sqlite3_exec(db, schema, nil, nil, nil) == SQLITE_OK else {
@@ -846,7 +971,7 @@ struct CCSwitchUsageClientTests {
         for row in rows {
             let sql = """
             INSERT INTO proxy_request_logs VALUES
-            ('\(row.0)', '\(row.1)', \(row.2), \(row.3), \(row.4), \(row.5), \(row.6));
+            ('\(row.0)', '\(row.1)', \(row.2), \(row.3), \(row.4), \(row.5), \(row.6), \(row.7));
             """
             guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
                 throw TestError.insertFailed
@@ -985,24 +1110,28 @@ struct DeepSeekHarnessTokenTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("session.v4.jsonl")
         let header = #"{"type":"session","version":4,"isSeeded":false}"#
-        let event = #"{"type":"assistant/message","time":1793682733030,"data":{"message":{"id":"a","source":{"kind":"model","model":"deepseek-flash"}},"usage":{"inputTokens":100,"outputTokens":20,"cacheReadTokens":30},"stream":[{"chunk":{"usage":{"inputTokens":100,"outputTokens":20}}}]}}"#
-        let missing = #"{"type":"assistant/message","time":1793682733030,"data":{"message":{"id":"b","source":{"kind":"model","model":"deepseek-flash"}},"usage":{"inputTokens":50}}}"#
+        let event = #"{"type":"assistant/message","time":1793682733030,"data":{"message":{"id":"a","source":{"kind":"model","model":"deepseek-flash"}},"usage":{"inputTokens":100,"outputTokens":20,"cacheReadTokens":300,"cacheWriteTokens":0,"totalTokens":420},"stream":[{"chunk":{"usage":{"inputTokens":100,"outputTokens":20}}}]}}"#
+        let missing = #"{"type":"assistant/message","time":1793682733030,"data":{"message":{"id":"b","source":{"kind":"model","model":"deepseek-flash"}},"usage":{"inputTokens":50,"outputTokens":0}}}"#
         try ([header, event, event, missing].joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
         try ([header, event].joined(separator: "\n") + "\n").write(to: dir.appendingPathComponent("session.v3.jsonl"), atomically: true, encoding: .utf8)
         let source = LocalToolTokenSource(platform: .deepseekHarness, roots: ["sessions"], overrideEnvironment: "", format: .deepseekHarness, client: .desktop)
         let cache = root.appendingPathComponent("cache.json")
         let client = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:], persistentCacheURL: cache)
         let first = try await client.fetchSnapshots()
-        #expect(first.first?.history.first?.total == 120)
-        #expect(first.first?.history.first?.cachedInput == 30)
-        #expect(first.first?.deepSeekHistory.first?.total == 120)
+        #expect(first.first?.history.first?.total == 470)
+        #expect(first.first?.history.first?.cachedInput == 300)
+        let harnessMeasurement = try #require(first.first?.buckets.first { $0.totals.cacheMeasurement != nil }?.totals.cacheMeasurement)
+        #expect(harnessMeasurement.input == 400)
+        #expect(Double(harnessMeasurement.cachedInput) / Double(harnessMeasurement.input) == 0.75)
+        #expect(first.first?.buckets.first { $0.totals.cacheMeasurement != nil }?.totals.cacheExclusionReasons?.contains(.missingFields) == true)
+        #expect(first.first?.deepSeekHistory.first?.total == 470)
         let handle = try FileHandle(forWritingTo: file)
         try handle.seekToEnd()
         try handle.write(contentsOf: Data((event.replacingOccurrences(of: "\"id\":\"a\"", with: "\"id\":\"c\"") + "\n").utf8))
         try handle.close()
-        #expect(try await client.fetchSnapshots().first?.history.first?.total == 240)
+        #expect(try await client.fetchSnapshots().first?.history.first?.total == 890)
         let restored = AdditionalLocalTokenClient(sources: [source], home: root, environment: [:], persistentCacheURL: cache)
-        #expect(try await restored.fetchSnapshots().first?.history.first?.total == 240)
+        #expect(try await restored.fetchSnapshots().first?.history.first?.total == 890)
         try #"{"type":"session","version":4,"isSeeded":true}"#.write(to: file, atomically: true, encoding: .utf8)
         #expect(try await restored.fetchSnapshots().isEmpty)
     }

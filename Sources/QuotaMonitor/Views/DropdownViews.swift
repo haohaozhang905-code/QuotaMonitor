@@ -3,6 +3,10 @@ import SwiftUI
 
 final class TransparentDropdownHostingView<Content: View>: NSHostingView<Content> {
     override var isOpaque: Bool { false }
+    override func layout() {
+        super.layout()
+        suppressNativeFocusRings(in: self)
+    }
 }
 
 /// 下拉框宽度（与设计稿一致）。

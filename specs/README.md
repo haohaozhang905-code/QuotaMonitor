@@ -47,6 +47,12 @@
 | `QMV-007` | 状态栏点击态与下拉动画 | implemented / normal visual confirmed / edge cases pending | [spec.md](007-status-interaction/spec.md) | [plan.md](007-status-interaction/plan.md) | [acceptance.md](007-status-interaction/acceptance.md) |
 | `QMT-008` | 模型排行过滤零用量 | implemented / installed validation pending | [spec.md](008-model-ranking/spec.md) | [plan.md](008-model-ranking/plan.md) | [acceptance.md](008-model-ranking/acceptance.md) |
 | `QMT-009` | DeepSeek Harness 本地 Token 统计 | implemented / installed Token page verified / menu bar pending | [spec.md](009-deepseek-harness/spec.md) | [plan.md](009-deepseek-harness/plan.md) | [acceptance.md](009-deepseek-harness/acceptance.md) |
+| `QMT-010` | 输入缓存命中展示（阶段 A） | implemented / installed; pure mouse hover acceptance pending | [spec.md](010-cache-hit-insights/spec.md) | [plan.md](010-cache-hit-insights/plan.md) | [acceptance.md](010-cache-hit-insights/acceptance.md) |
+| `QMV-011` | 问号弹框表面与动效统一 | implemented / installed; user visual review and edge checks pending | [spec.md](011-help-popovers/spec.md) | [plan.md](011-help-popovers/plan.md) | [acceptance.md](011-help-popovers/acceptance.md) |
+
+### 分阶段演进：缓存与价格
+
+2026-11-04 确定先规划输入缓存命中，再评审价格。`QMT-010` 只覆盖缓存事实、命中率与交互；[当前交互草案 v2](010-cache-hit-insights/design.md)按用户审稿改为“概览比较行内联、看板六指标、复用平台 / 模型用量条、问号点击说明”。[第一版独立容器方案](010-cache-hit-insights/design-v1-superseded.md)保留为 superseded。API 参考估值为 **deferred**，尚无 accepted 价格规范或实施授权；以后建立独立 Spec / Plan，不作为缓存阶段完成条件。
 
 新功能可从 [`_template`](_template) 复制 `spec.md`、`plan.md`、`tasks.md` 和 `acceptance.md`，确认范围后再将状态从 `draft` 更新为 `accepted`。
 

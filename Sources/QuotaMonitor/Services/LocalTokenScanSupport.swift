@@ -63,6 +63,8 @@ enum LocalTokenScanSupport {
         emptyEntry: ((Date, Int) -> Entry?)? = nil,
         enumerationFailure: EnumerationFailurePolicy = .throwError,
         preserveCachedEntryWhenMetadataIsUnavailable: Bool = true,
+        shouldRescan: (Entry) -> Bool = { _ in false },
+        staleOutput: ((Entry) -> [Output])? = nil,
         output: (Entry) -> [Output]
     ) throws -> (cache: [URL: Entry], output: [Output], changed: Bool) {
         try Task.checkCancellation()
@@ -84,16 +86,18 @@ enum LocalTokenScanSupport {
             guard let metadata = fileMetadata(at: url) else {
                 if preserveCachedEntryWhenMetadataIsUnavailable, let cached {
                     nextCache[url] = cached
-                    outputs.append(contentsOf: output(cached))
+                    if let staleOutput { outputs.append(contentsOf: staleOutput(cached)) }
+                    else { outputs.append(contentsOf: output(cached)) }
                 }
                 continue
             }
             let (mtime, fileSize) = metadata
             let entry: Entry
-            if let cached, cached.matches(mtime: mtime, fileSize: fileSize) {
+            var isStale = false
+            if let cached, !shouldRescan(cached), cached.matches(mtime: mtime, fileSize: fileSize) {
                 entry = cached
             } else {
-                let offset = appendOffset(
+                let offset = cached.map(shouldRescan) == true ? nil : appendOffset(
                     currentFileSize: fileSize,
                     cachedFileSize: cached?.fileSize,
                     processedByteCount: cached?.processedByteCount,
@@ -103,6 +107,7 @@ enum LocalTokenScanSupport {
                     entry = parsed
                 } else if let cached {
                     entry = cached
+                    isStale = true
                 } else if let empty = emptyEntry?(mtime, fileSize) {
                     entry = empty
                 } else {
@@ -110,7 +115,8 @@ enum LocalTokenScanSupport {
                 }
             }
             nextCache[url] = entry
-            outputs.append(contentsOf: output(entry))
+            if isStale, let staleOutput { outputs.append(contentsOf: staleOutput(entry)) }
+            else { outputs.append(contentsOf: output(entry)) }
         }
         if enumerationError != nil {
             if enumerationFailure == .throwError { throw TokenSourceReadError.unreadableRoot(root) }

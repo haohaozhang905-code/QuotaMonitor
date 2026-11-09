@@ -32,6 +32,14 @@ final class DockIconSettings {
 
 /// 主面板窗口：平时维持菜单栏轻量形态，打开后切换为可从 Dock 找回的标准窗口。
 @MainActor
+private final class PanelHostingView<Content: View>: NSHostingView<Content> {
+    override func layout() {
+        super.layout()
+        suppressNativeFocusRings(in: self)
+    }
+}
+
+@MainActor
 final class MainPanelController: NSObject, NSWindowDelegate {
     let window: NSWindow
     private let dockIconSettings: DockIconSettings
@@ -77,7 +85,7 @@ final class MainPanelController: NSObject, NSWindowDelegate {
         }
         window.setFrameAutosaveName(frameName)
 
-        let hosting = NSHostingView(rootView: MainPanelView(
+        let hosting = PanelHostingView(rootView: MainPanelView(
             store: store,
             language: language,
             dockIconSettings: dockIconSettings,

@@ -189,6 +189,7 @@ struct MainPanelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(PanelTheme.background)
         }
+        .focusEffectDisabled()
         .frame(minWidth: 820, minHeight: 540)
         .ignoresSafeArea(.container, edges: .top)
         .onAppear { loginItem.refresh() }
@@ -490,6 +491,7 @@ struct MainPanelView: View {
         let model: String
         let total: Int
         let share: Double
+        var key: UsageBreakdownKey? = nil
 
         var id: String { model }
     }

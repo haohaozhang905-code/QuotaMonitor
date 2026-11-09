@@ -3,14 +3,20 @@ import SwiftUI
 extension MainPanelView {
     var tokenPage: some View {
         let dashboard = tokenDashboard
+        let modelItems = modelRankingItems(from: dashboard.models)
+        let cache = CacheUsageSnapshot(buckets: cacheBuckets(),
+                                      freshSources: store.cacheRefreshSnapshot?.freshSources ?? store.cacheEvidenceFreshSources,
+                                      platformKeys: Set(dashboard.platform.compactMap(\.key)),
+                                      modelKeys: Set(modelItems.compactMap(\.key)))
         return VStack(alignment: .leading, spacing: 14) {
             tokenHeading
-            tokenMetricStrip(dashboard)
+            tokenMetricStrip(dashboard, cache: cache.total)
             tokenChartCard()
-            tokenRankings(dashboard)
+            tokenRankings(dashboard, modelItems: modelItems, cache: cache.rows)
             tokenHeatmapCard
         }
         .onAppear { selectAvailableTokenPeriodIfNeeded() }
+
     }
 
     private var tokenHeading: some View {
@@ -25,13 +31,31 @@ extension MainPanelView {
         .frame(height: 26, alignment: .center)
     }
 
-    private func tokenMetricStrip(_ dashboard: TokenDashboardSnapshot) -> some View {
+    private func tokenMetricStrip(_ dashboard: TokenDashboardSnapshot, cache: CacheUsageSummary?) -> some View {
         HStack(spacing: 0) {
             metricCell(language.text("tokens.total"), QuotaFormatters.localizedTokens(dashboard.total, language: language.language), large: true)
             metricCell(language.text("tokens.average"), QuotaFormatters.localizedTokens(dashboard.average, language: language.language), large: false)
             metricCell(language.text("tokens.peak"), QuotaFormatters.localizedTokens(dashboard.peak, language: language.language), large: false)
             metricCell(language.text("tokens.topPlatform"), dashboard.platform.first?.name ?? "--", large: false)
             metricCell(language.text("tokens.topModel"), dashboard.models.first?.model ?? "--", large: false)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    Text(language.text("cache.shortTitle"))
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(PanelTheme.text3)
+                        .lineLimit(1).minimumScaleFactor(0.75)
+                    CacheInfoButton(language: language, summary: cache,
+                                    scope: language.text(tokenPeriod.localizationKey),
+                                    isUpdating: store.isRefreshingTokenSources,
+                                    hasFailedSources: cacheHasFailedSources)
+                        .id(tokenPeriod.rawValue)
+                }
+                Text(CacheUsageSummary.percentage(cache?.hitRate))
+                    .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(PanelTheme.text)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10).padding(.vertical, 14)
         }
         .background(PanelTheme.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
@@ -41,6 +65,8 @@ extension MainPanelView {
             Text(label)
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(PanelTheme.text3)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
             Text(value)
                 .font(.system(size: large ? 21 : 16, weight: .semibold, design: .monospaced))
                 .fontDesign(.monospaced)
@@ -49,7 +75,7 @@ extension MainPanelView {
                 .minimumScaleFactor(0.65)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 15)
+        .padding(.horizontal, 8)
         .padding(.vertical, 14)
         .overlay(alignment: .trailing) {
             Rectangle().fill(PanelTheme.separator).frame(width: 0.5, height: 38)
@@ -127,11 +153,18 @@ extension MainPanelView {
         }
     }
 
-    private func tokenRankings(_ dashboard: TokenDashboardSnapshot) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            rankingCard(title: language.text("tokens.platformUsage"), items: dashboard.platform)
-            rankingCard(title: language.text("tokens.modelUsage"), items: modelRankingItems(from: dashboard.models))
+    private func tokenRankings(_ dashboard: TokenDashboardSnapshot, modelItems: [BreakdownItem],
+                               cache: [UsageBreakdownKey: CacheUsageSummary]) -> some View {
+        CacheRankingInteraction(language: language) { selection, onHover in
+            HStack(alignment: .top, spacing: 14) {
+                rankingCard(title: language.text("tokens.platformUsage"), items: dashboard.platform,
+                            summaries: cache, selection: selection, onHover: onHover)
+                rankingCard(title: language.text("tokens.modelUsage"), items: modelItems,
+                            summaries: cache, selection: selection, onHover: onHover)
+            }
         }
+        .id(tokenPeriod.rawValue)
+        .zIndex(20)
     }
 
     private func modelRankingItems(from rows: [ModelRow]) -> [BreakdownItem] {
@@ -147,18 +180,24 @@ extension MainPanelView {
                 name: $0.model,
                 value: $0.total,
                 share: $0.share,
-                color: colors["model|\($0.model)"] ?? PanelTheme.modelFallback
+                color: colors["model|\($0.model)"] ?? PanelTheme.modelFallback,
+                key: $0.key
             )
         }
     }
 
-    private func rankingCard(title: String, items: [BreakdownItem]) -> some View {
+    private func rankingCard(title: String, items: [BreakdownItem], summaries: [UsageBreakdownKey: CacheUsageSummary],
+                             selection: String?, onHover: @escaping (String, Bool) -> Void) -> some View {
         panelCard(height: 170) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundStyle(PanelTheme.text)
+            HStack {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(PanelTheme.text)
+
+            }
             VStack(spacing: 5) {
                 ForEach(items.prefix(5)) { item in
+                    let rowCache = item.key.flatMap { summaries[$0] }
                     HStack(spacing: 8) {
                         Text(item.name)
                             .font(.system(size: 10, design: .monospaced))
@@ -188,6 +227,11 @@ extension MainPanelView {
                             .frame(width: 38, alignment: .trailing)
                     }
                     .frame(height: 17)
+                    .modifier(CacheRowInspection(id: "\(title)|\(item.id)", name: item.name, color: item.color,
+                                                 summary: rowCache, language: language,
+                                                 value: item.value, share: item.share, selection: selection,
+                                                 onHoverChange: onHover))
+
                 }
                 if items.isEmpty {
                     Text(language.text("overview.noData"))
@@ -319,7 +363,8 @@ extension MainPanelView {
                 ModelRow(
                     model: row.key.displayName(other: language.text("tokens.otherModel")),
                     total: row.total,
-                    share: row.share
+                    share: row.share,
+                    key: row.key
                 )
             }
         )
@@ -513,6 +558,7 @@ extension MainPanelView {
         let value: Int
         let share: Double
         let color: Color
+        var key: UsageBreakdownKey? = nil
 
         var id: String { name }
     }

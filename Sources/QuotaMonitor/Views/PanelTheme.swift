@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+/// Use the panel's own control states rather than AppKit's blue focus ring.
+func suppressNativeFocusRings(in view: NSView) {
+    if view.focusRingType != .none { view.focusRingType = .none }
+    for child in view.subviews { suppressNativeFocusRings(in: child) }
+}
+
 extension Color {
     init(hex: String) {
         let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
@@ -194,6 +200,11 @@ enum PanelTheme {
 
     /// 浮层提示（tooltip）：比浮卡提亮一档 + 提亮描边，深色模式下与画布保持区分
     static let tooltipSurface = dynamic("#FFFFFF", "#1E1F24")
+    /// Help popover fill and subtle outline, drawn as one continuous surface.
+    static let helpSurface = dynamic("#FAFAFB", "#1E1F24")
+    static let helpBorder = dynamic("#E7E7E9", "#38393E")
+    /// Shared radius for help popovers and chart hover tooltips.
+    static let tooltipCornerRadius: CGFloat = 20
     static let tooltipBorder = dynamic("#ECECEC", "#3A3B3F")
     /// 侧栏选中项：浅色白纸 / 深色亮灰（比侧栏 mist 提亮一档），配合左侧指示条保证选中明显
     static let sidebarSelected = dynamic("#FFFFFF", "#26282E")

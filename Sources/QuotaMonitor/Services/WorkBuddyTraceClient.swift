@@ -21,6 +21,7 @@ actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
         let mtime: Date
         let fileSize: Int
         let modelByDay: [String: TokenTotals]
+        var cacheEvidenceRevision: Int? = nil
         let processedByteCount: Int?
         let generationUsages: [GenerationUsageRecord]?
         let traceID: String?
@@ -67,11 +68,19 @@ actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
     init(root: URL? = nil) {
         self.root = root ?? Self.defaultRoot()
         self.persistentCacheURL = root == nil
-            ? LocalTokenScanSupport.defaultCacheURL(fileName: "workbuddy-trace-cache-v1.json")
+            ? LocalTokenScanSupport.defaultCacheURL(fileName: "workbuddy-trace-cache-evidence-v1.json")
             : nil
     }
 
     func snapshotBuckets() throws -> [TokenUsageBucket] {
+        if !didLoadPersistentCache, persistentCacheURL != nil,
+           LocalTokenScanSupport.loadCache(at: persistentCacheURL, version: 3, root: root) as [URL: FileCache]? == nil {
+            cache = LocalTokenScanSupport.loadCache(
+                at: LocalTokenScanSupport.defaultCacheURL(fileName: "workbuddy-trace-cache-v1.json"),
+                version: 3, root: root
+            ) ?? [:]
+            didLoadPersistentCache = true
+        }
         LocalTokenScanSupport.loadCacheIfNeeded(
             into: &cache, didLoad: &didLoadPersistentCache,
             at: persistentCacheURL, version: 3, root: root
@@ -84,18 +93,28 @@ actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
                     && ["json", "jsonl"].contains($0.pathExtension.lowercased())
             },
             parse: { [self] url, mtime, fileSize, _, cached in
-                parseFile(url, mtime: mtime, fileSize: fileSize, cached: cached)
+                parseFile(url, mtime: mtime, fileSize: fileSize,
+                          cached: cached?.cacheEvidenceRevision == 2 ? cached : nil)
             },
             emptyEntry: { mtime, fileSize in
                 FileCache(
                     mtime: mtime,
                     fileSize: fileSize,
                     modelByDay: [:],
+                    cacheEvidenceRevision: nil,
                     processedByteCount: fileSize,
                     generationUsages: [],
                     traceID: nil,
                     sourceExtension: nil
                 )
+            },
+            shouldRescan: { $0.cacheEvidenceRevision != 2 },
+            staleOutput: { entry in
+                [ScannedTrace(traceID: entry.traceID, sourceExtension: entry.sourceExtension,
+                              fileSize: entry.fileSize,
+                              buckets: LocalTokenScanSupport.modelBuckets(
+                                from: entry.modelByDay.mapValues(\.withoutCacheMeasurement),
+                                platform: .workbuddy, client: .desktop, invalidDatePolicy: .useNow))]
             },
             output: {
                 [ScannedTrace(
@@ -161,11 +180,13 @@ actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
                 ?? max(summary.totalTokens - (summary.modelInfo?.totalOutputTokens ?? 0), 0)
             totals.output = summary.modelInfo?.totalOutputTokens ?? 0
             totals.cachedInput = summary.modelInfo?.totalCachedTokens ?? 0
+            totals.cacheExclusionReasons = [.unsupportedFormat]
             let model = summary.modelInfo?.models?.joined(separator: " + ") ?? "unknown"
             return FileCache(
                 mtime: mtime,
                 fileSize: fileSize,
                 modelByDay: ["\(bucketKey)\u{1F}\(model)": totals],
+                cacheEvidenceRevision: 2,
                 processedByteCount: fileSize,
                 generationUsages: nil,
                 traceID: summary.traceId,
@@ -206,12 +227,15 @@ actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
             let model = usage.model.isEmpty ? "unknown" : usage.model
             let usageBucket = usage.date.map(TokenUsageBucket.bucketKey(for:)) ?? usageDay
             let modelKey = "\(usageBucket)\u{1F}\(model)"
-            modelByDay[modelKey, default: TokenTotals()] = modelByDay[modelKey, default: TokenTotals()].adding(usage.totals)
+            let totals = url.pathExtension.lowercased() != "jsonl" ? usage.totals.excludingCache(.unsupportedFormat)
+                : usage.date == nil ? usage.totals.excludingCache(.missingTime) : usage.totals
+            modelByDay[modelKey, default: TokenTotals()] = modelByDay[modelKey, default: TokenTotals()].adding(totals)
         }
         return FileCache(
             mtime: mtime,
             fileSize: fileSize,
             modelByDay: modelByDay,
+            cacheEvidenceRevision: 2,
             processedByteCount: fileSize,
             generationUsages: usages,
             traceID: summary.traceId,
@@ -368,6 +392,28 @@ actor WorkBuddyTraceClient: LocalTokenSnapshotProviding {
         totals.cachedInput = integerValue(named: "cached_tokens", in: usageText) ?? 0
         totals.output = output
         totals.reasoning = integerValue(named: "reasoning_tokens", in: usageText) ?? 0
+        // Only the selected usage object's prompt-token details can establish
+        // a cache read; a same-named key elsewhere in the response is ambiguous.
+        if let data = usageText.data(using: .utf8),
+           let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let details = object["prompt_tokens_details"] as? [String: Any],
+           cacheEvidenceInteger(object["prompt_tokens"]) == input,
+           cacheEvidenceInteger(object["completion_tokens"]) == output,
+           let cached = cacheEvidenceInteger(details["cached_tokens"]) {
+            totals.cacheMeasurement = CacheUsageMeasurement(
+                input: input, cachedInput: cached, cacheWriteInput: nil, output: output
+            )
+        }
+        if totals.cacheMeasurement == nil {
+            if let data = usageText.data(using: .utf8),
+               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let details = object["prompt_tokens_details"] as? [String: Any],
+               details["cached_tokens"] != nil {
+                totals.cacheExclusionReasons = [.invalidFields]
+            } else {
+                totals.cacheExclusionReasons = [.missingFields]
+            }
+        }
         let seconds = created > 10_000_000_000 ? Double(created) / 1000 : Double(created)
         let date = Date(timeIntervalSince1970: seconds)
         return GenerationUsage(offset: markerOffset, date: date, model: model, totals: totals)

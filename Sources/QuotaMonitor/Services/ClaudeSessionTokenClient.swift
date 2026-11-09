@@ -16,6 +16,7 @@ actor ClaudeSessionTokenClient: LocalTokenSnapshotProviding {
         let fileSize: Int
         let modelByDay: [String: TokenTotals]
         let processedByteCount: Int?
+        let cacheEvidenceRevision: Int?
     }
 
     private var cache: [URL: FileCache] = [:]
@@ -26,11 +27,19 @@ actor ClaudeSessionTokenClient: LocalTokenSnapshotProviding {
     init(root: URL? = nil) {
         self.root = root ?? Self.defaultRoot()
         self.persistentCacheURL = root == nil
-            ? LocalTokenScanSupport.defaultCacheURL(fileName: "claude-session-token-cache-v1.json")
+            ? LocalTokenScanSupport.defaultCacheURL(fileName: "claude-session-token-cache-evidence-v1.json")
             : nil
     }
 
     func snapshotBuckets() throws -> [TokenUsageBucket] {
+        if !didLoadPersistentCache, cache.isEmpty,
+           LocalTokenScanSupport.loadCache(at: persistentCacheURL, version: 2, root: root) as [URL: FileCache]? == nil {
+            cache = LocalTokenScanSupport.loadCache(
+                at: persistentCacheURL == nil ? nil : LocalTokenScanSupport.defaultCacheURL(fileName: "claude-session-token-cache-v1.json"),
+                version: 2, root: root
+            ) ?? [:]
+            didLoadPersistentCache = true
+        }
         LocalTokenScanSupport.loadCacheIfNeeded(
             into: &cache, didLoad: &didLoadPersistentCache,
             at: persistentCacheURL, version: 2, root: root
@@ -50,7 +59,15 @@ actor ClaudeSessionTokenClient: LocalTokenSnapshotProviding {
                     mtime: mtime,
                     fileSize: fileSize,
                     modelByDay: parsed,
-                    processedByteCount: fileSize
+                    processedByteCount: fileSize,
+                    cacheEvidenceRevision: 2
+                )
+            },
+            shouldRescan: { $0.cacheEvidenceRevision != 2 },
+            staleOutput: { entry in
+                LocalTokenScanSupport.modelBuckets(
+                    from: entry.modelByDay.mapValues(\.withoutCacheMeasurement),
+                    platform: .claude, client: .cli, invalidDatePolicy: .useNow
                 )
             },
             output: {
@@ -80,12 +97,16 @@ actor ClaudeSessionTokenClient: LocalTokenSnapshotProviding {
                 guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let usage = Self.extractUsage(obj) else { return }
 
+                var checkedUsage = usage
+                // A filesystem timestamp is acceptable for the existing total,
+                // but cannot establish the event's cache-statistics period.
+                if Self.timestamp(obj) == nil { checkedUsage = checkedUsage.excludingCache(.missingTime) }
                 let model = Self.extractModel(obj)
                 let timestamp = Self.timestamp(obj)
                 let dayKey = timestamp.map { Self.dayKey(for: $0) } ?? fallbackDay
                 let bucketKey = timestamp.map(TokenUsageBucket.bucketKey(for:)) ?? dayKey
                 let modelKey = "\(bucketKey)\u{1F}\((model?.isEmpty == false ? model! : "unknown"))"
-                modelByDay[modelKey, default: TokenTotals()] = modelByDay[modelKey, default: TokenTotals()].adding(usage)
+                modelByDay[modelKey, default: TokenTotals()] = modelByDay[modelKey, default: TokenTotals()].adding(checkedUsage)
             }
         }
 
@@ -114,6 +135,23 @@ actor ClaudeSessionTokenClient: LocalTokenSnapshotProviding {
         totals.cachedInput = cacheRead
         totals.cacheWriteInput = cacheWrite
         totals.output = output
+        if let ordinary = cacheEvidenceInteger(usage["input_tokens"]),
+           let read = cacheEvidenceInteger(usage["cache_read_input_tokens"]),
+           let write = cacheEvidenceInteger(usage["cache_creation_input_tokens"]),
+           let output = cacheEvidenceInteger(usage["output_tokens"]),
+           ordinary >= 0, read >= 0, write >= 0 {
+            let (subtotal, overflow1) = ordinary.addingReportingOverflow(read)
+            let (inclusive, overflow2) = subtotal.addingReportingOverflow(write)
+            if !overflow1 && !overflow2 {
+                totals.cacheMeasurement = CacheUsageMeasurement(
+                    input: inclusive, cachedInput: read, cacheWriteInput: write, output: output
+                )
+            }
+        }
+        if totals.cacheMeasurement == nil {
+            let keys = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"]
+            totals.cacheExclusionReasons = [keys.contains { usage[$0] == nil } ? .missingFields : .invalidFields]
+        }
         return totals
     }
 

@@ -125,9 +125,23 @@ struct TokenTotals: Codable, Equatable, Sendable {
     var cacheWriteInput: Int = 0
     var output: Int = 0
     var reasoning: Int = 0
+    /// Present only for records whose original fields were checked at ingestion.
+    /// Missing on older persisted totals, and never reconstructed from default zeros.
+    var cacheMeasurement: CacheUsageMeasurement? = nil
+    var cacheExclusionReasons: Set<CacheExclusionReason>? = nil
 }
 
 extension TokenTotals {
+    var withoutCacheMeasurement: TokenTotals {
+        excludingCache(.fileUnreadable)
+    }
+
+    func excludingCache(_ reason: CacheExclusionReason) -> TokenTotals {
+        var result = self
+        result.cacheMeasurement = nil
+        result.cacheExclusionReasons = (result.cacheExclusionReasons ?? []).union([reason])
+        return result
+    }
     /// 跨来源聚合时把两个累计量相加。
     func adding(_ other: TokenTotals) -> TokenTotals {
         var copy = self
@@ -136,6 +150,14 @@ extension TokenTotals {
         copy.cacheWriteInput += other.cacheWriteInput
         copy.output += other.output
         copy.reasoning += other.reasoning
+        let reasons = (cacheExclusionReasons ?? []).union(other.cacheExclusionReasons ?? [])
+        copy.cacheExclusionReasons = reasons.isEmpty ? nil : reasons
+        switch (cacheMeasurement, other.cacheMeasurement) {
+        case let (left?, right?): copy.cacheMeasurement = left.adding(right)
+        case let (left?, nil): copy.cacheMeasurement = left
+        case let (nil, right?): copy.cacheMeasurement = right
+        case (nil, nil): copy.cacheMeasurement = nil
+        }
         return copy
     }
 
@@ -147,6 +169,9 @@ extension TokenTotals {
         copy.cacheWriteInput = max(copy.cacheWriteInput - other.cacheWriteInput, 0)
         copy.output = max(copy.output - other.output, 0)
         copy.reasoning = max(copy.reasoning - other.reasoning, 0)
+        copy.cacheMeasurement = cacheMeasurement.flatMap { current in
+            other.cacheMeasurement.flatMap { current.subtracting($0) }
+        }
         return copy
     }
 

@@ -171,6 +171,8 @@ extension QuotaStore {
     /// Claude Desktop 使用 cc-switch 请求日志。
     func refreshTokenSources() async {
         guard !isRefreshingTokenSources else { return }
+        cacheRefreshSnapshot = (tokenBuckets, cacheEvidenceFreshSources,
+                                cacheEvidenceFreshSources.compactMap { sourceStates[$0]?.lastSuccessAt }.min())
         isRefreshingTokenSources = true
         let codexClient = codexSessionTokenClient
         let claudeClient = claudeSessionTokenClient
@@ -224,6 +226,7 @@ extension QuotaStore {
             tokenProgressRevealTask = nil
             localTokenRefreshProgress = nil
             isRefreshingTokenSources = false
+            cacheRefreshSnapshot = nil
             if tokenRefreshWakeupState.scanDidFinish() {
                 scheduleTokenRefreshTask()
             }
@@ -258,10 +261,12 @@ extension QuotaStore {
         switch result {
         case let .local(sourceID, platform, client, snapshot):
             guard let snapshot else {
+                cacheEvidenceFreshSources.remove(sourceID)
                 finishSource(sourceID, state: .failed)
                 logger.warning("Local token refresh failed for \(sourceID.id, privacy: .public); retaining last good snapshot")
                 break
             }
+            cacheEvidenceFreshSources.insert(sourceID)
             Self.replaceBuckets(
                 in: &freshBuckets,
                 matching: { $0.platform == platform && (client == nil || $0.client == client) },
@@ -270,6 +275,7 @@ extension QuotaStore {
             finishSource(sourceID, state: snapshot.buckets.isEmpty ? .noData : .ready, validRecordCount: snapshot.buckets.count)
         case let .desktop(snapshot):
             if let snapshot {
+                cacheEvidenceFreshSources.insert(DataSourceCatalog.claudeDesktop)
                 Self.replaceBuckets(in: &freshBuckets, matching: { $0.platform == .claude && $0.client == .desktop }, with: snapshot.buckets)
                 claudeDesktopStale = !CCSwitchUsageClient.isCCSwitchRunning()
                 finishSource(
@@ -278,6 +284,7 @@ extension QuotaStore {
                     validRecordCount: snapshot.buckets.count
                 )
             } else {
+                cacheEvidenceFreshSources.remove(DataSourceCatalog.claudeDesktop)
                 claudeDesktopStale = true
                 finishSource(DataSourceCatalog.claudeDesktop, state: .failed)
                 logger.warning("Claude Desktop token refresh failed; retaining last good snapshot")
@@ -286,13 +293,21 @@ extension QuotaStore {
             if let snapshot { crossCheckClaudeSource(cc: snapshot.history) }
         case let .additional(scanResult):
             guard let scanResult else {
-                DataSourceCatalog.additional.forEach { finishSource($0, state: .failed) }
+                DataSourceCatalog.additional.forEach {
+                    cacheEvidenceFreshSources.remove($0)
+                    finishSource($0, state: .failed)
+                }
                 logger.warning("Additional local token refresh failed; retaining last good snapshot")
                 break
             }
             let platforms = Set(LocalToolTokenSource.additional.map(\.platform))
             Self.replaceBuckets(in: &freshBuckets, matching: { platforms.contains($0.platform) }, with: scanResult.snapshots.flatMap(\.buckets))
             for diagnostic in scanResult.diagnostics {
+                if [.ready, .noData].contains(diagnostic.state), !diagnostic.usesLastGoodData {
+                    cacheEvidenceFreshSources.insert(diagnostic.id)
+                } else {
+                    cacheEvidenceFreshSources.remove(diagnostic.id)
+                }
                 finishSource(
                     diagnostic.id,
                     state: diagnostic.state,

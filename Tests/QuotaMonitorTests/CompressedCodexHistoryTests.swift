@@ -165,8 +165,12 @@ struct CompressedCodexHistoryTests {
         var entry = try #require(entries[entryKey])
         entry.removeValue(forKey: "aggregationRevision")
         for name in ["modelByDay", "totalsByDay"] {
-            var values = try #require(entry[name] as? [String: [String: Int]])
-            for key in values.keys { values[key]?["input", default: 0] += 186_539 }
+            var values = try #require(entry[name] as? [String: [String: Any]])
+            for key in values.keys {
+                var totals = try #require(values[key])
+                totals["input"] = (totals["input"] as? Int ?? 0) + 186_539
+                values[key] = totals
+            }
             entry[name] = values
         }
         entries[entryKey] = entry

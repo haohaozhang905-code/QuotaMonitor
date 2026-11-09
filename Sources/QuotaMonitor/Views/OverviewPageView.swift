@@ -225,6 +225,19 @@ extension MainPanelView {
                                 .fixedSize()
                         }
                     }
+                    let cache = cacheSummary(cacheBuckets(today: true))
+                    HStack(spacing: 4) {
+                        Text(language.text("cache.title"))
+                            .foregroundStyle(PanelTheme.text2)
+                        Text(CacheUsageSummary.percentage(cache?.hitRate))
+                            .foregroundStyle(PanelTheme.text)
+                        CacheInfoButton(language: language, summary: cache,
+                                        scope: language.text("panel.today"),
+                                        isUpdating: store.isRefreshingTokenSources,
+                                        hasFailedSources: cacheHasFailedSources)
+                    }
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .fixedSize()
                 }
             }
             HStack(spacing: 0) {
@@ -479,6 +492,7 @@ extension MainPanelView {
                             codexResetCreditsInline(resetCredits)
                         }
                     }
+                    .frame(minHeight: 18, alignment: .leading)
                 }
                 Spacer(minLength: 8)
                 Text(status.label)
@@ -537,23 +551,21 @@ extension MainPanelView {
             )
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .lineLimit(1)
-            Button {
-                showCodexResetCreditsPopover.toggle()
-            } label: {
+            PanelHelpButton(
+                isPresented: $showCodexResetCreditsPopover,
+                width: 250,
+                accessibilityLabel: label,
+                accessibilityValue: help,
+                accessibilityHint: language.text("overview.resetCredits.clickHint")
+            ) {
                 Image(systemName: "questionmark.circle")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(PanelTheme.text3)
                     .frame(width: 14, height: 14)
                     .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .popover(isPresented: $showCodexResetCreditsPopover, arrowEdge: .bottom) {
+            } content: {
                 codexResetCreditsPopover(resetCredits)
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(label)
-            .accessibilityValue(help)
-            .accessibilityHint(language.text("overview.resetCredits.clickHint"))
         }
         .accessibilityElement(children: .contain)
     }
@@ -563,43 +575,33 @@ extension MainPanelView {
         return VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 0) {
                 Text(language.text("overview.resetCredits.title.prefix"))
-                    .foregroundStyle(PanelTheme.text)
+                    .foregroundStyle(.primary)
                 Text(language.text("overview.resetCredits.title.value", resetCredits.availableCount))
-                    .foregroundStyle(PanelTheme.chartAccent)
+                    .foregroundStyle(.primary)
                 Text(language.text("overview.resetCredits.title.suffix"))
-                    .foregroundStyle(PanelTheme.text)
+                    .foregroundStyle(.primary)
             }
             .font(.system(size: 12, weight: .semibold))
             ForEach(Array(resetCredits.expirations.enumerated()), id: \.offset) { index, expiration in
-                HStack(alignment: .firstTextBaseline, spacing: 18) {
-                    Text(language.text("overview.resetCredits.item", index + 1))
-                        .foregroundStyle(PanelTheme.text2)
-                    Spacer(minLength: 12)
-                    HStack(spacing: 0) {
-                        Text(language.text("overview.resetCredits.expiresAt.prefix"))
-                            .foregroundStyle(PanelTheme.text3)
-                        Text(QuotaFormatters.reset(expiration, language: language.language))
-                            .foregroundStyle(PanelTheme.chartAccent)
-                        Text(language.text("overview.resetCredits.expiresAt.suffix"))
-                            .foregroundStyle(PanelTheme.text3)
-                    }
-                    .fontDesign(.monospaced)
-                }
-                .font(.system(size: 10))
+                Text(language.text("overview.resetCredits.helpRow", index + 1,
+                                   QuotaFormatters.reset(expiration, language: language.language)))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
             }
             if missingCount > 0 {
                 Text(language.text("overview.resetCredits.missingExpirations", missingCount))
                     .font(.system(size: 10))
-                    .foregroundStyle(PanelTheme.text2)
+                    .foregroundStyle(.primary)
             }
             if resetCredits.expirations.isEmpty, missingCount == 0 {
                 Text(language.text("overview.resetCredits.noExpirations"))
                     .font(.system(size: 10))
-                    .foregroundStyle(PanelTheme.text2)
+                    .foregroundStyle(.primary)
             }
         }
-        .padding(12)
-        .frame(minWidth: 228)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func codexResetCreditsHelp(_ resetCredits: CodexResetCredits) -> String {
@@ -698,7 +700,8 @@ extension MainPanelView {
             ),
             value: row.total,
             share: row.share,
-            color: breakdownColor(for: row.key)
+            color: breakdownColor(for: row.key),
+            key: row.key
         )
     }
 

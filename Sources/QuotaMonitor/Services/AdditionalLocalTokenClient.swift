@@ -108,7 +108,7 @@ actor AdditionalLocalTokenClient {
 
     func fetchScanResult() throws -> AdditionalLocalTokenScanResult {
         LocalTokenScanSupport.loadKeyedCacheIfNeeded(
-            into: &cache, didLoad: &didLoadCache, at: persistentCacheURL, version: 3
+            into: &cache, didLoad: &didLoadCache, at: persistentCacheURL, version: 4
         )
         var freshCache: [String: FileCache] = [:]
         var bucketsByPlatform: [TokenPlatform: [TokenUsageBucket]] = [:]
@@ -205,7 +205,7 @@ actor AdditionalLocalTokenClient {
         let cacheChanged = cache != freshCache
         cache = freshCache
         LocalTokenScanSupport.saveKeyedCacheIfChanged(
-            cache, changed: cacheChanged, at: persistentCacheURL, version: 3
+            cache, changed: cacheChanged, at: persistentCacheURL, version: 4
         )
         let snapshots: [TokenSourceSnapshot] = TokenPlatform.allCases.compactMap { platform in
             guard let buckets = bucketsByPlatform[platform], !buckets.isEmpty else { return nil }
@@ -368,22 +368,47 @@ actor AdditionalLocalTokenClient {
                   let id = message["id"] as? String, !id.isEmpty,
                   let origin = message["source"] as? [String: Any], origin["kind"] as? String == "model",
                   let usage = data["usage"] as? [String: Any],
-                  let input = usage["inputTokens"] as? Int, input >= 0,
-                  let output = usage["outputTokens"] as? Int, output >= 0,
+                  let input = cacheEvidenceInteger(usage["inputTokens"]), input >= 0,
+                  let output = cacheEvidenceInteger(usage["outputTokens"]), output >= 0,
                   let millis = row["time"] as? Double, millis > 0,
                   !seen.contains(id), input > 0 || output > 0 else { return }
             seen.insert(id)
             var totals = TokenTotals()
-            totals.input = input
+            // Harness stores disjoint usage buckets: inputTokens is uncached input.
+            // The billed/cacheable input total includes read and write buckets.
+            let cached = cacheEvidenceInteger(usage["cacheReadTokens"])
+            let cacheWrite = cacheEvidenceInteger(usage["cacheWriteTokens"])
+            if let cached, let cacheWrite, cached >= 0, cacheWrite >= 0,
+               let inclusiveInput = Self.checkedInputTotal(uncached: input, cached: cached, cacheWrite: cacheWrite) {
+                totals.input = inclusiveInput
+                totals.cacheMeasurement = CacheUsageMeasurement(
+                    input: inclusiveInput, cachedInput: cached,
+                    cacheWriteInput: cacheWrite, output: output
+                )
+            } else {
+                // Preserve the uncached count in the existing token history, while
+                // keeping incomplete/invalid cache evidence out of the hit-rate denominator.
+                totals.input = input
+                totals.cacheExclusionReasons = [
+                    usage["cacheReadTokens"] == nil || usage["cacheWriteTokens"] == nil
+                        ? .missingFields : .invalidFields
+                ]
+            }
             totals.output = output
-            totals.cachedInput = max(0, usage["cacheReadTokens"] as? Int ?? 0)
-            totals.cacheWriteInput = max(0, usage["cacheWriteTokens"] as? Int ?? 0)
+            totals.cachedInput = cached.flatMap { $0 >= 0 ? $0 : nil } ?? 0
+            totals.cacheWriteInput = cacheWrite.flatMap { $0 >= 0 ? $0 : nil } ?? 0
             let date = Date(timeIntervalSince1970: millis / 1000)
             let hour = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day, .hour], from: date)) ?? date
             buckets.append(.modelBucket(at: hour, platform: source.platform, client: source.client, model: origin["model"] as? String, totals: totals))
         }
         guard read else { return nil }
         return TokenUsageBucket.combining(buckets)
+    }
+
+    private static func checkedInputTotal(uncached: Int, cached: Int, cacheWrite: Int) -> Int? {
+        let (withRead, readOverflow) = uncached.addingReportingOverflow(cached)
+        let (inclusive, writeOverflow) = withRead.addingReportingOverflow(cacheWrite)
+        return readOverflow || writeOverflow ? nil : inclusive
     }
 
     private static func cacheKey(url: URL, source: LocalToolTokenSource) -> String {

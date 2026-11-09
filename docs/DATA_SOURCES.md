@@ -24,11 +24,11 @@ Codex 的套餐名、额度重置时间、Reset Credit 到期时间是不同字�
 | --- | --- | --- |
 | Codex | `~/.codex/sessions`、`~/.codex/archived_sessions` | 只读扫描 `.jsonl` 与 `.jsonl.zst`；流式解压无需外部工具。同一会话普通/压缩及跨目录副本只计一次，优先普通文件；按父子关系排除继承历史。找不到可核对的父记录时可能不纳入相关 fork 数据 |
 | Claude Code | `~/.claude/projects` | 读取本地 transcript 中的 usage；无需 cc-switch。cc-switch 中同源数据用于核对，不再加一遍 |
-| Claude Desktop | `~/.cc-switch/cc-switch.db` | 当前采集入口是 cc-switch 的 `proxy_request_logs`；该链路未捕获的桌面端请求无法补算 |
+| Claude Desktop | `~/.cc-switch/cc-switch.db` | 当前采集入口是 cc-switch 的 `proxy_request_logs`；该链路未捕获的桌面端请求无法补算。缓存测量按 `input_token_semantics` 归一，未知值只保留原 Token、不计入缓存率 |
 | WorkBuddy | `~/.workbuddy/traces` | 读取 `trace_*.json` 与 `trace_*.jsonl`，兼容旧 Trace 汇总与新版 generation usage；同一 `traceId` 双格式只计 JSONL，受日志格式和读取耗时影响 |
 | Qoder CLI | `~/.qoder/logs/sessions` | 专用事件解析，使用请求标识处理重复记录 |
 | Qoder Desktop / Work | `~/Library/Application Support/Qoder/SharedClientCache/cli/projects` | 专用转录解析，使用消息标识处理重复记录；不查询 Qoder 账户积分 |
-| DeepSeek Harness | `~/.dsh/sessions` | 读取 v4 会话的消息 usage；每个会话只选最高日志版本，不重复统计流式镜像；seeded 会话及未验证版本跳过。日志来源无法区分桌面端和 CLI，当前统一归为 Desktop |
+| DeepSeek Harness | `~/.dsh/sessions` | 读取 v4 会话的消息 usage；每个会话只选最高日志版本，不重复统计流式镜像；seeded 会话及未验证版本跳过。`inputTokens` 是未命中缓存输入，cache read/write 为独立桶；日志来源无法区分桌面端和 CLI，当前统一归为 Desktop |
 | Kimi Desktop | `~/Library/Application Support/kimi-desktop/daimon-share/daimon/runtime/kimi-code/home/sessions` | 专用 `wire.jsonl` 解析，采集请求级 `usage.record`；不把步骤汇总重复相加 |
 
 DeepSeek Harness 可通过 `QUOTAMONITOR_DSH_HOME` 增加会话根目录。其本地记录可能缺少辅助请求，无法替代账户账单。
@@ -71,6 +71,7 @@ Cursor 的普通聊天转录不作为用量来源；其结构化工作区数据�
 
 - **维度：** 平台表示通过哪个工具使用，客户端区分 CLI / Desktop 等入口，模型表示日志里的实际模型，服务商 / 路由是另一维度。
 - **总量：** 使用结构化字段计算输入加输出；Claude 等来源的缓存读取 / 创建量需按其字段定义归入输入侧。已有输入中的缓存不再加一次。
+- **输入缓存命中：** 当前有证据的来源包含 Codex、Claude Code、WorkBuddy generation JSONL、Claude Desktop cc-switch 和 DeepSeek Harness v4。Harness 的输入总量由 uncached + cache read + cache write 组成；cc-switch 依据 `input_token_semantics` 判断 raw input 是否已含缓存。无来源语义或字段不全时显示未知，不推成 0%。
 - **细节：** 缓存和推理 Token 按来源保留为明细，不因存在明细就重复相加。未知字段不能靠文本长度或上下文上限补估。
 - **模型：** 名称规范为小写，空值、`auto`、`unknown` 归为 `unknown`。这类记录可有用量，但无法可靠归属实际模型。
 - **时间：** 按本机时区形成小时 / 日期桶；缺少时间字段的部分通用记录可能采用文件修改时间，时间分布因此可能不精确。

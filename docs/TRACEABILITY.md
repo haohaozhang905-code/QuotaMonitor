@@ -2,6 +2,25 @@
 
 本文件把产品需求连接到技术实现、自动测试和真实验收。状态以对应 Spec 的 `acceptance.md` 为准。
 
+## 输入缓存命中展示（QMT-010，阶段 A）
+
+状态：**accepted / installed / partial verification**。三源与界面已接入，安装版主面板已验证；菜单栏日志、VoiceOver 和真实最小窗口待验证，见验收记录。
+
+| 需求 | 产品定义 | 实现 / 自动化证据 | 真实 / 视觉验收 |
+| --- | --- | --- | --- |
+| CACHE-001 | 来源字段、缺失与零 | Codex、Claude Code、WorkBuddy、Claude Desktop semantics、Harness v4 的解析 / 缓存证据测试 | Codex、Claude Code、WorkBuddy、Claude Desktop、Harness 本机只读扫描通过；Kimi Desktop 未接入 |
+| CACHE-002 | 加权输入命中率与校验 | `CacheUsageMeasurement` / `CacheUsageSummary`；加权、异常、分母、边界格式测试 | Pending |
+| CACHE-003 | 同周期覆盖、部分与新鲜度 | 来源新鲜集、文件失败不计证据、覆盖比例和原因分类 | 失败、刷新及冷启动待完整验收 |
+| CACHE-004 | 概览内联今日缓存率与弹框 | `OverviewPageView`、共享问号按钮 / 原生 popover；fixture 渲染 | 两个问号共用交互组件；概览问号打开已检查 |
+| CACHE-005 | 看板六指标和周期 | `TokenPageView`、共享问号按钮 / 原生 popover 及周期绑定；fixture 渲染 | 靠右问号向左展开，未越过灰色指标条右边界；安装版截图已核对 |
+| CACHE-006 | 平台 / 模型排行缓存率 hover 浮层 | `CacheUsageViews`、`MainPanelView` 行 hover handoff；渲染测试 | 字体 / 文案及连续交接已实现；真实鼠标连续 hover 验收 Pending |
+| CACHE-007 | 双语与无障碍 | 双语资源、按钮标签、主题色 | 键盘、中英文与浅深色已核对；VoiceOver Pending |
+| CACHE-008 | 原 Token / 去重 / 缓存兼容 | 独立证据缓存、旧缓存回读与重扫；既有来源测试通过 | Codex fixture 重扫及失败恢复通过；其他来源故障迁移待验 |
+
+规范见 [Spec](../specs/010-cache-hit-insights/spec.md)、[Plan](../specs/010-cache-hit-insights/plan.md)、[交互视觉草案](../specs/010-cache-hit-insights/design.md)、[任务](../specs/010-cache-hit-insights/tasks.md)及[验收](../specs/010-cache-hit-insights/acceptance.md)。
+
+后续阶段 B：**API 参考估值 deferred**。尚未分配正式价格需求 ID；另建独立规范后再登记，不能把缓存命中率解释为节省金额，也不能因本阶段完成而启动价格实现。
+
 ## 模型排行过滤零用量
 
 | 需求 | 实现 | 自动化证据 | 真实验收 |
@@ -121,3 +140,45 @@
 | DSH-002 | `isCurrentHarnessGeneration` | 版本选择和 seeded 跳过测试 |
 | DSH-003 | 消息 ID、事件时间和模型字段 | 自动化及本机扫描；安装应用待验证 |
 | DSH-004 | 文件缓存与内置 Zstandard 读取 | 追加、缓存重载和压缩读取失败测试 |
+
+### QMT-010 交互审稿覆盖（2026-11-08）
+
+CACHE-004 / 005 的长说明由短定义和必要状态替代；CACHE-006 的行点击弹框由 hover / focus 小浮层替代，CACHE-007 使用中性焦点底色，移除系统蓝框。159 项 Swift Testing 和18 项 XCTest 通过，候选真实窗口检查短问号和行浮层。此前关于长弹框及行按钮的验收只代表旧方案，最终要求以 Spec 审稿修订为准。
+
+QMT-010 第二次审稿覆盖此前交互验收：排行仅 hover，无点击 / 焦点交互；无蓝色缓存子段或右侧说明；小浮层为缓存率与原色 / 名称 / 命中量，其他行按 0.42 弱化。缓存问号改为主面板边界内 overlay。159+18 测试通过，安装版已核对；纯鼠标 hover 流转仍需用户确认。
+
+问号弹框边界修订（2026-11-09）：缓存说明保留原生 popover；靠近右侧时改用 trailing 展开方向，宽度恢复以避免正文过度换行。安装版 Token 看板截图已确认没有越过灰色指标条右边界。
+
+## 问号弹框一致性（QMV-011）
+
+| 需求 | 实现 | 测试 / 验收 |
+| --- | --- | --- |
+| HELP-001 | `PanelHelpButton.swift` child NSPanel + 单轮廓箭头和轻阴影 | 浅深色真实候选窗口检查，见 [验收](../specs/011-help-popovers/acceptance.md) |
+| HELP-002 | `NSPanel.animationBehavior = .none`，SwiftUI 轮廓软阴影 | `PanelHelpPopoverTests` 配置检查；无缩放直接响应 |
+| HELP-003 | 事件监听关闭、移除清理、18 pt 点击区域与键盘焦点 | `PanelHelpPopoverTests` 原生窗口生命周期；鼠标/键盘见验收记录 |
+| HELP-004 | 三处入口复用公共组件 | 全量回归及候选窗口检查，证据边界见验收记录 |
+
+### QMV-011 用户复审与扫描项修复（2026-11-09）
+
+| 需求 | 实现 | 验证 |
+| --- | --- | --- |
+| HELP-001 / 002 / 003 | PanelHelpButton：近白无描边无阴影 child NSPanel，单一轮廓箭头；无问号点击底色 | 浅色中文/深色英文真实候选，原生窗口约束与生命周期测试 |
+| HELP-005 | CacheRowInspection 的双语静态辅助摘要 | 实际 AX 树含 Token、占比、缓存率；VoiceOver 朗读待验 |
+| HELP-006 | CacheUsageSnapshot 单次分组 + CacheRankingInteraction 局部状态 | 2 万桶对照测试与过期/未知/other 测试；源码隔离 hover 与父页面 |
+| HELP-007 | SourceCapabilityPresentation 与逐状态原因颜色 | 状态优先级回归；实际设置页中性减号/缺日志说明 |
+| HELP-008 | 备份/替换/签名/安装路径 | 见 QMV-011 acceptance.md 的安装记录 |
+
+### QMV-011 第二次视觉审稿（2026-11-09）
+
+| 需求 | 实现 | 验证 |
+| --- | --- | --- |
+| HELP-001 | HelpBubble 单轮廓 20 pt 连续圆角、浅灰细描边与轻阴影，透明留白参与锚点布局；无系统窗框、无问号点击态 | 候选浅色中文/深色英文及安装版复查；签名和进程哈希一致 |
+| HELP-009 | 双语短句、单行英文指标标签与编号/日期单行布局 | 真实候选截图与 AX 树检查；全量 186 项测试和 367 键双语 parity |
+
+### QMV-011 第三次视觉审稿（2026-11-09）
+
+HELP-001：在 `HelpBubbleShape` 单一路径追加 0.7 pt 浅灰/深灰主题描边，正文和箭头保持连续，原有软阴影保留。实际候选与安装验收结果补记于 [QMV-011 验收记录](../specs/011-help-popovers/acceptance.md)。
+
+### QMV-011 第四次视觉审稿（2026-11-09）
+
+HELP-001：弹框轮廓半径统一到 `PanelTheme.tooltipCornerRadius`（20 pt），由 HelpBubble、图表 tooltip 与缓存排行 tooltip 共用；浅/深圆角外观由实际候选截图检查。

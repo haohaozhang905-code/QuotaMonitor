@@ -21,6 +21,7 @@ actor CCSwitchUsageClient {
         let outputTokens: Int
         let cacheReadTokens: Int
         let cacheCreationTokens: Int
+        let inputTokenSemantics: Int?
         /// cc-switch 的 created_at 是 epoch 秒（与 sessions 表的毫秒不同）。
         let createdAt: Int64
     }
@@ -36,10 +37,31 @@ actor CCSwitchUsageClient {
         guard let rows = queryRows(appType: appType) else { return nil }
         return TokenSourceSnapshot(buckets: rows.map { row in
             var totals = TokenTotals()
-            totals.input = row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens
+            let inclusiveInput = Self.inclusiveInput(
+                rawInput: row.inputTokens,
+                cacheRead: row.cacheReadTokens,
+                cacheCreation: row.cacheCreationTokens,
+                semantics: row.inputTokenSemantics
+            )
+            // Existing Claude Desktop rows use fresh input. For unknown semantics,
+            // preserve the historic aggregate while refusing cache-rate evidence.
+            totals.input = inclusiveInput
+                ?? Self.checkedInputTotal(uncached: row.inputTokens, cached: row.cacheReadTokens, cacheWrite: row.cacheCreationTokens)
+                ?? max(0, row.inputTokens)
             totals.cachedInput = row.cacheReadTokens
             totals.cacheWriteInput = row.cacheCreationTokens
             totals.output = row.outputTokens
+            if let inclusiveInput,
+               let measurement = CacheUsageMeasurement(
+                input: inclusiveInput, cachedInput: row.cacheReadTokens,
+                cacheWriteInput: row.cacheCreationTokens, output: row.outputTokens
+               ) {
+                totals.cacheMeasurement = measurement
+            } else {
+                totals.cacheExclusionReasons = [
+                    row.inputTokenSemantics == nil ? .missingFields : .invalidFields
+                ]
+            }
             let createdAt = Date(timeIntervalSince1970: Double(row.createdAt))
             let hour = Calendar.current.date(
                 from: Calendar.current.dateComponents([.year, .month, .day, .hour], from: createdAt)
@@ -60,14 +82,17 @@ actor CCSwitchUsageClient {
 
         // 直接在 SQLite 层按小时和模型聚合，避免把完整请求历史加载进内存，
         // 也消除旧版 500,000 行静默截断造成的不确定结果。
+        let hasInputSemantics = hasColumn("input_token_semantics", in: "proxy_request_logs", database: db)
+        let semanticsSelection = hasInputSemantics ? "input_token_semantics" : "NULL"
+        let semanticsGrouping = hasInputSemantics ? ", input_token_semantics" : ""
         let sql = """
         SELECT model,
                SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
-               SUM(cache_creation_tokens),
+               SUM(cache_creation_tokens), \(semanticsSelection),
                MIN(created_at)
         FROM proxy_request_logs
         WHERE app_type = ?1
-        GROUP BY model, strftime('%Y-%m-%d-%H', created_at, 'unixepoch', 'localtime')
+        GROUP BY model, strftime('%Y-%m-%d-%H', created_at, 'unixepoch', 'localtime') \(semanticsGrouping)
         ORDER BY MIN(created_at) ASC, model ASC
         """
         var statement: OpaquePointer?
@@ -89,7 +114,9 @@ actor CCSwitchUsageClient {
                     outputTokens: Int(sqlite3_column_int64(statement, 2)),
                     cacheReadTokens: Int(sqlite3_column_int64(statement, 3)),
                     cacheCreationTokens: Int(sqlite3_column_int64(statement, 4)),
-                    createdAt: sqlite3_column_int64(statement, 5)
+                    inputTokenSemantics: sqlite3_column_type(statement, 5) == SQLITE_NULL
+                        ? nil : Int(sqlite3_column_int64(statement, 5)),
+                    createdAt: sqlite3_column_int64(statement, 6)
                 ))
             } else if step == SQLITE_DONE {
                 break
@@ -98,6 +125,41 @@ actor CCSwitchUsageClient {
             }
         }
         return rows
+    }
+
+    private func hasColumn(_ column: String, in table: String, database: OpaquePointer) -> Bool {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "PRAGMA table_info(\(table))", -1, &statement, nil) == SQLITE_OK,
+              let statement else { return false }
+        defer { sqlite3_finalize(statement) }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let name = sqlite3_column_text(statement, 1), String(cString: name) == column else { continue }
+            return true
+        }
+        return false
+    }
+
+    /// cc-switch input_token_semantics: 0 = legacy (read already included),
+    /// 1 = total inclusive (read + creation included), 2 = fresh/uncached input.
+    private static func inclusiveInput(rawInput: Int, cacheRead: Int, cacheCreation: Int, semantics: Int?) -> Int? {
+        guard rawInput >= 0, cacheRead >= 0, cacheCreation >= 0 else { return nil }
+        let extra: Int
+        switch semantics {
+        case 0: extra = cacheCreation
+        case 1: extra = 0
+        case 2:
+            return checkedInputTotal(uncached: rawInput, cached: cacheRead, cacheWrite: cacheCreation)
+        default: return nil
+        }
+        let (total, overflow) = rawInput.addingReportingOverflow(extra)
+        return overflow ? nil : total
+    }
+
+    private static func checkedInputTotal(uncached: Int, cached: Int, cacheWrite: Int) -> Int? {
+        guard uncached >= 0, cached >= 0, cacheWrite >= 0 else { return nil }
+        let (withRead, readOverflow) = uncached.addingReportingOverflow(cached)
+        let (inclusive, writeOverflow) = withRead.addingReportingOverflow(cacheWrite)
+        return readOverflow || writeOverflow ? nil : inclusive
     }
 
     /// cc-switch 是否正在运行（Claude 桌面版用量依赖它的本地代理）。

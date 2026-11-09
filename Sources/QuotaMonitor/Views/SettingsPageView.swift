@@ -134,14 +134,6 @@ extension MainPanelView {
             quotaSources.contains(where: \.isInstalled) || tokenSources.contains(where: \.isInstalled)
         }
 
-        var canReadQuota: Bool {
-            quotaSources.contains { $0.state == .ready }
-        }
-
-        var canReadToken: Bool {
-            tokenSources.contains { $0.state == .ready }
-        }
-
         var sourceDetails: [DataSourceHealthSnapshot] {
             var seen = Set<DataSourceID>()
             return (quotaSources + tokenSources).filter { seen.insert($0.id).inserted }
@@ -209,29 +201,13 @@ extension MainPanelView {
                                 .font(.system(size: 9))
                                 .foregroundStyle(PanelTheme.text3)
                         }
-                        let quotaReason = capabilityReason(for: row.quotaSources, labelKey: "settings.sources.table.quota")
-                        let tokenReason = capabilityReason(for: row.tokenSources, labelKey: "settings.sources.table.token")
-                        if let quotaReason, let tokenReason {
-                            Text("\(quotaReason) · \(tokenReason)")
-                                .font(.system(size: 9))
-                                .foregroundStyle(PanelTheme.danger)
-                                .lineLimit(2)
-                        } else if let quotaReason {
-                            Text(quotaReason)
-                                .font(.system(size: 9))
-                                .foregroundStyle(PanelTheme.danger)
-                                .lineLimit(2)
-                        } else if let tokenReason {
-                            Text(tokenReason)
-                                .font(.system(size: 9))
-                                .foregroundStyle(PanelTheme.danger)
-                                .lineLimit(2)
-                        }
+                        capabilityReason(for: row.quotaSources, labelKey: "settings.sources.table.quota")
+                        capabilityReason(for: row.tokenSources, labelKey: "settings.sources.table.token")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    capabilityCell(isAvailable: row.canReadQuota, label: language.text("settings.sources.table.quota"))
+                    capabilityCell(state: SourceCapabilityPresentation(states: row.quotaSources.map(\.state)), label: language.text("settings.sources.table.quota"))
                         .frame(width: 72)
-                    capabilityCell(isAvailable: row.canReadToken, label: language.text("settings.sources.table.token"))
+                    capabilityCell(state: SourceCapabilityPresentation(states: row.tokenSources.map(\.state)), label: language.text("settings.sources.table.token"))
                         .frame(width: 72)
                 }
                 .padding(.horizontal, 15)
@@ -254,36 +230,22 @@ extension MainPanelView {
         }
     }
 
-    private func capabilityCell(isAvailable: Bool, label: String) -> some View {
-        Image(systemName: isAvailable ? "checkmark.circle.fill" : "xmark.circle.fill")
+    private func capabilityCell(state: SourceCapabilityPresentation, label: String) -> some View {
+        let description = state.reasonKey.map { language.text($0) } ?? language.text("settings.sources.table.available")
+        return Image(systemName: state.symbol)
             .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(isAvailable ? PanelTheme.success : PanelTheme.danger)
-            .accessibilityLabel("\(label): \(language.text(isAvailable ? "settings.sources.table.available" : "settings.sources.table.unavailable"))")
+            .foregroundStyle(state.color)
+            .accessibilityLabel("\(label): \(description)")
     }
 
-    private func capabilityReason(for sources: [DataSourceHealthSnapshot], labelKey: String) -> String? {
-        guard !sources.contains(where: { $0.state == .ready }) else { return nil }
-        let reasonKey: String
-        guard let state = sourceReasonState(for: sources) else {
-            reasonKey = "settings.sources.table.reason.noSource"
-            return language.text("settings.sources.table.reason", language.text(labelKey), language.text(reasonKey))
+    @ViewBuilder private func capabilityReason(for sources: [DataSourceHealthSnapshot], labelKey: String) -> some View {
+        let state = SourceCapabilityPresentation(states: sources.map(\.state))
+        if let reasonKey = state.reasonKey {
+            Text(language.text("settings.sources.table.reason", language.text(labelKey), language.text(reasonKey)))
+                .font(.system(size: 9))
+                .foregroundStyle(state.color)
+                .lineLimit(2)
         }
-        reasonKey = switch state {
-        case .noData: "settings.sources.table.reason.noData"
-        case .notDetected: "settings.sources.table.reason.notDetected"
-        case .needsPermission: "settings.sources.table.reason.permission"
-        case .unsupportedFormat: "settings.sources.table.reason.unsupported"
-        case .failed: "settings.sources.table.reason.failed"
-        case .stale: "settings.sources.table.reason.stale"
-        case .scanning: "settings.sources.table.reason.scanning"
-        case .ready: "settings.sources.table.reason.noSource"
-        }
-        return language.text("settings.sources.table.reason", language.text(labelKey), language.text(reasonKey))
-    }
-
-    private func sourceReasonState(for sources: [DataSourceHealthSnapshot]) -> DataSourceHealthState? {
-        let priority: [DataSourceHealthState] = [.needsPermission, .failed, .unsupportedFormat, .stale, .noData, .notDetected, .scanning]
-        return priority.first { state in sources.contains { $0.state == state } }
     }
 
     private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {

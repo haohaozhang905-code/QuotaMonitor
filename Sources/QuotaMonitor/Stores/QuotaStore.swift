@@ -39,6 +39,10 @@ final class QuotaStore {
     }
     /// 逐来源诊断状态。失败时保留 last-good 数据，并在展示快照中标记 stale。
     var sourceStates: [DataSourceID: TokenSourceRuntimeState] = [:]
+    /// In-memory only: persisted source health does not prove a scan succeeded
+    /// in the current process with the current cache-evidence schema.
+    var cacheEvidenceFreshSources: Set<DataSourceID> = []
+    var cacheRefreshSnapshot: (buckets: [TokenUsageBucket], freshSources: Set<DataSourceID>, updatedAt: Date?)?
 
     private let codexDirectClient = CodexDirectClient()
     private let deepSeekBalanceClient = DeepSeekBalanceClient()
