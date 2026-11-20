@@ -6,8 +6,8 @@ import Foundation
 /// `~/.codex/archived_sessions/rollout-*.jsonl`，以及对应 `.jsonl.zst` 压缩文件。
 /// 优先使用 `payload.info.last_token_usage` 的请求级用量；缺失时，
 /// 对相邻 `total_token_usage` 累计值取差。按记录时间归入本地日期，跨午夜拆分。
-/// 同一会话的普通、压缩及归档副本只读一份；fork 通过首条 `session_meta`
-/// 识别父会话，排除双方累计用量序列的共同前缀，只计 fork 后新增的请求。
+/// 同一 rollout 的普通、压缩及归档副本只读一份；同一会话的不同 rollout 片段按顺序合并。
+/// fork 通过首条 `session_meta` 识别父会话，排除双方累计用量序列的共同前缀。
 ///
 /// 文件未变时复用汇总；普通日志追加时续读，压缩文件变更时完整重算。
 /// 仅写入汇总缓存，不解压回源目录，也不修改源日志。
@@ -31,6 +31,8 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
         /// 1 表示已按当前口径校准；旧缓存缺失此字段时，从源日志完整重算。
         let aggregationRevision: Int?
         let cacheEvidenceRevision: Int?
+        /// 多个 rollout 片段聚合时的文件组指纹。
+        let groupFingerprint: String?
 
     }
 
@@ -51,7 +53,6 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
 
         var deduplicationKeys: [String] {
             var keys = ["path:\(cacheKey.path)"]
-            if let identity { keys.append("session:\(identity.sessionID)") }
             let name = cacheKey.lastPathComponent
             if name.hasPrefix("rollout-") { keys.append("rollout:\(name)") }
             return keys
@@ -102,7 +103,7 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
     /// 历史会话缓存只保存日期、模型和 Token 汇总，不保存会话正文。
     func snapshotBuckets() throws -> [TokenUsageBucket] {
         if !didLoadPersistentCache, persistentCacheURL != nil,
-           LocalTokenScanSupport.loadCache(at: persistentCacheURL, version: 5, root: root) as [URL: CachedUsage]? == nil,
+           LocalTokenScanSupport.loadCache(at: persistentCacheURL, version: 6, root: root) as [URL: CachedUsage]? == nil,
            root == CodexEnvironment.homeDirectory {
             cache = LocalTokenScanSupport.loadCache(
                 at: LocalTokenScanSupport.defaultCacheURL(fileName: "codex-session-token-cache-v3.json"),
@@ -112,12 +113,18 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
         }
         LocalTokenScanSupport.loadCacheIfNeeded(
             into: &cache, didLoad: &didLoadPersistentCache,
-            at: persistentCacheURL, version: 5, root: root
+            at: persistentCacheURL, version: 6, root: root
         )
         var buckets: [TokenUsageBucket] = []
         var newCache: [URL: CachedUsage] = [:]
         var usageSequences: [URL: [TokenTotals]] = [:]
         let discoveredFiles = try discoverSessionFiles()
+        let sessionFilesByID = Dictionary(
+            grouping: discoveredFiles.compactMap { file -> (String, SessionFile)? in
+                guard let id = file.identity?.sessionID else { return nil }
+                return (id, file)
+            }, by: \.0
+        ).mapValues { $0.map(\.1) }
         let cachedBySessionID = Dictionary(
             cache.values.compactMap { entry -> (String, CachedUsage)? in
                 entry.sessionID.map { ($0, entry) }
@@ -131,12 +138,87 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
             uniquingKeysWith: { first, _ in first }
         )
         let files = Self.parentFirst(discoveredFiles, filesBySessionID: filesBySessionID)
+        var processedMultiRolloutSessions: Set<String> = []
 
         for file in files {
             try Task.checkCancellation()
+            if let sessionID = file.identity?.sessionID,
+               let segments = sessionFilesByID[sessionID], segments.count > 1 {
+                guard processedMultiRolloutSessions.insert(sessionID).inserted else { continue }
+                let orderedSegments = Self.orderRolloutSegments(segments)
+                let cacheKey = orderedSegments[0].cacheKey
+                let fingerprint = Self.rolloutGroupFingerprint(orderedSegments)
+                let cachedGroup = cache[cacheKey]
+                    ?? cache.values.first { $0.sessionID == sessionID && $0.groupFingerprint != nil }
+                if let cachedGroup,
+                   cachedGroup.aggregationRevision == 2,
+                   cachedGroup.cacheEvidenceRevision == 3,
+                   cachedGroup.sessionID == sessionID,
+                   cachedGroup.groupFingerprint == fingerprint {
+                    newCache[cacheKey] = cachedGroup
+                    buckets.append(contentsOf: Self.makeBuckets(from: cachedGroup.modelByDay))
+                    continue
+                }
+
+                var parentSequence: [TokenTotals]?
+                if let parentID = orderedSegments.first?.identity?.forkedFromID {
+                    guard let parentSegments = sessionFilesByID[parentID],
+                          let parent = parseRolloutSegments(
+                            Self.orderRolloutSegments(parentSegments),
+                            parentUsageSequence: nil
+                          ) else {
+                        // A fork cannot be safely counted when its parent sequence is unavailable.
+                        continue
+                    }
+                    parentSequence = parent.usageSequence
+                }
+
+                guard let result = parseRolloutSegments(
+                    orderedSegments,
+                    parentUsageSequence: parentSequence
+                ) else {
+                    if orderedSegments.contains(where: \.isCompressed) {
+                        throw TokenSourceReadError.unreadableRoot(orderedSegments.first(where: \.isCompressed)!.url)
+                    }
+                    if let cachedGroup {
+                        newCache[cacheKey] = cachedGroup
+                        buckets.append(contentsOf: Self.makeBuckets(from: cachedGroup.modelByDay.mapValues(\.withoutCacheMeasurement)))
+                    } else {
+                        throw TokenSourceReadError.unreadableRoot(orderedSegments[0].url)
+                    }
+                    continue
+                }
+
+                let primary = orderedSegments[0]
+                let entry = CachedUsage(
+                    mtime: primary.mtime,
+                    fileSize: primary.fileSize,
+                    totalsByDay: result.totalsByDay,
+                    deepSeekByDay: result.deepSeekByDay,
+                    modelByDay: result.modelByDay,
+                    processedByteCount: nil,
+                    lastTotals: result.lastTotals,
+                    lastDayKey: result.lastDayKey,
+                    currentModel: result.currentModel,
+                    sessionID: sessionID,
+                    forkedFromID: primary.identity?.forkedFromID,
+                    inheritedUsageCount: result.inheritedUsageCount,
+                    isCompressed: primary.isCompressed,
+                    aggregationRevision: 2,
+                    cacheEvidenceRevision: 3,
+                    groupFingerprint: fingerprint
+                )
+                newCache[cacheKey] = entry
+                buckets.append(contentsOf: Self.makeBuckets(from: entry.modelByDay))
+                if let sequence = result.usageSequence {
+                    usageSequences[primary.url] = sequence
+                }
+                continue
+            }
             let cached = cache[file.cacheKey] ?? file.identity.flatMap { cachedBySessionID[$0.sessionID] }
             let canAppend = !file.isCompressed && cached?.isCompressed != true
-                && cached?.aggregationRevision == 1 && cached?.cacheEvidenceRevision == 2 && cache[file.cacheKey] != nil
+                && cached?.groupFingerprint == nil
+                && cached?.aggregationRevision == 2 && cached?.cacheEvidenceRevision == 3 && cache[file.cacheKey] != nil
             let appendOffset = canAppend ? LocalTokenScanSupport.appendOffset(
                 currentFileSize: file.fileSize,
                 cachedFileSize: cached?.fileSize,
@@ -159,13 +241,22 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
                 if canContinue, let cachedBoundary = cached?.inheritedUsageCount {
                     inheritedUsageCount = cachedBoundary
                 } else {
-                    guard let parentURL = filesBySessionID[parentID] else {
+                    guard let parentURLs = sessionFilesByID[parentID], !parentURLs.isEmpty else {
                         // 找不到父会话时不能把复制的完整历史当成新增用量。
                         continue
                     }
-                    parentUsageSequence = Self.usageSequence(in: parentURL, cache: &usageSequences)
+                    if parentURLs.count > 1 {
+                        guard let parent = parseRolloutSegments(
+                            Self.orderRolloutSegments(parentURLs), parentUsageSequence: nil
+                        ) else { continue }
+                        parentUsageSequence = parent.usageSequence
+                    } else if let parentURL = parentURLs.first {
+                        parentUsageSequence = Self.usageSequence(in: parentURL.url, cache: &usageSequences)
+                    }
                     guard parentUsageSequence != nil else {
-                        if parentURL.pathExtension == "zst" { throw TokenSourceReadError.unreadableRoot(parentURL) }
+                        if let compressedParent = parentURLs.first(where: \.isCompressed) {
+                            throw TokenSourceReadError.unreadableRoot(compressedParent.url)
+                        }
                         continue
                     }
                 }
@@ -218,15 +309,16 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
                 forkedFromID: file.identity?.forkedFromID,
                 inheritedUsageCount: inheritedUsageCount,
                 isCompressed: file.isCompressed,
-                aggregationRevision: 1,
-                cacheEvidenceRevision: 2
+                aggregationRevision: 2,
+                cacheEvidenceRevision: 3,
+                groupFingerprint: nil
             )
             newCache[file.cacheKey] = entry
             buckets.append(contentsOf: Self.makeBuckets(from: entry.modelByDay))
         }
         let cacheChanged = cache != newCache
         cache = newCache
-        LocalTokenScanSupport.saveCacheIfChanged(cache, changed: cacheChanged, at: persistentCacheURL, version: 5, root: root)
+        LocalTokenScanSupport.saveCacheIfChanged(cache, changed: cacheChanged, at: persistentCacheURL, version: 6, root: root)
         return TokenUsageBucket.combining(buckets)
     }
 
@@ -244,6 +336,9 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
         let sawValidJSON: Bool
         let usageSequence: [TokenTotals]?
         let inheritedUsageCount: Int
+        let usageRecordCount: Int
+        let isMatchingInheritedPrefix: Bool
+        let usageSignatures: Set<String>
     }
 
     private struct ParsedTokenUsage {
@@ -257,21 +352,25 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
         fallbackDay: Date?,
         startingAt: UInt64,
         seed: CachedUsage?,
-        parentUsageSequence: [TokenTotals]?
+        parentUsageSequence: [TokenTotals]?,
+        prior: ParsedFile? = nil,
+        deduplicateOverlaps: Bool = false
     ) -> ParsedFile? {
-        var lastTotals = seed?.lastTotals
-        var lastDayKey = seed?.lastDayKey
+        var lastTotals = prior?.lastTotals ?? seed?.lastTotals
+        var lastDayKey = prior?.lastDayKey ?? seed?.lastDayKey
         // 模型出现在 payload.state.model（状态行），增量读取时延续上次模型上下文。
-        var currentModel = seed?.currentModel
+        var currentModel = prior?.currentModel ?? seed?.currentModel
         let fallbackDayKey = fallbackDay.map { DailyTokenUsage.dayKey(for: $0) }
-        var totalsByDay = seed?.totalsByDay ?? [:]
-        var deepSeekByDay = seed?.deepSeekByDay ?? [:]
-        var modelByDay = seed?.modelByDay ?? [:]
-        var usageRecordCount = 0
-        var sawValidJSON = false
-        var usageSequence: [TokenTotals]? = startingAt == 0 ? [] : nil
-        var inheritedUsageCount = seed?.inheritedUsageCount ?? 0
-        var isMatchingInheritedPrefix = parentUsageSequence != nil
+        var totalsByDay = prior?.totalsByDay ?? seed?.totalsByDay ?? [:]
+        var deepSeekByDay = prior?.deepSeekByDay ?? seed?.deepSeekByDay ?? [:]
+        var modelByDay = prior?.modelByDay ?? seed?.modelByDay ?? [:]
+        var usageRecordCount = prior?.usageRecordCount ?? 0
+        var sawValidJSON = prior?.sawValidJSON ?? false
+        var usageSequence: [TokenTotals]? = startingAt == 0 ? (prior?.usageSequence ?? []) : nil
+        var inheritedUsageCount = prior?.inheritedUsageCount ?? seed?.inheritedUsageCount ?? 0
+        var isMatchingInheritedPrefix = prior?.isMatchingInheritedPrefix ?? (parentUsageSequence != nil)
+        var usageSignatures = prior?.usageSignatures ?? Set<String>()
+        var sawInvalidUsageJSON = false
 
         let didRead = JSONLReader.forEachLine(
             at: url,
@@ -292,13 +391,26 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
                     }
                     return
                 }
-                guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+                guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    sawInvalidUsageJSON = true
+                    return
+                }
                 sawValidJSON = true
                 if let model = Self.extractModel(obj) {
                     currentModel = model
                 }
                 guard let usage = Self.extractTokenUsage(obj) else { return }
                 let totals = usage.cumulative
+
+                if deduplicateOverlaps {
+                    let signature = Self.usageEventSignature(
+                        timestamp: obj["timestamp"] as? String,
+                        model: currentModel,
+                        usage: usage
+                    )
+                    guard prior?.usageSignatures.contains(signature) != true else { return }
+                    usageSignatures.insert(signature)
+                }
 
                 usageSequence?.append(totals)
                 let inherited: Bool
@@ -352,7 +464,7 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
             }
         }
 
-        guard didRead else { return nil }
+        guard didRead, !sawInvalidUsageJSON else { return nil }
         return ParsedFile(
             totalsByDay: totalsByDay,
             deepSeekByDay: deepSeekByDay,
@@ -362,7 +474,10 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
             currentModel: currentModel,
             sawValidJSON: sawValidJSON,
             usageSequence: usageSequence,
-            inheritedUsageCount: inheritedUsageCount
+            inheritedUsageCount: inheritedUsageCount,
+            usageRecordCount: usageRecordCount,
+            isMatchingInheritedPrefix: isMatchingInheritedPrefix,
+            usageSignatures: usageSignatures
         )
     }
 
@@ -416,8 +531,8 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
             if $0.mtime != $1.mtime { return $0.mtime > $1.mtime }
             return $0.url.path < $1.url.path
         }
-        // 先合并路径、文件名与会话 ID 的关联，再选唯一副本。
-        // 即使某份副本的首行暂不可读，普通/压缩文件也不会因此各算一次。
+        // 先按路径和 rollout 文件名合并普通 / 压缩及跨目录副本。
+        // session ID 不参与副本去重，因为同一会话可以有多个独立 rollout 片段。
         var parents = Array(files.indices)
         func representative(_ index: Int) -> Int {
             var current = index
@@ -438,13 +553,64 @@ actor CodexSessionTokenClient: LocalTokenSnapshotProviding {
     }
 
     private static func canReuse(cached: CachedUsage, identity: SessionIdentity?) -> Bool {
-        guard cached.aggregationRevision == 1, cached.cacheEvidenceRevision == 2,
+        guard cached.aggregationRevision == 2, cached.cacheEvidenceRevision == 3,
+              cached.groupFingerprint == nil,
               cached.sessionID == identity?.sessionID,
               cached.forkedFromID == identity?.forkedFromID else { return false }
         if identity?.forkedFromID != nil {
             return cached.inheritedUsageCount != nil
         }
         return true
+    }
+
+    private func parseRolloutSegments(
+        _ segments: [SessionFile],
+        parentUsageSequence: [TokenTotals]?
+    ) -> ParsedFile? {
+        var parsed: ParsedFile?
+        for segment in segments {
+            guard let next = parseFile(
+                segment.url,
+                fallbackDay: segment.fallbackDay,
+                startingAt: 0,
+                seed: nil,
+                parentUsageSequence: parentUsageSequence,
+                prior: parsed,
+                deduplicateOverlaps: true
+            ) else { return nil }
+            parsed = next
+        }
+        return parsed
+    }
+
+    private static func orderRolloutSegments(_ segments: [SessionFile]) -> [SessionFile] {
+        segments.sorted {
+            let left = $0.url.lastPathComponent
+            let right = $1.url.lastPathComponent
+            if left != right { return left < right }
+            if $0.isCompressed != $1.isCompressed { return !$0.isCompressed }
+            return $0.url.path < $1.url.path
+        }
+    }
+
+    private static func rolloutGroupFingerprint(_ segments: [SessionFile]) -> String {
+        segments.map { segment in
+            "\(segment.url.path)|\(segment.fileSize)|\(segment.mtime.timeIntervalSince1970)|\(segment.isCompressed ? 1 : 0)"
+        }.joined(separator: "\n")
+    }
+
+    private static func usageEventSignature(
+        timestamp: String?,
+        model: String?,
+        usage: ParsedTokenUsage
+    ) -> String {
+        func fields(_ value: TokenTotals?) -> String {
+            guard let value else { return "-" }
+            return [value.input, value.cachedInput, value.cacheWriteInput, value.output, value.reasoning]
+                .map(String.init).joined(separator: ",")
+        }
+        return [timestamp ?? "", model ?? "", fields(usage.cumulative), fields(usage.request)]
+            .joined(separator: "\u{1F}")
     }
 
     private static func usageSequence(

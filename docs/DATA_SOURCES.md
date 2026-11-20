@@ -22,7 +22,7 @@ Codex 的套餐名、额度重置时间、Reset Credit 到期时间是不同字�
 
 | 工具 | 默认位置 | 实现与条件 |
 | --- | --- | --- |
-| Codex | `~/.codex/sessions`、`~/.codex/archived_sessions` | 只读扫描 `.jsonl` 与 `.jsonl.zst`；流式解压无需外部工具。同一会话普通/压缩及跨目录副本只计一次，优先普通文件；按父子关系排除继承历史。找不到可核对的父记录时可能不纳入相关 fork 数据 |
+| Codex | `~/.codex/sessions`、`~/.codex/archived_sessions` | 只读扫描 `.jsonl` 与 `.jsonl.zst`；流式解压无需外部工具。同一 rollout 普通/压缩及跨目录副本只计一次；同一会话的不同 rollout 片段按顺序合并，并对片段重叠事件去重；按父子关系排除继承历史。找不到可核对的父记录时可能不纳入相关 fork 数据 |
 | Claude Code | `~/.claude/projects` | 读取本地 transcript 中的 usage；无需 cc-switch。cc-switch 中同源数据用于核对，不再加一遍 |
 | Claude Desktop | `~/.cc-switch/cc-switch.db` | 当前采集入口是 cc-switch 的 `proxy_request_logs`；该链路未捕获的桌面端请求无法补算。缓存测量按 `input_token_semantics` 归一，未知值只保留原 Token、不计入缓存率 |
 | WorkBuddy | `~/.workbuddy/traces` | 读取 `trace_*.json` 与 `trace_*.jsonl`，兼容旧 Trace 汇总与新版 generation usage；同一 `traceId` 双格式只计 JSONL，受日志格式和读取耗时影响 |

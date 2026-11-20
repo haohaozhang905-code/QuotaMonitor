@@ -378,6 +378,82 @@ struct ClaudeSessionTokenClientTests {
 // MARK: - Codex 会话解析（含归档目录）
 
 struct CodexSessionTokenClientTests {
+    @Test func mergesRolloutSegmentsForOneSessionAndDeduplicatesOverlappingEvents() async throws {
+        let root = try Fixtures.makeTempDir("codex-multi-rollout")
+        defer { Fixtures.remove(root) }
+        let dir = root.appendingPathComponent("sessions/2026/11/20", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let sessionID = "shared-rollout-session"
+        let meta = #"{"timestamp":"2026-11-20T12:00:00Z","type":"session_meta","payload":{"session_id":"\#(sessionID)","id":"\#(sessionID)"}}"#
+        func usage(_ timestamp: String, model: String, totalInput: Int, totalOutput: Int, requestInput: Int, requestOutput: Int) -> String {
+            #"{"timestamp":"\#(timestamp)","payload":{"info":{"model":"\#(model)","last_token_usage":{"input_tokens":\#(requestInput),"output_tokens":\#(requestOutput)},"total_token_usage":{"input_tokens":\#(totalInput),"output_tokens":\#(totalOutput)}}}}"#
+        }
+        let solFirst = usage("2026-11-20T12:01:00Z", model: "gpt-6.2-sol", totalInput: 100, totalOutput: 10, requestInput: 100, requestOutput: 10)
+        let overlap = usage("2026-11-20T12:02:00Z", model: "gpt-6.2-sol", totalInput: 150, totalOutput: 15, requestInput: 50, requestOutput: 5)
+        let lunaState = #"{"timestamp":"2026-11-20T12:03:00Z","type":"turn_context","payload":{"state":{"model":"gpt-6-luna"}}}"#
+        let lunaFirst = usage("2026-11-20T12:04:00Z", model: "gpt-6-luna", totalInput: 200, totalOutput: 20, requestInput: 50, requestOutput: 5)
+        // 累计值不变但请求级用量明确存在，必须作为独立请求保留。
+        let lunaSameTotal = usage("2026-11-20T12:05:00Z", model: "gpt-6-luna", totalInput: 200, totalOutput: 20, requestInput: 30, requestOutput: 3)
+
+        let first = dir.appendingPathComponent("rollout-2026-11-20T12-00-00-\(sessionID).jsonl")
+        let second = dir.appendingPathComponent("rollout-2026-11-20T12-03-00-\(sessionID)_continuation.jsonl")
+        try [meta, solFirst, overlap].joined(separator: "\n").appending("\n")
+            .write(to: first, atomically: true, encoding: .utf8)
+        let cache = root.appendingPathComponent("cache/codex.json")
+        try [meta, overlap, lunaState, lunaFirst, lunaSameTotal].joined(separator: "\n").appending("\n")
+            .write(to: second, atomically: true, encoding: .utf8)
+
+        let firstClient = CodexSessionTokenClient(root: root, persistentCacheURL: cache)
+        let initial = try await firstClient.fetchSnapshot().buckets
+        #expect(initial.first { $0.model == "gpt-6.2-sol" }?.total == 165)
+        #expect(initial.first { $0.model == "gpt-6-luna" }?.total == 88)
+        #expect(initial.reduce(0) { $0 + $1.total } == 253)
+
+        // A pre-segment cache may contain only the latest rollout and can even
+        // have inflated aggregates; the new revision must rebuild from source.
+        var envelope = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: cache)) as? [String: Any])
+        var entries = try #require(envelope["entries"] as? [String: [String: Any]])
+        for key in entries.keys {
+            entries[key]?["aggregationRevision"] = 1
+            entries[key]?["cacheEvidenceRevision"] = 2
+            entries[key]?.removeValue(forKey: "groupFingerprint")
+            if var modelByDay = entries[key]?["modelByDay"] as? [String: [String: Any]] {
+                for bucket in modelByDay.keys {
+                    var totals = try #require(modelByDay[bucket])
+                    totals["input"] = (totals["input"] as? Int ?? 0) + 1_000
+                    modelByDay[bucket] = totals
+                }
+                entries[key]?["modelByDay"] = modelByDay
+            }
+        }
+        envelope["entries"] = entries
+        try JSONSerialization.data(withJSONObject: envelope).write(to: cache)
+        let migrated = CodexSessionTokenClient(root: root, persistentCacheURL: cache)
+        #expect(try await migrated.fetchSnapshot().buckets == initial)
+
+        let reloaded = CodexSessionTokenClient(root: root, persistentCacheURL: cache)
+        #expect(try await reloaded.fetchSnapshot().buckets == initial)
+
+        let segmentContents = try Data(contentsOf: second)
+        let malformedUsage = #"{"timestamp":"2026-11-20T12:06:00Z","payload":{"info":{"total_token_usage":{"input_tokens": BROKEN}}}}"#
+        try [meta, malformedUsage].joined(separator: "\n").appending("\n")
+            .write(to: second, atomically: true, encoding: .utf8)
+        let staleSnapshot = try await reloaded.fetchSnapshot()
+        #expect(staleSnapshot.buckets.reduce(0) { $0 + $1.total } == 253)
+        try segmentContents.write(to: second)
+
+        let appended = usage("2026-11-20T12:06:00Z", model: "gpt-6-luna", totalInput: 200, totalOutput: 20, requestInput: 20, requestOutput: 2)
+        let handle = try FileHandle(forWritingTo: second)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((appended + "\n").utf8))
+        try handle.close()
+        let refreshed = try await reloaded.fetchSnapshot().buckets
+        #expect(refreshed.first { $0.model == "gpt-6.2-sol" }?.total == 165)
+        #expect(refreshed.first { $0.model == "gpt-6-luna" }?.total == 110)
+        #expect(refreshed.reduce(0) { $0 + $1.total } == 275)
+    }
+
     @Test func evidenceMigrationAndFailedRescanKeepTotalsWithoutPretendingFreshness() async throws {
         let root = try Fixtures.makeTempDir("cache-migration-failure")
         defer { Fixtures.remove(root) }

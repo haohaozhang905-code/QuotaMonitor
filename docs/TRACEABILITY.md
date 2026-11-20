@@ -121,6 +121,17 @@
 
 规范与验收见 [`specs/003-compressed-codex-history`](../specs/003-compressed-codex-history/spec.md)。
 
+## Codex 同一会话多日志片段用量合并（QMT-012）
+
+| 需求 | 产品定义 | 实现 | 自动化证据 | 真实验收 |
+| --- | --- | --- | --- | --- |
+| ROLL-001 | 同一会话的不同 rollout 片段均参与统计 | `CodexSessionTokenClient` 会话分组 | 同 ID 多片段与顺序稳定测试通过 | 隔离冷扫通过；安装版已启动，目标模型行待用户确认 |
+| ROLL-002 | 按模型上下文归属并去除确认重叠的请求 | 片段串行解析与事件指纹 | 模型切换、重复和 total-only 请求测试通过 | Token 看板实际呈现待用户确认 |
+| ROLL-003 | 新聚合 revision 从源日志重建 | Codex 会话缓存、last-good | 旧缓存重算、重载与失败保护通过 | 隔离扫描通过；正式缓存已更新为 v6，567 条记录中 540 条为新修订 |
+| ROLL-004 | fork、副本和源日志只读边界不回归 | rollout 身份、副本选择、父子累计前缀 | JSONL/ZST、fork、追加、损坏与源文件不变测试通过 | 本机 574 个压缩文件摘要核对通过；安装版签名和进程启动通过 |
+
+规范与任务证据见 [`specs/012-codex-multi-rollout-usage`](../specs/012-codex-multi-rollout-usage/spec.md)。
+
 ## WorkBuddy JSONL Trace 兼容
 
 | 需求 | 产品定义 | 实现 | 自动化证据 | 真实验收 |

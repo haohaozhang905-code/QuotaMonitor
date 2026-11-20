@@ -49,6 +49,7 @@
 | `QMT-009` | DeepSeek Harness 本地 Token 统计 | implemented / installed Token page verified / menu bar pending | [spec.md](009-deepseek-harness/spec.md) | [plan.md](009-deepseek-harness/plan.md) | [acceptance.md](009-deepseek-harness/acceptance.md) |
 | `QMT-010` | 输入缓存命中展示（阶段 A） | implemented / installed; pure mouse hover acceptance pending | [spec.md](010-cache-hit-insights/spec.md) | [plan.md](010-cache-hit-insights/plan.md) | [acceptance.md](010-cache-hit-insights/acceptance.md) |
 | `QMV-011` | 问号弹框表面与动效统一 | implemented / installed; user visual review and edge checks pending | [spec.md](011-help-popovers/spec.md) | [plan.md](011-help-popovers/plan.md) | [acceptance.md](011-help-popovers/acceptance.md) |
+| `QMT-012` | Codex 同一会话多日志片段用量合并 | implemented / local scan and installed launch verified / Token page user acceptance pending | [spec.md](012-codex-multi-rollout-usage/spec.md) | [plan.md](012-codex-multi-rollout-usage/plan.md) | [acceptance.md](012-codex-multi-rollout-usage/acceptance.md) |
 
 ### 分阶段演进：缓存与价格
 

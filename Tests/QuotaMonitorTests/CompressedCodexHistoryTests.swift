@@ -106,6 +106,39 @@ struct CompressedCodexHistoryTests {
         #expect(try await client.fetchSnapshot().history.first?.total == 120)
     }
 
+    @Test func mergesDifferentCompressedAndPlainRolloutsForOneSession() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let old = root.appendingPathComponent("archived_sessions/rollout-2026-05-28T04-00-00-shared.jsonl.zst")
+        let next = root.appendingPathComponent("sessions/rollout-2026-05-28T04-02-00-shared_continuation.jsonl")
+        let sol = #"{"timestamp":"2026-05-28T04:01:00Z","payload":{"info":{"model":"gpt-6.2-sol","last_token_usage":{"input_tokens":100,"output_tokens":20},"total_token_usage":{"input_tokens":100,"output_tokens":20}}}}"#
+        let lunaState = #"{"timestamp":"2026-05-28T04:02:00Z","type":"turn_context","payload":{"state":{"model":"gpt-6-luna"}}}"#
+        let overlap = sol
+        let luna = #"{"timestamp":"2026-05-28T04:03:00Z","payload":{"info":{"model":"gpt-6-luna","last_token_usage":{"input_tokens":40,"output_tokens":10},"total_token_usage":{"input_tokens":140,"output_tokens":30}}}}"#
+        try frame(metadata("shared") + sol).write(to: old)
+        try [metadata("shared").trimmingCharacters(in: .newlines), overlap, lunaState, luna]
+            .joined(separator: "\n").appending("\n")
+            .write(to: next, atomically: true, encoding: .utf8)
+
+        var decoded: [String] = []
+        #expect(JSONLReader.forEachLine(at: old) { decoded.append(String(decoding: $0, as: UTF8.self)) })
+        #expect(decoded.count == 2)
+        #expect(decoded.allSatisfy { (try? JSONSerialization.jsonObject(with: Data($0.utf8))) != nil })
+        var decodedNext: [String] = []
+        #expect(JSONLReader.forEachLine(at: next) { decodedNext.append(String(decoding: $0, as: UTF8.self)) })
+        #expect(decodedNext.allSatisfy { (try? JSONSerialization.jsonObject(with: Data($0.utf8))) != nil })
+
+        let before = try Data(contentsOf: old)
+        let cache = root.appendingPathComponent("cache.json")
+        let client = CodexSessionTokenClient(root: root, persistentCacheURL: cache)
+        let buckets = try await client.fetchSnapshot().buckets
+        #expect(buckets.first { $0.model == "gpt-6.2-sol" }?.total == 120)
+        #expect(buckets.first { $0.model == "gpt-6-luna" }?.total == 50)
+        #expect(buckets.reduce(0) { $0 + $1.total } == 170)
+        #expect(try Data(contentsOf: old) == before)
+        #expect(try await CodexSessionTokenClient(root: root, persistentCacheURL: cache).fetchSnapshot().buckets == buckets)
+    }
+
     @Test func survivesCacheReloadAndFormatRoundTripWithoutAddingOldTotals() async throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
